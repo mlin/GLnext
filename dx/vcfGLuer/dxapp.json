@@ -1,0 +1,73 @@
+{
+  "name": "vcfGLuer",
+  "title": "vcfGLuer",
+  "summary": "vcfGLuer",
+  "dxapi": "1.0.0",
+  "version": "0.0.1",
+  "inputSpec": [
+    {
+      "name": "vcf_manifest",
+      "class": "file",
+      "optional": false,
+      "patterns": [
+        "*.vcf.gz"
+      ],
+      "help": ""
+    },
+    {
+      "name": "output_name",
+      "class": "string",
+      "default": "merged",
+      "help": ""
+    },
+    {
+      "name": "genomic_range_bin_size",
+      "class": "int",
+      "default": 100,
+      "help": ""
+    }
+  ],
+  "outputSpec": [
+    {
+      "name": "pvcf_gz",
+      "class": "file",
+      "patterns": [
+        "*.vcf.gz"
+      ],
+      "help": ""
+    }
+  ],
+  "runSpec": {
+    "timeoutPolicy": {
+      "*": {
+        "days": 14
+      }
+    },
+    "interpreter": "bash",
+    "file": "src/vcfGLuer.sh",
+    "distribution": "Ubuntu",
+    "release": "20.04",
+    "version": "0",
+    "execDepends": [
+      {"name": "parallel"},
+      {"name": "openjdk-11-jre-headless"},
+      {"name": "libsnappy1v5"},
+      {"name": "numactl"},
+      {"name": "tabix"},
+      {"name": "libhts3"},
+      {"name": "libjemalloc2"},
+      {"name": "libgflags2.2"},
+      {"name": "dstat"}
+    ]
+  },
+  "access": {},
+  "regionalOptions": {
+    "aws:us-east-1": {
+      "systemRequirements": {
+        "*": {
+          "instanceType": "mem3_ssd3_x12"
+        }
+      }
+    }
+  }
+}

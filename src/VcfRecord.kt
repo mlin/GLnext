@@ -5,7 +5,8 @@ import org.jetbrains.kotlinx.spark.api.*
 /**
  * Raw VCF record: ID of the source callset, extracted GRange, and Snappy-compressed original line
  */
-data class VcfRecord(val callsetId: Int, val range: GRange, val line: String) {
+data class VcfRecord(val callsetId: Int, val range: GRange, val line: String) : Comparable<VcfRecord> {
+    override fun compareTo(other: VcfRecord) = compareValuesBy(this, other, { callsetId }, { range }, { line })
     /* snappyLine: ByteArray
        disabled due to: https://github.com/JetBrains/kotlin-spark-api/issues/111
     fun uncompressLine(): String {
@@ -65,7 +66,9 @@ fun readVcfRecords(
 /**
  * A VCF record one associated bin number.
  */
-data class BinnedVcfRecord(val bin: Long, val record: VcfRecord)
+data class BinnedVcfRecord(val bin: Long, val record: VcfRecord) : Comparable<BinnedVcfRecord> {
+    override fun compareTo(other: BinnedVcfRecord) = compareValuesBy(this, other, { it.bin }, { it.record })
+}
 
 /**
  * In a dataset of BinnedVcfRecord, records whose range touches multiple bins are replicated for

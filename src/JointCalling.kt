@@ -5,7 +5,9 @@ import org.jetbrains.kotlinx.spark.api.*
 /**
  * Container for the VCF records from one callset which overlap the given variant
  */
-data class VariantAndCallsetVcfRecords(val variant: Variant, val callsetId: Int, val records: List<VcfRecord>)
+data class VariantAndCallsetVcfRecords(val variant: Variant, val callsetId: Int, val records: List<VcfRecord>) : Comparable<VariantAndCallsetVcfRecords> {
+    override fun compareTo(other: VariantAndCallsetVcfRecords) = compareValuesBy(this, other, { it.variant }, { it.callsetId })
+}
 
 /**
  * For each variant, all the overlapping VCF records from each callset

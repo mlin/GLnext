@@ -24,14 +24,22 @@ class CLI : CliktCommand() {
             effInputFiles = inputFiles.flatMap { java.io.File(it).readLines() }.distinct()
         }
 
+        val sparkBuilder = org.apache.spark.sql.SparkSession.builder()
+            .appName("vcfGLuer")
+            .config("spark.shuffle.compress", true)
+            .config("spark.broadcast.compress", true)
+            .config("spark.checkpoint.compress", true)
+            .config("spark.rdd.compress", true)
+            .config("spark.io.compression.codec", "snappy")
+            .config("spark.io.compression.snappy.blockSize", "262144")
+            // disabling broadcast hash join: during initial scale-testing spark 3.1.2 seemed to
+            // use it on far-too-large datasets, leading to OOM failures
+            .config("spark.sql.join.preferSortMergeJoin", true)
+            .config("spark.sql.autoBroadcastJoinThreshold", -1)
+
         withSpark(
-            props = mapOf(
-                "spark.broadcast.compress" to true,
-                "spark.checkpoint.compress" to true,
-                "spark.rdd.compress" to true,
-                "spark.io.compression.codec" to "snappy",
-                "spark.io.compression.snappy.blockSize" to "262144"
-            )
+            builder = sparkBuilder,
+            logLevel = SparkLogLevel.ERROR
         ) {
             val logger = LogManager.getLogger("vcfGLuer")
             logger.setLevel(Level.INFO)

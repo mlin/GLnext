@@ -4,7 +4,8 @@ import org.jetbrains.kotlinx.spark.api.*
 /**
  * Elementary variant
  */
-data class Variant(val range: GRange, val ref: String, val alt: String) {
+data class Variant(val range: GRange, val ref: String, val alt: String) : Comparable<Variant> {
+    override fun compareTo(other: Variant) = compareValuesBy(this, other, { it.range }, { it.alt })
     fun str(contigs: Array<String>): String {
         val contigName = contigs[range.rid.toInt()]
         return "$contigName:${range.beg}/$ref/$alt"
@@ -26,7 +27,9 @@ fun VcfRecord.toVariant(): Variant {
 /**
  * Variant with one associated bin number
  */
-data class BinnedVariant(val bin: Long, val variant: Variant)
+data class BinnedVariant(val bin: Long, val variant: Variant) : Comparable<BinnedVariant> {
+    override fun compareTo(other: BinnedVariant) = compareValuesBy(this, other, { it.bin }, { it.variant })
+}
 
 /**
  * In a dataset of BinnedVariant, variants whose range touches multiple bins are replicated for
