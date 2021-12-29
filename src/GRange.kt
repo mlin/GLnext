@@ -1,3 +1,7 @@
+import org.apache.spark.sql.*
+import org.apache.spark.sql.api.java.UDF4
+import org.apache.spark.sql.types.*
+
 /**
  * Genomic range with reference sequence id (rid), one-based begin position, and inclusive end
  * position (matching the convention in the VCF text format).
@@ -22,4 +26,19 @@ data class GRange(val rid: Short, val beg: Int, val end: Int) : Comparable<GRang
         check(0 <= firstBin && firstBin <= lastBin && lastBin < (1L shl 48))
         return LongRange(ridBits + firstBin, ridBits + lastBin)
     }
+}
+
+/**
+ * SparkSQL UDF for GRange(rid, beg, end).bins(binSize) -> long[]
+ */
+fun registerGRangeBinsUDF(spark: SparkSession) {
+    spark.udf().register(
+        "GRangeBins",
+        object : UDF4<Short, Int, Int, Int, LongArray> {
+            override fun call(rid: Short?, beg: Int?, end: Int?, binSize: Int?): LongArray {
+                return GRange(rid!!, beg!!, end!!).bins(binSize!!).toList().toLongArray()
+            }
+        },
+        ArrayType(DataTypes.LongType, false)
+    )
 }

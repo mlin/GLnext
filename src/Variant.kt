@@ -1,15 +1,36 @@
+import org.apache.spark.api.java.function.MapFunction
 import org.apache.spark.sql.*
+import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
+import org.apache.spark.sql.catalyst.encoders.RowEncoder
+import org.apache.spark.sql.types.*
 import org.jetbrains.kotlinx.spark.api.*
+import org.xerial.snappy.Snappy
 
 /**
  * Elementary variant
  */
-data class Variant(val range: GRange, val ref: String, val alt: String) : Comparable<Variant> {
-    override fun compareTo(other: Variant) = compareValuesBy(this, other, { it.range }, { it.alt })
+data class Variant(val range: GRange, val ref: String, val alt: String) {
     fun str(contigs: Array<String>): String {
         val contigName = contigs[range.rid.toInt()]
         return "$contigName:${range.beg}/$ref/$alt"
     }
+    fun toRow(): Row {
+        return RowFactory.create(range.rid, range.beg, range.end, ref, alt)
+    }
+}
+
+/**
+ * RowEncoder for Variant.toRow()
+ */
+fun VariantRowEncoder(): ExpressionEncoder<Row> {
+    return RowEncoder.apply(
+        StructType()
+            .add("rid", DataTypes.ShortType, false)
+            .add("beg", DataTypes.IntegerType, false)
+            .add("end", DataTypes.IntegerType, false)
+            .add("ref", DataTypes.StringType, false)
+            .add("alt", DataTypes.StringType, false)
+    )
 }
 
 /**
@@ -25,28 +46,21 @@ fun VcfRecord.toVariant(): Variant {
 }
 
 /**
- * Variant with one associated bin number
+ * Harvest all distinct Variants from VcfRecord DataFrame
  */
-data class BinnedVariant(val bin: Long, val variant: Variant) : Comparable<BinnedVariant> {
-    override fun compareTo(other: BinnedVariant) = compareValuesBy(this, other, { it.bin }, { it.variant })
-}
-
-/**
- * In a dataset of BinnedVariant, variants whose range touches multiple bins are replicated for
- * each bin number.
- */
-typealias BinnedVariants = Dataset<BinnedVariant>
-
-/**
- * Harvest BinnedVariant from a BinnedVcfRecord (does not further replicate across bins)
- */
-fun BinnedVcfRecord.toBinnedVariant(): BinnedVariant {
-    return BinnedVariant(bin, record.toVariant())
-}
-
-/**
- * Harvest BinnedVariants from BinnedVcfRecords (mirroring the assumed replication in VcfRecords)
- */
-fun BinnedVcfRecords.getBinnedVariants(): BinnedVariants {
-    return map { it.toBinnedVariant() }.distinct()
+fun discoverVariants(vcfRecordsDF: Dataset<Row>): Dataset<Row> {
+    return vcfRecordsDF
+        .map(
+            object : MapFunction<Row, Row> {
+                override fun call(row: Row): Row {
+                    val range = GRange(row.getAs<Short>("rid"), row.getAs<Int>("beg"), row.getAs<Int>("end"))
+                    val vcfRecord = VcfRecord(
+                        row.getAs<Int>("callsetId"), range,
+                        String(Snappy.uncompress(row.getAs<ByteArray>("snappyLine")))
+                    )
+                    return vcfRecord.toVariant().toRow()
+                }
+            },
+            VariantRowEncoder()
+        ).distinct()
 }

@@ -117,6 +117,10 @@ fun aggregateVcfHeaders(spark: org.apache.spark.sql.SparkSession, filenames: Lis
         }
 }
 
+fun callsetExemplarFilename(aggHeader: AggVcfHeader, callsetId: Int): String {
+    return java.io.File(aggHeader.callsetsDetails[callsetId].callsetFilenames.first()).getName()!!
+}
+
 /**
  * Given deduplicated list of VcfHeaderLine, check them for internal consistency (ID uniqueness
  * etc.) and compile the contig ID mapping & global sample order
