@@ -10,6 +10,8 @@ import org.apache.log4j.Level
 import org.apache.log4j.LogManager
 import org.apache.spark.sql.*
 import org.jetbrains.kotlinx.spark.api.*
+import java.io.FileOutputStream
+import java.io.OutputStreamWriter
 
 class CLI : CliktCommand() {
     val inputFiles: List<String> by argument(help = "Input VCF filenames (or manifest(s) with --manifest)").multiple(required = true)
@@ -32,6 +34,7 @@ class CLI : CliktCommand() {
             // use it on far-too-large datasets, leading to OOM failures
             .config("spark.sql.join.preferSortMergeJoin", true)
             .config("spark.sql.autoBroadcastJoinThreshold", -1)
+            .config("io.compression.codecs", compressionCodecsWithBGZF())
 
         if (compressTemp) {
             sparkBuilder = sparkBuilder
@@ -83,15 +86,27 @@ class CLI : CliktCommand() {
                 val pvcfLines = jointCall(spark, aggHeader, variantsDF, vcfRecordsDF, binSize, pvcfRecordCount)
 
                 // write pVCF records (in parts)
-                pvcfLines.write().option("compression", "snappy").text(pvcfDir)
+                pvcfLines.write().option("compression", BGZFCodecClassName()).text(pvcfDir)
 
                 logger.info("original VCF records: ${vcfRecordCount.sum().pretty()}")
                 logger.info("unique variants: ${pvcfRecordCount.sum().pretty()}")
 
-                // atomically write output VCF header
-                val headerFile = java.io.File(pvcfDir, ".wip._HEADER")
-                headerFile.bufferedWriter().use { aggHeader.write(it) }
-                check(headerFile.renameTo(java.io.File(pvcfDir, "_HEADER")), { "unable to finalize pVCF _HEADER" })
+                // write output VCF header
+                val headerFile = java.io.File(pvcfDir, "_HEADER.bgz")
+                FileOutputStream(headerFile).use {
+                    BGZFOutputStream(it).use {
+                        OutputStreamWriter(it, "UTF-8").use {
+                            aggHeader.write(it)
+                        }
+                    }
+                }
+
+                // atomically write _EOF.bgz
+                val eofFile = java.io.File(pvcfDir, ".wip._EOF.bgz")
+                FileOutputStream(eofFile).use {
+                    it.write(htsjdk.samtools.util.BlockCompressedStreamConstants.EMPTY_GZIP_BLOCK)
+                }
+                check(eofFile.renameTo(java.io.File(pvcfDir, "_EOF.bgz")), { "unable to finalize _EOF.bgz" })
             }
         }
     }

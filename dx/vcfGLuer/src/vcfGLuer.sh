@@ -49,18 +49,13 @@ main() {
         vcf_in.manifest /tmp/pvcf_out \
         || true
     # Spark occasionally throws some meaningless exception during shutdown of a successful app,
-    # so ignore its exit code and check for _HEADER which vcfGLuer writes atomically on success.
-    if ! [[ -f /tmp/pvcf_out/_HEADER ]]; then
+    # so ignore its exit code and check for _EOF.bgz which vcfGLuer writes atomically on success.
+    if ! [[ -f /tmp/pvcf_out/_EOF.bgz ]]; then
         exit 1
     fi
 
-    # concat&bgzip to get the merged pVCF
-    bgzip_threads=16
-    if [ "$(nproc)" -lt "$bgzip_threads" ]; then
-        bgzip_threads=$(nproc)
-    fi
-    (cat /tmp/pvcf_out/_HEADER && snzip -dc -t hadoop-snappy /tmp/pvcf_out/*.snappy) \
-        | bgzip -c -@ "$bgzip_threads" \
+    # concat & upload the merged pVCF
+    (cat /tmp/pvcf_out/_HEADER.bgz /tmp/pvcf_out/part-*.bgz /tmp/pvcf_out/_EOF.bgz) \
         | dx upload --brief --buffer-size 1073741824 --destination "${output_name}.vcf.gz" - \
         | xargs dx-jobutil-add-output pvcf_gz
 }
