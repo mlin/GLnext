@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # Spark configuration
-export spark_worker_memory_fraction=0.75
+export spark_workers_per_numa_node=4
+export spark_worker_memory_fraction=0.8
 export spark_driver_memory_fraction=0.1
 export _JAVA_OPTIONS='
     -XX:+AlwaysPreTouch
@@ -34,11 +35,12 @@ main() {
 
     # start spark
     numa_nodes=$(detect_numa_nodes)
-    SPARK_EXECUTOR_MEMORY=$(awk '/MemTotal/ {printf("%.0f",$2*'"$spark_worker_memory_fraction"'/'"$numa_nodes"')}' /proc/meminfo)k
+    spark_workers=$((numa_nodes * spark_workers_per_numa_node))
+    SPARK_EXECUTOR_MEMORY=$(awk '/MemTotal/ {printf("%.0f",$2*'"$spark_worker_memory_fraction"'/'"$spark_workers"')}' /proc/meminfo)k
     SPARK_DRIVER_MEMORY=$(awk '/MemTotal/ {printf("%.0f",$2*'"$spark_driver_memory_fraction"')}' /proc/meminfo)k
     mkdir /tmp/spark_logs
     SPARK_LOG_DIR=/tmp/spark_logs
-    export numa_nodes SPARK_EXECUTOR_MEMORY SPARK_DRIVER_MEMORY SPARK_LOG_DIR
+    export numa_nodes spark_workers SPARK_EXECUTOR_MEMORY SPARK_DRIVER_MEMORY SPARK_LOG_DIR
     start_spark
 
     # run vcfGLuer
@@ -80,13 +82,13 @@ start_spark() {
     "${SPARK_HOME}/sbin/start-master.sh" --host 127.0.0.1 >&2
     echo "started Spark master at spark://127.0.0.1:7077" >&2
 
-    # start Spark workers, 1:1 binding to NUMA nodes
-    threads_per_numa_node=$(( $(nproc) / numa_nodes ))
-    for ((i=0; i<numa_nodes; i++)); do
-        numactl --cpunodebind "$i" --membind="$i" \
+    # start Spark workers, binding each to one NUMA node
+    threads_per_numa_node=$(( $(nproc) / spark_workers ))
+    for ((i=0; i<spark_workers; i++)); do
+        numactl --cpunodebind "$((i % numa_nodes))" --membind="$((i % numa_nodes))" \
             "${SPARK_HOME}/sbin/spark-daemon.sh" start org.apache.spark.deploy.worker.Worker "$(( i + 1 ))" \
                 --webui-port "$(( 8081 + i ))" spark://127.0.0.1:7077 --host 127.0.0.1 \
                 --cores "$threads_per_numa_node" --memory "$SPARK_EXECUTOR_MEMORY" >&2
     done
-    echo "started $numa_nodes Spark worker(s) each with $threads_per_numa_node threads and $SPARK_EXECUTOR_MEMORY memory" >&2
+    echo "started $spark_workers Spark worker(s) each with $threads_per_numa_node threads and $SPARK_EXECUTOR_MEMORY memory" >&2
 }
