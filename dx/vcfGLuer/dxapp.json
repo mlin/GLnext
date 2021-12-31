@@ -21,10 +21,22 @@
       "help": ""
     },
     {
+      "name": "genomic_range_filter",
+      "class": "string",
+      "optional": true,
+      "help": "filter input VCF files to chr:beg-end"
+    },
+    {
       "name": "genomic_range_bin_size",
       "class": "int",
-      "default": 100,
-      "help": ""
+      "default": 25,
+      "help": "perf tuning: set to a genomic range length longer than >90% of VCF records"
+    },
+    {
+      "name": "worker_instance_type",
+      "class": "string",
+      "default": "mem3_ssd3_x12",
+      "help": "Spark worker instance type"
     }
   ],
   "outputSpec": [
@@ -65,7 +77,7 @@
     "aws:us-east-1": {
       "systemRequirements": {
         "*": {
-          "instanceType": "mem3_ssd3_x12"
+          "instanceType": "mem1_ssd1_v2_x2"
         }
       }
     }

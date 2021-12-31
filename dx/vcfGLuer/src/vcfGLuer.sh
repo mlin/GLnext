@@ -1,5 +1,10 @@
 #!/bin/bash
 
+main() {
+    worker_id=$(dx-jobutil-new-job -f job_input.json --instance-type "$worker_instance_type" worker_main)
+    dx-jobutil-add-output pvcf_gz "${worker_id}:pvcf_gz"
+}
+
 # Spark configuration
 export spark_workers_per_numa_node=4
 export spark_worker_memory_fraction=0.8
@@ -18,7 +23,7 @@ export _JAVA_OPTIONS='
 export SPARK_HOME=/spark
 export SPARK_LOCAL_IP=127.0.0.1
 
-main() {
+worker_main() {
     set -euo pipefail
 
     # log detailed utilization
@@ -26,11 +31,17 @@ main() {
     bash -c 'while true; do df -h /tmp; sleep 300; done' &
 
     dx-download-all-inputs
+
+    range_filter_arg=""
+    if [[ -n $genomic_range_filter ]]; then
+        range_filter_arg="-range $genomic_range_filter"
+    fi
+
     # process dxid manifests under in/vcf_manifest/
     mkdir /tmp/vcf_in
     find in/vcf_manifest -type f -execdir cat {} + \
         | parallel --jobs 50% --delay 4 --verbose \
-            bash -o pipefail -c "'dx cat {} | bgzip -dc@ 4 | vcf_line_splitter -threads 4 -MB 4096 -quiet /tmp/vcf_in/{}- > /dev/null'"
+            bash -o pipefail -c "'dx cat {} | bgzip -dc@ 4 | vcf_line_splitter -threads 4 -MB 4096 -quiet $range_filter_arg /tmp/vcf_in/{}- > /dev/null'"
     part_count=$(find /tmp/vcf_in -type f | tee vcf_in.manifest | wc -l)
 
     # start spark

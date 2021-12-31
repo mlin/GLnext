@@ -67,7 +67,7 @@ fun joinVariantsAndVcfRecords(variantsDF: Dataset<Row>, vcfRecordsDF: Dataset<Ro
             .filter((col("var.beg") leq col("vcf.end")) and (col("var.end") geq col("vcf.beg")))
             // group overlappers by (variant, callsetId)
             .groupBy("var.rid", "var.beg", "var.end", "var.ref", "var.alt", "vcf.callsetId")
-            // collect -distinct- VCF records (thus removing any binning-related duplication)
+            // collect -distinct- VCF records (thus removing any binning-derived duplication)
             .agg(collect_set("vcf.snappyLine").alias("callsetSnappyLines"))
 
     // finally group the (variant, callsetId, callsetSnappyLines) items by variant
