@@ -5,6 +5,6 @@ all:
 	# generate dxCompiler wrapper for the just-built applet
 	cd workflow && java -jar $(DXCOMPILER_JAR) dxni -path "$$(dx pwd)/vcfGLuer" --output extern.wdl -force
 	# build high-level workflow
-	cd workflow && java -jar $(DXCOMPILER_JAR) compile vcfGLuerScatter.wdl -destination "$$(dx pwd)" -force
+	cd workflow && java -jar $(DXCOMPILER_JAR) compile vcfGLuerWorkflow.wdl -destination "$$(dx pwd)" -force
 
 .PHONY: all

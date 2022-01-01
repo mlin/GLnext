@@ -38,6 +38,7 @@ worker_main() {
     fi
 
     # process dxid manifests under in/vcf_manifest/
+    # TODO: skip vcf_line_splitter for non-large input VCFs
     mkdir /tmp/vcf_in
     find in/vcf_manifest -type f -execdir cat {} + \
         | parallel --jobs 50% --delay 4 --verbose \
@@ -68,6 +69,7 @@ worker_main() {
     fi
 
     # concat & upload the merged pVCF
+    # TODO: option to omit header and EOF (upload separately) so that scatter shards concatenate
     (cat /tmp/pvcf_out/_HEADER.bgz /tmp/pvcf_out/part-*.bgz /tmp/pvcf_out/_EOF.bgz) \
         | dx upload --brief --buffer-size 1073741824 --destination "${output_name}.vcf.gz" - \
         | xargs dx-jobutil-add-output pvcf_gz
