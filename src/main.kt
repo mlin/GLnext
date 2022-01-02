@@ -76,7 +76,11 @@ class CLI : CliktCommand() {
 
             // load all VCF records
             val vcfRecordCount = spark.sparkContext.longAccumulator("original VCF records")
-            readVcfRecordsDF(spark, aggHeader, deleteInputVcfs = deleteInputVcfs, recordCount = vcfRecordCount).withCached {
+            val vcfRecordBytes = spark.sparkContext.longAccumulator("original VCF bytes)")
+            readVcfRecordsDF(
+                spark, aggHeader, deleteInputVcfs = deleteInputVcfs,
+                recordCount = vcfRecordCount, recordBytes = vcfRecordBytes
+            ).withCached {
                 val vcfRecordsDF = this
 
                 // discover variants
@@ -84,13 +88,16 @@ class CLI : CliktCommand() {
 
                 // perform joint-calling
                 val pvcfRecordCount = spark.sparkContext.longAccumulator("pVCF records")
-                val pvcfLines = jointCall(spark, aggHeader, variantsDF, vcfRecordsDF, binSize, pvcfRecordCount)
+                val pvcfRecordBytes = spark.sparkContext.longAccumulator("pVCF bytes")
+                val pvcfLines = jointCall(spark, aggHeader, variantsDF, vcfRecordsDF, binSize, pvcfRecordCount, pvcfRecordBytes)
 
                 // write pVCF records (in parts)
                 pvcfLines.write().option("compression", BGZFCodecClassName()).text(pvcfDir)
 
                 logger.info("original VCF records: ${vcfRecordCount.sum().pretty()}")
-                logger.info("unique variants: ${pvcfRecordCount.sum().pretty()}")
+                logger.info("original VCF bytes: ${vcfRecordBytes.sum().pretty()}")
+                logger.info("pVCF variants: ${pvcfRecordCount.sum().pretty()}")
+                logger.info("pVCF bytes: ${pvcfRecordBytes.sum().pretty()}")
 
                 // write output VCF header
                 val headerFile = java.io.File(pvcfDir, "_HEADER.bgz")

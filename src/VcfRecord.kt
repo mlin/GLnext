@@ -53,7 +53,8 @@ fun readVcfRecordsDF(
     spark: SparkSession,
     aggHeader: AggVcfHeader,
     deleteInputVcfs: Boolean = false,
-    recordCount: LongAccumulator? = null
+    recordCount: LongAccumulator? = null,
+    recordBytes: LongAccumulator? = null
 ): Dataset<Row> {
     var filenamesWithCallsetIds = spark.toDS(aggHeader.filenameCallsetId.toList())
     // pigeonhole partitions (assume each file is a reasonable size)
@@ -73,6 +74,7 @@ fun readVcfRecordsDF(
                             line ->
                             if (line.length > 0 && line.get(0) != '#') {
                                 recordCount?.let { it.add(1L) }
+                                recordBytes?.let { it.add(line.length + 1L) }
                                 yield(parseVcfRecord(contigId, callsetId, line).toRow())
                             }
                         }

@@ -17,7 +17,8 @@ fun jointCall(
     variantsDF: Dataset<Row>,
     vcfRecordsDF: Dataset<Row>,
     binSize: Int,
-    pvcfRecordCount: LongAccumulator? = null
+    pvcfRecordCount: LongAccumulator? = null,
+    pvcfRecordBytes: LongAccumulator? = null
 ): Dataset<String> {
     val aggHeaderB = spark.sparkContext.broadcast(aggHeader)
     // joint-call each variant into a snappy-compressed pVCF line with GRange columns
@@ -41,7 +42,11 @@ fun jointCall(
     // sort pVCF lines by GRange & decompress
     return pvcfToSort
         .orderBy("rid", "beg", "end", "alt")
-        .map { String(Snappy.uncompress(it.getAs<ByteArray>("snappyRecord"))) }
+        .map {
+            val ans = String(Snappy.uncompress(it.getAs<ByteArray>("snappyRecord")))
+            pvcfRecordBytes?.let { it.add(ans.length + 1L) }
+            ans
+        }
 }
 
 /**
