@@ -41,8 +41,8 @@ worker_main() {
     # TODO: skip vcf_line_splitter for non-large input VCFs
     mkdir /tmp/vcf_in
     find in/vcf_manifest -type f -execdir cat {} + \
-        | parallel --jobs 50% --delay 4 --verbose \
-            bash -o pipefail -c "'dx cat {} | bgzip -dc@ 4 | vcf_line_splitter -threads 4 -MB 4096 -quiet $range_filter_arg /tmp/vcf_in/{}- > /dev/null'"
+        | parallel --jobs 25% --delay 4 --halt 2 --verbose \
+            bash -o pipefail -c "'dx cat {} | bgzip -dc@ 4 | vcf_line_splitter -threads 5 -MB 4096 -quiet $range_filter_arg /tmp/vcf_in/{}- > /dev/null'"
     part_count=$(find /tmp/vcf_in -type f | tee vcf_in.manifest | wc -l)
 
     # start spark

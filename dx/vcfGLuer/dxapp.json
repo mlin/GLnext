@@ -23,7 +23,7 @@
     {
       "name": "genomic_range_filter",
       "class": "string",
-      "optional": true,
+      "default": "",
       "help": "filter input VCF files to chr:beg-end"
     },
     {
