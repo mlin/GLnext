@@ -10,9 +10,9 @@ workflow vcfGLuerWorkflow {
         String output_name
 
         Array[String] genomic_ranges = []
+        String flags
         Boolean output_tbi = false
 
-        Int genomic_range_bin_size = 25
         String spark_worker_instance_type = "mem3_ssd3_x12"
     }
 
@@ -23,7 +23,7 @@ workflow vcfGLuerWorkflow {
             vcf_manifest = vcf_manifest,
             output_name = output_name + grange_suffix,
             genomic_range_filter = grange,
-            genomic_range_bin_size = genomic_range_bin_size,
+            flags = flags,
             worker_instance_type = spark_worker_instance_type
         }
     }

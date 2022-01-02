@@ -45,7 +45,7 @@ data class AggVcfHeader(
 /**
  * Use Spark to load all VCF headers and aggregate them
  */
-fun aggregateVcfHeaders(spark: org.apache.spark.sql.SparkSession, filenames: List<String>): AggVcfHeader {
+fun aggregateVcfHeaders(spark: org.apache.spark.sql.SparkSession, filenames: List<String>, allowDuplicateSamples: Boolean = false): AggVcfHeader {
     spark.toDS(filenames)
         // read & digest all VCF headers
         .map {
@@ -84,24 +84,38 @@ fun aggregateVcfHeaders(spark: org.apache.spark.sql.SparkSession, filenames: Lis
                     "$exemplarFilename header has duplicate sample names"
                 })
                 callsetId to (filenames to samples)
-            }.collectAsList().sortedBy { it.first }.map { it.second }
+            }.collectAsList().sortedBy { it.first }.mapIndexed {
+                i, it ->
+                check(i == it.first)
+                it.second
+            }
             val filenameToCallsetId = callsetsDetailsPre.flatMapIndexed {
                 i, (filenames, _) ->
                 filenames.map { it to i }
             }.toMap()
 
-            // check & aggregate samples
-            val samples = callsetsDetailsPre.map { it.second }.flatten().sorted().toTypedArray()
-            val sampleIndex = samples.mapIndexed { i, sample -> sample to i }.toMap()
+            // collect samples from all callsets into an aggregated order, checking for duplicates
+            val flatSamples = callsetsDetailsPre.mapIndexed {
+                callsetId, it ->
+                it.second.map { sample -> sample to callsetId }
+            }.flatten()
+            val samples = flatSamples.map { it.first }.distinct().sorted().toTypedArray()
             require(
-                sampleIndex.size == samples.size,
+                flatSamples.size == samples.size || allowDuplicateSamples,
                 { "duplicate samples found among distinct VCF headers" }
             )
+            val sampleIndex = samples.mapIndexed { i, sample -> sample to i }.toMap()
+
+            // if allowDuplicateSamples, arbitrarily select one source callset for any sample that
+            // appeared in multiple callsets
+            val sampleCallset = flatSamples.toMap()
 
             // finalize CallsetsDetails by mapping callset sample names into the aggregated order
             val callsetsDetails = callsetsDetailsPre.mapIndexed {
                 callsetId, (callsetFilenames, callsetSamples) ->
-                val callsetSampleIndexes = callsetSamples.map { sampleIndex.get(it)!! }.toIntArray()
+                val callsetSampleIndexes = callsetSamples.map {
+                    if (sampleCallset.get(it)!! == callsetId) sampleIndex.get(it)!! else -1
+                }.toIntArray()
                 CallsetDetails(callsetFilenames, callsetSampleIndexes)
             }.toTypedArray()
 

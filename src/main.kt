@@ -17,9 +17,10 @@ class CLI : CliktCommand() {
     val inputFiles: List<String> by argument(help = "Input VCF filenames (or manifest(s) with --manifest)").multiple(required = true)
     val pvcfDir: String by argument(help = "Output directory for pVCF parts (mustn't already exist)")
     val manifest by option(help = "Input files are manifest(s) containing one VCF filename per line").flag(default = false)
+    val binSize: Int by option(help = "Genome range bin size").int().default(100)
+    val allowDuplicateSamples by option(help = "If a sample appears in multiple input callsets, use one arbitrarily instead of failing").flag(default = false)
     val deleteInputVcfs by option(help = "Delete input VCF files after loading them (DANGER!)").flag(default = false)
     val compressTemp by option(help = "Compress Spark temporary files (marginal benefit on localhost)").flag(default = false)
-    val binSize: Int by option(help = "Genome range bin size").int().default(100)
 
     override fun run() {
 
@@ -58,7 +59,7 @@ class CLI : CliktCommand() {
             logger.info("input VCF files: ${effInputFiles.size.pretty()}")
 
             // load & aggregate all input VCF headers
-            val aggHeader = aggregateVcfHeaders(spark, effInputFiles)
+            val aggHeader = aggregateVcfHeaders(spark, effInputFiles, allowDuplicateSamples = allowDuplicateSamples)
 
             logger.info("samples: ${aggHeader.samples.size.pretty()}")
             logger.info("callsets: ${aggHeader.callsetsDetails.size.pretty()}")

@@ -163,7 +163,9 @@ fun callsetGenotypes(aggHeader: AggVcfHeader, variant: Variant, callsetId: Int, 
             // yield back the genotype entries (unchanged for now)
             aggHeader.callsetsDetails[callsetId].callsetSamples.forEachIndexed {
                 inIdx, outIdx ->
-                yield(_GtEntry(outIdx, tsv[8], tsv[inIdx + 9]))
+                if (outIdx >= 0) {
+                    yield(_GtEntry(outIdx, tsv[8], tsv[inIdx + 9]))
+                }
             }
         }
     }

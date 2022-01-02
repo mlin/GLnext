@@ -59,7 +59,7 @@ worker_main() {
     "${SPARK_HOME}/bin/spark-submit" \
         --master 'spark://127.0.0.1:7077' --driver-memory "$SPARK_DRIVER_MEMORY" \
         --name vcfGLuer --class vcfGLuer vcfGLuer-*.jar \
-        --manifest --bin-size "$genomic_range_bin_size" --delete-input-vcfs \
+        --manifest --delete-input-vcfs $flags \
         vcf_in.manifest /tmp/pvcf_out \
         || true
     # Spark occasionally throws some meaningless exception during shutdown of a successful app,
