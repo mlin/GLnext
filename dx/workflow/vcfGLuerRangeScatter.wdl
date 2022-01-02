@@ -4,7 +4,7 @@ version 1.0
 #   java -jar dxCompiler.jar dxni -project project-xxxx -folder / --output extern.wdl -force
 import "extern.wdl"
 
-workflow vcfGLuerWorkflow {
+workflow vcfGLuerRangeScatter {
     input {
         File vcf_manifest
         String output_name
