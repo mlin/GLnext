@@ -37,7 +37,7 @@ fun VariantRowEncoder(): ExpressionEncoder<Row> {
  * Harvest Variant from a VcfRecord
  */
 fun VcfRecord.toVariant(): Variant {
-    val tsv = line.splitToSequence("\t").take(5).toList().toTypedArray()
+    val tsv = line.splitToSequence('\t').take(5).toList().toTypedArray()
     val ref = tsv[3]
     val alt = tsv[4]
     check(ref.length == range.end - range.beg + 1)

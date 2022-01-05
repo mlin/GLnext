@@ -37,7 +37,7 @@ fun VcfRecordRowEncoder(): ExpressionEncoder<Row> {
  * Parse VCF text line into VcfRecord
  */
 fun parseVcfRecord(contigId: Map<String, Short>, callsetId: Int, line: String): VcfRecord {
-    val tsv = line.splitToSequence("\t").take(8).toList().toTypedArray()
+    val tsv = line.splitToSequence('\t').take(8).toList().toTypedArray()
     val rid = contigId.getOrDefault(tsv[0], -1)
     require(rid >= 0, { "unknown CHROM ${tsv[0]}" })
     val beg = tsv[1].toInt()

@@ -114,8 +114,8 @@ fun jointCallVariant(aggHeader: AggVcfHeader, variantRow: Row, callsetsData: Ite
         // generate genotype entry for each sample in the callset
         callsetGenotypes(aggHeader, variant, callsetId, callsetRecords).forEach {
             // check fieldIds vs formatFieldIds and extend if needed
-            var longFieldIds = it.fieldIds
-            var shortFieldIds = formatFieldIds
+            var longFieldIds = formatFieldIds
+            var shortFieldIds = it.fieldIds
             if (longFieldIds.length < shortFieldIds.length) {
                 longFieldIds = shortFieldIds.also { shortFieldIds = longFieldIds }
             }
@@ -154,8 +154,10 @@ fun jointCallVariant(aggHeader: AggVcfHeader, variantRow: Row, callsetsData: Ite
 data class _GtEntry(val pvcfSampleIdx: Int, val fieldIds: String, val fields: String)
 fun callsetGenotypes(aggHeader: AggVcfHeader, variant: Variant, callsetId: Int, callsetRecords: List<VcfRecord>): Sequence<_GtEntry> {
     return sequence {
+        val callsetSamples = aggHeader.callsetsDetails[callsetId].callsetSamples
+        val callsetVariantsAndRecords = callsetRecords.map { it.toVariant() to it }
         // Find callset record identical to variant
-        val vtRecords = callsetRecords.filter { it.toVariant() == variant }
+        val vtRecords = callsetVariantsAndRecords.filter { it.first == variant }.map { it.second }
         if (vtRecords.size > 0) {
             require(vtRecords.size == 1, {
                 val exemplarFilename = callsetExemplarFilename(aggHeader, callsetId)
@@ -163,13 +165,17 @@ fun callsetGenotypes(aggHeader: AggVcfHeader, variant: Variant, callsetId: Int, 
                 "$exemplarFilename has multiple records for $variantStr"
             })
             val vtRecord = vtRecords.first()
-            val tsv = vtRecord.line.split("\t").toTypedArray()
-
             // yield back the genotype entries (unchanged for now)
-            aggHeader.callsetsDetails[callsetId].callsetSamples.forEachIndexed {
-                inIdx, outIdx ->
-                if (outIdx >= 0) {
-                    yield(_GtEntry(outIdx, tsv[8], tsv[inIdx + 9]))
+            var fieldIds = ""
+            val tsv = vtRecord.line.splitToSequence('\t').forEachIndexed {
+                inIdx, entry ->
+                if (inIdx >= 9) {
+                    val outIdx = callsetSamples[inIdx - 9]
+                    if (outIdx >= 0) {
+                        yield(_GtEntry(outIdx, fieldIds, entry))
+                    }
+                } else if (inIdx == 8) {
+                    fieldIds = entry
                 }
             }
         }
