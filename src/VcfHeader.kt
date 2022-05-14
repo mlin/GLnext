@@ -25,8 +25,10 @@ typealias VcfHeaderLineIndex = Map<Pair<VcfHeaderLineKind, String>, VcfHeaderLin
 data class CallsetDetails(val callsetFilenames: List<String>, val callsetSamples: IntArray) : java.io.Serializable
 
 /**
- * Meta VCF header aggregated from all callsets (header lines deduplicated & checked for
- * consistency across callsets)
+ * Meta header aggregated from all input VCF files (header lines deduplicated & checked for
+ * consistency, with a global sample order and the mapping of each file's sample order thereunto).
+ * This is all information about the input VCFs, preceding generation of the output pVCF's header
+ * (JointHeader).
  */
 data class AggVcfHeader(
     // Distinct header lines (keyed by kind & ID)
@@ -277,32 +279,4 @@ class HtsJdkLineIteratorImpl(val inner: Iterator<String>) : htsjdk.tribble.reade
     override fun remove() {
         throw UnsupportedOperationException()
     }
-}
-
-/**
- * Write out aggregated VCF header
- */
-fun AggVcfHeader.write(outfile: java.io.Writer) {
-    outfile.write("##fileformat=VCFv4.3\n")
-
-    headerLines.toList().map { (_, line) -> line }.sorted().forEach {
-        outfile.write("##" + it.lineText + "\n")
-    }
-    outfile.write(
-        listOf(
-            "#CHROM",
-            "POS",
-            "ID",
-            "REF",
-            "ALT",
-            "QUAL",
-            "FILTER",
-            "INFO",
-            "FORMAT"
-        ).joinToString("\t")
-    )
-    samples.forEach {
-        outfile.write("\t" + it)
-    }
-    outfile.write("\n")
 }

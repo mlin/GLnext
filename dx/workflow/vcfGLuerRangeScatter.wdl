@@ -12,6 +12,7 @@ workflow vcfGLuerRangeScatter {
         Array[String] genomic_ranges = []
         String flags
         Boolean output_tbi = false
+        Boolean streaming_split = false
 
         String spark_worker_instance_type = "mem3_ssd3_x12"
     }
@@ -24,6 +25,7 @@ workflow vcfGLuerRangeScatter {
             output_name = output_name + grange_suffix,
             genomic_range_filter = grange,
             flags = flags,
+            streaming_split = streaming_split,
             worker_instance_type = spark_worker_instance_type
         }
     }

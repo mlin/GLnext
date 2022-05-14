@@ -27,6 +27,12 @@
       "help": "filter input VCF files to chr:beg-end"
     },
     {
+      "name": "streaming_split",
+      "class": "boolean",
+      "default": false,
+      "help": "split input VCFs during streaming localization (use for few, large input files)"
+    },
+    {
       "name": "flags",
       "class": "string",
       "default": "",

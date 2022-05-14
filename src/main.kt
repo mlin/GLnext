@@ -6,6 +6,9 @@ import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.int
+import com.sksamuel.hoplite.*
+import com.sksamuel.hoplite.sources.SystemPropertiesPropertySource
+import com.sksamuel.hoplite.toml.TomlParser
 import org.apache.log4j.Level
 import org.apache.log4j.LogManager
 import org.apache.spark.sql.*
@@ -13,16 +16,29 @@ import org.jetbrains.kotlinx.spark.api.*
 import java.io.FileOutputStream
 import java.io.OutputStreamWriter
 
+data class SparkConfig(val compressTempRecords: Boolean, val compressTempFiles: Boolean)
+data class MainConfig(val spark: SparkConfig, val joint: JointConfig)
+
 class CLI : CliktCommand() {
     val inputFiles: List<String> by argument(help = "Input VCF filenames (or manifest(s) with --manifest)").multiple(required = true)
     val pvcfDir: String by argument(help = "Output directory for pVCF parts (mustn't already exist)")
-    val manifest by option(help = "Input files are manifest(s) containing one VCF filename per line").flag(default = false)
-    val binSize: Int by option(help = "Genome range bin size").int().default(100)
+    val manifest by option(help = "Input files are manifest(s) containing oVne CF filename per line").flag(default = false)
+    val config: String by option(help = "Configuration preset name").default("DeepVariant")
+    val binSize: Int by option(help = "Genome range bin size").int().default(16)
     val allowDuplicateSamples by option(help = "If a sample appears in multiple input callsets, use one arbitrarily instead of failing").flag(default = false)
     val deleteInputVcfs by option(help = "Delete input VCF files after loading them (DANGER!)").flag(default = false)
-    val compressTemp by option(help = "Compress Spark temporary files (marginal benefit on localhost)").flag(default = false)
+
+    // TODO: take a BED file of target regions
+    // TODO: read directly from https:// or dx:// URIs (with aggregate rate-limiting)
 
     override fun run() {
+        val config = ConfigLoaderBuilder.default()
+            .addParser("toml", TomlParser())
+            .addPropertySource(SystemPropertiesPropertySource())
+            .addResourceSource("/config/main.toml")
+            .addResourceSource("/config/$config.toml")
+            .build()
+            .loadConfigOrThrow<MainConfig>()
 
         var effInputFiles = inputFiles
         if (manifest) {
@@ -37,14 +53,14 @@ class CLI : CliktCommand() {
             .config("spark.sql.autoBroadcastJoinThreshold", -1)
             .config("io.compression.codecs", compressionCodecsWithBGZF())
 
-        if (compressTemp) {
+        if (config.spark.compressTempFiles) {
             sparkBuilder = sparkBuilder
                 .config("spark.shuffle.compress", true)
                 .config("spark.broadcast.compress", true)
                 .config("spark.checkpoint.compress", true)
                 .config("spark.rdd.compress", true)
-                .config("spark.io.compression.codec", "snappy")
-                .config("spark.io.compression.snappy.blockSize", "262144")
+                .config("spark.io.compression.codec", "lz4")
+                .config("spark.io.compression.lz4.blockSize", "262144")
         }
 
         withSpark(
@@ -55,6 +71,8 @@ class CLI : CliktCommand() {
 
             val logger = LogManager.getLogger("vcfGLuer")
             logger.setLevel(Level.INFO)
+
+            logger.info(config.toString())
             logger.info("binSize: $binSize")
             logger.info("input VCF files: ${effInputFiles.size.pretty()}")
 
@@ -78,7 +96,7 @@ class CLI : CliktCommand() {
             val vcfRecordCount = spark.sparkContext.longAccumulator("original VCF records")
             val vcfRecordBytes = spark.sparkContext.longAccumulator("original VCF bytes)")
             readVcfRecordsDF(
-                spark, aggHeader, deleteInputVcfs = deleteInputVcfs,
+                spark, aggHeader, compressEachRecord = config.spark.compressTempRecords, deleteInputVcfs = deleteInputVcfs,
                 recordCount = vcfRecordCount, recordBytes = vcfRecordBytes
             ).withCached {
                 val vcfRecordsDF = this
@@ -89,7 +107,7 @@ class CLI : CliktCommand() {
                 // perform joint-calling
                 val pvcfRecordCount = spark.sparkContext.longAccumulator("pVCF records")
                 val pvcfRecordBytes = spark.sparkContext.longAccumulator("pVCF bytes")
-                val pvcfLines = jointCall(spark, aggHeader, variantsDF, vcfRecordsDF, binSize, pvcfRecordCount, pvcfRecordBytes)
+                val (pvcfHeader, pvcfLines) = jointCall(config.joint, spark, aggHeader, variantsDF, vcfRecordsDF, binSize, pvcfRecordCount, pvcfRecordBytes)
 
                 // write pVCF records (in parts)
                 pvcfLines.write().option("compression", BGZFCodecClassName()).text(pvcfDir)
@@ -104,7 +122,7 @@ class CLI : CliktCommand() {
                 FileOutputStream(headerFile).use {
                     BGZFOutputStream(it).use {
                         OutputStreamWriter(it, "UTF-8").use {
-                            aggHeader.write(it)
+                            it.write(pvcfHeader)
                         }
                     }
                 }

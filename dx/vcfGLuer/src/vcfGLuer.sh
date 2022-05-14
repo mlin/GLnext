@@ -38,11 +38,16 @@ worker_main() {
     fi
 
     # process dxid manifests under in/vcf_manifest/
-    # TODO: skip vcf_line_splitter for non-large input VCFs
     mkdir /tmp/vcf_in
+    localize_cmd="'dx download --no-progress -o /tmp/vcf_in/ {}'"
+    parallel_opts=''
+    if [[ $streaming_split == "true" || -n $range_filter_arg ]]; then
+        localize_cmd="'dx cat {} | bgzip -dc@ 4 | vcf_line_splitter -threads 5 -MB 4096 -quiet $range_filter_arg /tmp/vcf_in/{}- > /dev/null'"
+        parallel_opts='--jobs 25% --delay 4'
+    fi
     find in/vcf_manifest -type f -execdir cat {} + \
-        | parallel --jobs 25% --delay 4 --halt 2 --verbose \
-            bash -o pipefail -c "'dx cat {} | bgzip -dc@ 4 | vcf_line_splitter -threads 5 -MB 4096 -quiet $range_filter_arg /tmp/vcf_in/{}- > /dev/null'"
+        | parallel $parallel_opts --halt 2 --verbose \
+            bash -o pipefail -c "$localize_cmd"
     part_count=$(find /tmp/vcf_in -type f | tee vcf_in.manifest | wc -l)
 
     # start spark

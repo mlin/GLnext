@@ -1,0 +1,11 @@
+[joint]
+formatFields = [
+    { name = "DP" },
+    { name = "GQ" },
+    { name = "AD" },
+    { name = "PL" },
+    { name = "OL" }
+]
+
+[joint.gt]
+overlapMode = "MISSING"

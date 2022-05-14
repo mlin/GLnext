@@ -1,0 +1,7 @@
+[spark]
+# Snappy compression of intermediate data during sort/join passes
+# Usually only one of compressTempRecords and compressTempFiles should be true.
+# compressTempRecords: when individual input records are large s.t. they individually compress well
+compressTempRecords = false
+# compressTempFiles: otherwise
+compressTempFiles = true

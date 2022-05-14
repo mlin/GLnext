@@ -47,9 +47,24 @@
             <artifactId>clikt-jvm</artifactId>
             <version>3.4.0</version>
         </dependency>
+        <dependency>
+            <groupId>com.sksamuel.hoplite</groupId>
+            <artifactId>hoplite-core</artifactId>
+            <version>2.1.1</version>
+        </dependency>
+        <dependency>
+            <groupId>com.sksamuel.hoplite</groupId>
+            <artifactId>hoplite-toml</artifactId>
+            <version>2.1.1</version>
+        </dependency>
     </dependencies>
 
     <build>
+        <resources>
+            <resource>
+                <directory>src/resources</directory>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -68,6 +83,8 @@
                                     <include>org.jetbrains.kotlin:* </include>
                                     <include>com.github.samtools:*</include>
                                     <include>com.github.ajalt.clikt:*</include>
+                                    <include>com.sksamuel.hoplite:*</include>
+                                    <include>org.tomlj:*</include>
                                 </includes>
                             </artifactSet>
                         </configuration>
@@ -81,7 +98,7 @@
                 <version>${kotlin.version}</version>
                 <configuration>
                     <sourceDirs>src</sourceDirs>
-                    <jvmTarget>1.8</jvmTarget>
+                    <jvmTarget>11</jvmTarget>
                     <myIncremental>true</myIncremental>
                 </configuration>
                 <executions>
