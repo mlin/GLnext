@@ -15,6 +15,7 @@ import org.apache.spark.sql.*
 import org.jetbrains.kotlinx.spark.api.*
 import java.io.FileOutputStream
 import java.io.OutputStreamWriter
+import java.util.Properties
 
 data class SparkConfig(val compressTempRecords: Boolean, val compressTempFiles: Boolean)
 data class MainConfig(val spark: SparkConfig, val joint: JointConfig)
@@ -32,7 +33,7 @@ class CLI : CliktCommand() {
     // TODO: read directly from https:// or dx:// URIs (with aggregate rate-limiting)
 
     override fun run() {
-        val config = ConfigLoaderBuilder.default()
+        val cfg = ConfigLoaderBuilder.default()
             .addParser("toml", TomlParser())
             .addPropertySource(SystemPropertiesPropertySource())
             .addResourceSource("/config/main.toml")
@@ -53,7 +54,7 @@ class CLI : CliktCommand() {
             .config("spark.sql.autoBroadcastJoinThreshold", -1)
             .config("io.compression.codecs", compressionCodecsWithBGZF())
 
-        if (config.spark.compressTempFiles) {
+        if (cfg.spark.compressTempFiles) {
             sparkBuilder = sparkBuilder
                 .config("spark.shuffle.compress", true)
                 .config("spark.broadcast.compress", true)
@@ -72,7 +73,8 @@ class CLI : CliktCommand() {
             val logger = LogManager.getLogger("vcfGLuer")
             logger.setLevel(Level.INFO)
 
-            logger.info(config.toString())
+            logger.info("vcfGLuer v${getProjectVersion()}")
+            logger.info(cfg.toString())
             logger.info("binSize: $binSize")
             logger.info("input VCF files: ${effInputFiles.size.pretty()}")
 
@@ -96,7 +98,7 @@ class CLI : CliktCommand() {
             val vcfRecordCount = spark.sparkContext.longAccumulator("original VCF records")
             val vcfRecordBytes = spark.sparkContext.longAccumulator("original VCF bytes)")
             readVcfRecordsDF(
-                spark, aggHeader, compressEachRecord = config.spark.compressTempRecords, deleteInputVcfs = deleteInputVcfs,
+                spark, aggHeader, compressEachRecord = cfg.spark.compressTempRecords, deleteInputVcfs = deleteInputVcfs,
                 recordCount = vcfRecordCount, recordBytes = vcfRecordBytes
             ).withCached {
                 val vcfRecordsDF = this
@@ -105,9 +107,13 @@ class CLI : CliktCommand() {
                 val variantsDF = discoverVariants(vcfRecordsDF)
 
                 // perform joint-calling
+                val pvcfHeaderMetaLines = listOf(
+                    "vcfGLuer_version=${getProjectVersion()}",
+                    "vcfGLuer_config=$cfg"
+                )
                 val pvcfRecordCount = spark.sparkContext.longAccumulator("pVCF records")
                 val pvcfRecordBytes = spark.sparkContext.longAccumulator("pVCF bytes")
-                val (pvcfHeader, pvcfLines) = jointCall(config.joint, spark, aggHeader, variantsDF, vcfRecordsDF, binSize, pvcfRecordCount, pvcfRecordBytes)
+                val (pvcfHeader, pvcfLines) = jointCall(cfg.joint, spark, aggHeader, variantsDF, vcfRecordsDF, binSize, pvcfHeaderMetaLines, pvcfRecordCount, pvcfRecordBytes)
 
                 // write pVCF records (in parts)
                 pvcfLines.write().option("compression", BGZFCodecClassName()).text(pvcfDir)
@@ -144,3 +150,9 @@ fun main(args: Array<String>) {
 
 fun Int.pretty(): String = java.text.NumberFormat.getIntegerInstance().format(this)
 fun Long.pretty(): String = java.text.NumberFormat.getIntegerInstance().format(this)
+
+fun getProjectVersion(): String {
+    val props = Properties()
+    props.load(Unit.javaClass.getClassLoader().getResourceAsStream("project.properties"))
+    return props.getProperty("project.version")
+}

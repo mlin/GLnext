@@ -29,6 +29,7 @@ fun jointCall(
     variantsDF: Dataset<Row>,
     vcfRecordsDF: Dataset<Row>,
     binSize: Int,
+    pvcfHeaderMetaLines: List<String> = emptyList(),
     pvcfRecordCount: LongAccumulator? = null,
     pvcfRecordBytes: LongAccumulator? = null
 ): Pair<String, Dataset<String>> {
@@ -56,7 +57,7 @@ fun jointCall(
         )
     )
     // formulate header
-    val pvcfHeader = jointVcfHeader(cfg, aggHeader, fieldsGen)
+    val pvcfHeader = jointVcfHeader(cfg, aggHeader, pvcfHeaderMetaLines, fieldsGen)
     // sort pVCF lines by GRange & decompress
     return pvcfHeader to pvcfToSort
         .orderBy("rid", "beg", "end", "alt")

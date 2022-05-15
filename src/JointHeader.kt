@@ -3,9 +3,14 @@ import kotlin.text.StringBuilder
 /**
  * Write pVCF header
  */
-fun jointVcfHeader(cfg: JointConfig, aggHeader: AggVcfHeader, fieldsGen: JointFieldsGenerator): String {
+fun jointVcfHeader(cfg: JointConfig, aggHeader: AggVcfHeader, pvcfHeaderMetaLines: List<String>, fieldsGen: JointFieldsGenerator): String {
     val ans = StringBuilder()
     ans.appendLine("##fileformat=VCFv4.3")
+
+    pvcfHeaderMetaLines.forEach {
+        ans.append("##")
+        ans.appendLine(it)
+    }
 
     // FILTER
     ans.appendLine("##FILTER=<ID=PASS,Description=\"All filters passed\">")
