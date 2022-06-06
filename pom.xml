@@ -3,7 +3,7 @@
 
     <groupId>net.mlin</groupId>
     <artifactId>vcfGLuer</artifactId>
-    <version>20220514.215553-a4012f4-DIRTY</version>
+    <version>1.0-SNAPSHOT</version>
 
     <name>vcfGLuer</name>
     <packaging>jar</packaging>

@@ -30,23 +30,25 @@ class DP_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFie
     override fun generate(data: UnpackedVcfRecords, sampleIndex: Int, gt: DiploidGenotype, variantRecord: UnpackedVcfRecord?): String? {
         // If variantRecord, copy its DP. Otherwise, take the minimum of DP/MED_DP/MIN_DP from
         // other overlapping records.
-        // TODO: censor if reference bands don't cover (maybe should be method of UnpackedVcfRecords)
-        // TODO: option to round down to power of two
+        // TODO: option to round down to power of two (if variantRecord == null)
         var minDP = Int.MAX_VALUE
-        val records = if (variantRecord != null) listOf(variantRecord) else (data.otherVariantRecords + data.referenceBands)
+        val records = (
+            if (variantRecord != null) listOf(variantRecord)
+            else (data.otherVariantRecords + data.referenceBands)
+            )
+        var dpRanges: MutableList<GRange> = mutableListOf()
         records.forEach {
             val dp = (
-                (
-                    (it.getSampleField(sampleIndex, "DP")?.toInt())
-                        ?: (it.getSampleField(sampleIndex, "MED_DP")?.toInt())
-                    )
-                    ?: it.getSampleField(sampleIndex, "MIN_DP")?.toInt()
+                it.getSampleFieldInt(sampleIndex, "DP")
+                    ?: it.getSampleFieldInt(sampleIndex, "MED_DP")
+                    ?: it.getSampleFieldInt(sampleIndex, "MIN_DP")
                 )
             if (dp != null) {
                 minDP = min(minDP, dp)
+                dpRanges.add(it.record.range)
             }
         }
-        return if (minDP >= 0 && minDP < Int.MAX_VALUE) minDP.toString() else null
+        return if (minDP >= 0 && minDP < Int.MAX_VALUE && data.variant.range.subtract(dpRanges).isEmpty()) minDP.toString() else null
     }
 }
 

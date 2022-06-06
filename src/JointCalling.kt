@@ -228,14 +228,12 @@ fun generateRefGenotypeAndFormatFields(cfg: JointConfig, fieldsGen: JointFieldsG
         val gt = it.getDiploidGenotype(sampleIndex)
         gt.allele1 == 0 && gt.allele2 == 0
     }.map { it.record.range }
-    val refCall = if (data.variant.range.subtract(refRanges).isEmpty()) 0 else null
+    val refCoverage = data.variant.range.subtract(refRanges).isEmpty()
+    val refCall = if (refCoverage) 0 else null
 
     val allele1 = if (otherOverlaps > 0) genotypeOverlapSentinel(cfg.gt.overlapMode) else refCall
     val allele2 = if (otherOverlaps > 1) genotypeOverlapSentinel(cfg.gt.overlapMode) else refCall
 
-    if (allele1 == null && allele2 == null) {
-        return "."
-    }
     val gtOut = DiploidGenotype(allele1, allele2, false).normalize()
     return gtOut.toString() + fieldsGen.generateFormatFields(data, sampleIndex, gtOut, null)
 }

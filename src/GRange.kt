@@ -16,12 +16,17 @@ data class GRange(val rid: Short, val beg: Int, val end: Int) : Comparable<GRang
     fun overlaps(other: GRange): Boolean = (rid == other.rid && beg <= other.end && end >= other.beg)
     fun contains(other: GRange): Boolean = (rid == other.rid && beg <= other.beg && end >= other.end)
     fun subtract(other: GRange): List<GRange> {
-        var ans: List<GRange> = emptyList()
-        if (beg < other.beg && other.beg <= end) {
-            ans += GRange(rid, beg, other.beg)
+        if (!overlaps(other)) {
+            return listOf(this)
         }
-        if (end > other.end && other.end >= beg) {
-            ans += GRange(rid, other.end, end)
+        var ans: List<GRange> = emptyList()
+        if (beg < other.beg) {
+            check(other.beg <= end)
+            ans += GRange(rid, beg, other.beg - 1)
+        }
+        if (other.end < end) {
+            check(beg <= other.end)
+            ans += GRange(rid, other.end + 1, end)
         }
         return ans
     }
