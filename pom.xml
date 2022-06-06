@@ -63,7 +63,6 @@
         <resources>
             <resource>
                 <directory>src/resources</directory>
-                <filtering>true</filtering>
             </resource>
         </resources>
         <plugins>

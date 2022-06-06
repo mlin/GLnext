@@ -153,6 +153,6 @@ fun Long.pretty(): String = java.text.NumberFormat.getIntegerInstance().format(t
 
 fun getProjectVersion(): String {
     val props = Properties()
-    props.load(Unit.javaClass.getClassLoader().getResourceAsStream("project.properties"))
-    return props.getProperty("project.version")
+    props.load(Unit.javaClass.getClassLoader().getResourceAsStream("META-INF/maven/net.mlin/vcfGLuer/pom.properties"))
+    return props.getProperty("version")
 }

@@ -30,3 +30,4 @@ dependency-reduced-pom.xml
 .classpath
 
 .git-versioned-pom.xml
+build_run.sh
