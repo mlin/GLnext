@@ -14,20 +14,20 @@ abstract class JointFormatFieldImpl(val hdr: AggVcfHeader, val spec: JointFormat
     fun headerLine(): String {
         return spec.header ?: defaultHeaderLine()
     }
-    abstract fun generate(data: UnpackedVcfRecords, sampleIndex: Int, gt: DiploidGenotype, variantRecord: UnpackedVcfRecord?): String?
+    abstract fun generate(data: VcfRecordsContext, sampleIndex: Int, gt: DiploidGenotype, variantRecord: VcfRecordUnpacked?): String?
 }
 
 /**
  * Verbatim copies FORMAT fields from variant record
  */
 class CopiedFormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFieldImpl(hdr, spec) {
-    override fun generate(data: UnpackedVcfRecords, sampleIndex: Int, gt: DiploidGenotype, variantRecord: UnpackedVcfRecord?): String? {
+    override fun generate(data: VcfRecordsContext, sampleIndex: Int, gt: DiploidGenotype, variantRecord: VcfRecordUnpacked?): String? {
         return variantRecord?.getSampleField(sampleIndex, spec.name)
     }
 }
 
 class DP_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFieldImpl(hdr, spec) {
-    override fun generate(data: UnpackedVcfRecords, sampleIndex: Int, gt: DiploidGenotype, variantRecord: UnpackedVcfRecord?): String? {
+    override fun generate(data: VcfRecordsContext, sampleIndex: Int, gt: DiploidGenotype, variantRecord: VcfRecordUnpacked?): String? {
         // If variantRecord, copy its DP. Otherwise, take the minimum of DP/MED_DP/MIN_DP from
         // other overlapping records.
         // TODO: option to round down to power of two (if variantRecord == null)
@@ -53,7 +53,7 @@ class DP_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFie
 }
 
 class AD_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFieldImpl(hdr, spec) {
-    override fun generate(data: UnpackedVcfRecords, sampleIndex: Int, gt: DiploidGenotype, variantRecord: UnpackedVcfRecord?): String? {
+    override fun generate(data: VcfRecordsContext, sampleIndex: Int, gt: DiploidGenotype, variantRecord: VcfRecordUnpacked?): String? {
         if (variantRecord == null) {
             return null
         }
@@ -71,7 +71,7 @@ class AD_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFie
 }
 
 class PL_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFieldImpl(hdr, spec) {
-    override fun generate(data: UnpackedVcfRecords, sampleIndex: Int, gt: DiploidGenotype, variantRecord: UnpackedVcfRecord?): String? {
+    override fun generate(data: VcfRecordsContext, sampleIndex: Int, gt: DiploidGenotype, variantRecord: VcfRecordUnpacked?): String? {
         var ans: String? = null
         if (variantRecord != null) {
             val varIdx = variantRecord.getAltIndex(data.variant)
@@ -98,7 +98,7 @@ class OL_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFie
     protected override fun defaultHeaderLine(): String {
         return "FORMAT=<ID=OL,Number=1,Type=Integer,Description=\"Copy number of other overlapping ALT alleles\">"
     }
-    override fun generate(data: UnpackedVcfRecords, sampleIndex: Int, gt: DiploidGenotype, variantRecord: UnpackedVcfRecord?): String? {
+    override fun generate(data: VcfRecordsContext, sampleIndex: Int, gt: DiploidGenotype, variantRecord: VcfRecordUnpacked?): String? {
         var overlapCount = 0
         (data.variantRecords + data.otherVariantRecords).forEach {
             val recGT = it.getDiploidGenotype(sampleIndex)
@@ -131,7 +131,7 @@ class JointFieldsGenerator(val cfg: JointConfig, aggHeader: AggVcfHeader) : Seri
     /**
      * generate the FORMAT fields  && defaultImpls.containsKey(it.name)for one sample (and update any INFO field accumulators)
      */
-    fun generateFormatFields(data: UnpackedVcfRecords, sampleIndex: Int, gt: DiploidGenotype, variantRecord: UnpackedVcfRecord?): String {
+    fun generateFormatFields(data: VcfRecordsContext, sampleIndex: Int, gt: DiploidGenotype, variantRecord: VcfRecordUnpacked?): String {
         val fields = formatImpls.map { it.generate(data, sampleIndex, gt, variantRecord) }
 
         val maxNotNullIdx = fields.mapIndexed { i, v -> v?.let { i } }.filterNotNull().maxOrNull()

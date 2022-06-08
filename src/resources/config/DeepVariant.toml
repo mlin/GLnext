@@ -1,3 +1,6 @@
+[variantDiscovery]
+minCopies = 1
+
 [joint]
 formatFields = [
     { name = "DP" },

@@ -35,34 +35,6 @@ fun VariantRowEncoder(): ExpressionEncoder<Row> {
 }
 
 /**
- * Generate normalized Variant for each ALT allele in the record; null for symbolic alleles
- */
-fun VcfRecord.altsToVariants(): Array<Variant?> {
-    val tsv = line.splitToSequence('\t').take(VcfColumn.ALT.ordinal + 1).toList().toTypedArray()
-    val ref = tsv[VcfColumn.REF.ordinal]
-    val alts = tsv[VcfColumn.ALT.ordinal].split(',')
-
-    return alts.map { alt ->
-        if (alt == "." || alt == "*" || alt.startsWith('<')) {
-            null
-        } else {
-            require(
-                ref.length == range.end - range.beg + 1 && !alt.contains('.') && !alt.contains('<'),
-                { "invalid variant ${tsv.joinToString("\t")} (END=${range.end})" }
-            )
-            Variant(range, ref, alt).normalize()
-        }
-    }.toTypedArray()
-}
-
-/**
- * Get the non-null normalized Variants
- */
-fun VcfRecord.toVariants(): List<Variant> {
-    return this.altsToVariants().filterNotNull()
-}
-
-/**
  * Normalize variant by trimming reference padding
  * TODO: full, left-aligning normalization algo
  */
@@ -90,23 +62,40 @@ fun Variant.normalize(): Variant {
 
 /**
  * Harvest all distinct Variants from VcfRecord DataFrame
+ * onlyCalled: only include variants with at least one copy called in a sample GT
  */
-fun discoverVariants(vcfRecordsDF: Dataset<Row>): Dataset<Row> {
+fun discoverVariants(vcfRecordsDF: Dataset<Row>, onlyCalled: Boolean = false): Dataset<Row> {
     val vcfRecordsCompressed = vcfRecordsDF.columns().contains("snappyLine")
     return vcfRecordsDF
         .flatMap(
             object : FlatMapFunction<Row, Row> {
                 override fun call(row: Row): Iterator<Row> {
                     val range = GRange(row.getAs<Short>("rid"), row.getAs<Int>("beg"), row.getAs<Int>("end"))
-                    val vcfRecord = VcfRecord(
-                        row.getAs<Int>("callsetId"), range,
-                        if (vcfRecordsCompressed) {
-                            String(Snappy.uncompress(row.getAs<ByteArray>("snappyLine")))
-                        } else {
-                            row.getAs<String>("line")
-                        }
+                    val vcfRecord = VcfRecordUnpacked(
+                        VcfRecord(
+                            row.getAs<Int>("callsetId"), range,
+                            if (vcfRecordsCompressed) {
+                                String(Snappy.uncompress(row.getAs<ByteArray>("snappyLine")))
+                            } else {
+                                row.getAs<String>("line")
+                            }
+                        )
                     )
-                    return vcfRecord.toVariants().map { it.toRow() }.iterator()
+                    val variants = vcfRecord.altVariants.copyOf()
+                    if (!onlyCalled) {
+                        return variants.filterNotNull().map { it.toRow() }.iterator()
+                    }
+                    val copies = variants.map { 0 }.toTypedArray()
+                    for (sampleIndex in 0 until vcfRecord.sampleCount) {
+                        val gt = vcfRecord.getDiploidGenotype(sampleIndex)
+                        if (gt.allele1 != null && gt.allele1 > 0) {
+                            copies[gt.allele1 - 1]++
+                        }
+                        if (gt.allele2 != null && gt.allele2 > 0) {
+                            copies[gt.allele2 - 1]++
+                        }
+                    }
+                    return variants.filterIndexed { i, _ -> copies[i] > 0 }.filterNotNull().map { it.toRow() }.iterator()
                 }
             },
             VariantRowEncoder()

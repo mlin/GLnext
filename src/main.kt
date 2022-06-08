@@ -18,7 +18,8 @@ import java.io.OutputStreamWriter
 import java.util.Properties
 
 data class SparkConfig(val compressTempRecords: Boolean, val compressTempFiles: Boolean)
-data class MainConfig(val spark: SparkConfig, val joint: JointConfig)
+data class VariantDiscoveryConfig(val minCopies: Int)
+data class MainConfig(val spark: SparkConfig, val variantDiscovery: VariantDiscoveryConfig, val joint: JointConfig)
 
 class CLI : CliktCommand() {
     val inputFiles: List<String> by argument(help = "Input VCF filenames (or manifest(s) with --manifest)").multiple(required = true)
@@ -40,6 +41,8 @@ class CLI : CliktCommand() {
             .addResourceSource("/config/$config.toml")
             .build()
             .loadConfigOrThrow<MainConfig>()
+
+        require(cfg.variantDiscovery.minCopies <= 1, { "unsupported variantDiscovery.minCopies" })
 
         var effInputFiles = inputFiles
         if (manifest) {
@@ -104,7 +107,7 @@ class CLI : CliktCommand() {
                 val vcfRecordsDF = this
 
                 // discover variants
-                val variantsDF = discoverVariants(vcfRecordsDF)
+                val variantsDF = discoverVariants(vcfRecordsDF, onlyCalled = cfg.variantDiscovery.minCopies > 0)
 
                 // perform joint-calling
                 val pvcfHeaderMetaLines = listOf(

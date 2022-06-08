@@ -117,3 +117,114 @@ fun readVcfRecordsDF(
         VcfRecordRowEncoder(compressEachRecord)
     )
 }
+
+/**
+ * Lightly-unpacked VcfRecord with accessors
+ */
+class VcfRecordUnpacked(val record: VcfRecord) {
+    val tsv: Array<String>
+    // normalized Variant for each ALT allele, or null for symbolic ALT alleles
+    // (Index 0 in the array is GT allele "1")
+    val altVariants: Array<Variant?>
+    val format: Array<String>
+    val formatIndex: Map<String, Int>
+    val sampleCount: Int
+    private var lastSampleIndex: Int = -1
+    private var lastSampleFields: Array<String> = emptyArray()
+
+    init {
+        tsv = record.line.split('\t').toTypedArray()
+        sampleCount = tsv.size - VcfColumn.FIRST_SAMPLE.ordinal
+        format = tsv[VcfColumn.FORMAT.ordinal].split(':').toTypedArray()
+        formatIndex = format.mapIndexed { idx, field -> field to idx }.toMap()
+        check(format[0] == "GT")
+
+        val ref = tsv[VcfColumn.REF.ordinal]
+        altVariants = tsv[VcfColumn.ALT.ordinal].split(',').map {
+            alt ->
+            if (alt == "." || alt == "*" || alt.startsWith('<')) {
+                null
+            } else {
+                require(
+                    ref.length == record.range.end - record.range.beg + 1 && !alt.contains('.') && !alt.contains('<'),
+                    { "invalid variant ${tsv.joinToString("\t")} (END=${record.range.end})" }
+                )
+                Variant(record.range, ref, alt).normalize()
+            }
+        }.toTypedArray()
+    }
+
+    fun getSampleFields(sampleIndex: Int): Array<String> {
+        if (sampleIndex != lastSampleIndex) {
+            lastSampleFields = tsv[sampleIndex + VcfColumn.FIRST_SAMPLE.ordinal].split(':').toTypedArray()
+            lastSampleIndex = sampleIndex
+        }
+        return lastSampleFields
+    }
+
+    fun getSampleField(sampleIndex: Int, fieldIndex: Int): String? {
+        val fields = getSampleFields(sampleIndex)
+        if (fieldIndex >= fields.size) {
+            return null
+        }
+        val ans = fields[fieldIndex]
+        return if (ans != "" && ans != ".") ans else null
+    }
+
+    fun getSampleField(sampleIndex: Int, field: String): String? {
+        val idx = formatIndex.get(field)
+        return if (idx == null) null else getSampleField(sampleIndex, idx)
+    }
+
+    fun getSampleFieldInt(sampleIndex: Int, field: String): Int? {
+        return getSampleField(sampleIndex, field)?.toInt()
+    }
+
+    fun getSampleFieldInts(sampleIndex: Int, field: String): Array<Int?> {
+        val fld = getSampleField(sampleIndex, field)
+        if (fld == null) {
+            return emptyArray()
+        }
+        return fld.split(',').map { if (it == "" || it == ".") null else it.toInt() }.toTypedArray()
+    }
+
+    fun getDiploidGenotype(sampleIndex: Int): DiploidGenotype {
+        val gt = getSampleField(sampleIndex, 0)
+        if (gt == null) {
+            return DiploidGenotype(null, null, false)
+        }
+        var parts = gt.split('|')
+        var phased = true
+        require(parts.size <= 2)
+        if (parts.size < 2) {
+            parts = gt.split('/')
+            require(parts.size == 2)
+            phased = false
+        }
+        val allele1 = (if (parts[0] == "" || parts[0] == ".") null else parts[0].toInt())
+        val allele2 = (if (parts[1] == "" || parts[1] == ".") null else parts[1].toInt())
+        return DiploidGenotype(allele1, allele2, phased).validate(tsv[VcfColumn.ALT.ordinal].split(',').size)
+    }
+
+    fun getAltIndex(variant: Variant): Int {
+        return altVariants.mapIndexed { idx, vt -> if (vt == variant) (idx + 1) else null }.firstNotNullOfOrNull { it } ?: -1
+    }
+}
+
+data class DiploidGenotype(val allele1: Int?, val allele2: Int?, val phased: Boolean) {
+    fun validate(altAlleleCount: Int): DiploidGenotype {
+        require((allele1 == null || allele1 <= altAlleleCount) && (allele2 == null || allele2 <= altAlleleCount), { this.toString() })
+        return this
+    }
+
+    fun normalize(): DiploidGenotype {
+        if (!phased && allele1 != null && (allele2 == null || allele1 > allele2)) {
+            return DiploidGenotype(allele2, allele1, false)
+        }
+        return this
+    }
+
+    override fun toString(): String {
+        return (if (allele1 == null) "." else allele1.toString()) + (if (phased) "|" else "/") + (if (allele2 == null) "." else allele2.toString())
+    }
+}

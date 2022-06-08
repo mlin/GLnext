@@ -132,7 +132,7 @@ fun jointCallVariant(cfg: JointConfig, aggHeader: AggVcfHeader, fieldsGen: Joint
     // for each callset
     for (callsetRow in callsetsData) {
         // parse the input VCF records overlapping the variant
-        val unpackedRecords = UnpackedVcfRecords(aggHeader, variant, callsetRow, vcfRecordsCompressed)
+        val unpackedRecords = VcfRecordsContext(aggHeader, variant, callsetRow, vcfRecordsCompressed)
 
         // generate genotype & FORMAT fields for each sample in the callset
         aggHeader.callsetsDetails[unpackedRecords.callsetId].callsetSamples.forEachIndexed {
@@ -169,7 +169,7 @@ fun initializeOutputTsv(cfg: JointConfig, aggHeader: AggVcfHeader, variant: Vari
     return recordTsv
 }
 
-fun generateGenotypeAndFormatFields(cfg: JointConfig, fieldsGen: JointFieldsGenerator, data: UnpackedVcfRecords, sampleIndex: Int): String {
+fun generateGenotypeAndFormatFields(cfg: JointConfig, fieldsGen: JointFieldsGenerator, data: VcfRecordsContext, sampleIndex: Int): String {
     if (data.variantRecords.isEmpty()) {
         return generateRefGenotypeAndFormatFields(cfg, fieldsGen, data, sampleIndex)
     }
@@ -213,7 +213,7 @@ fun generateGenotypeAndFormatFields(cfg: JointConfig, fieldsGen: JointFieldsGene
     return gtOut.toString() + fieldsGen.generateFormatFields(data, sampleIndex, gtOut, record)
 }
 
-fun generateRefGenotypeAndFormatFields(cfg: JointConfig, fieldsGen: JointFieldsGenerator, data: UnpackedVcfRecords, sampleIndex: Int): String {
+fun generateRefGenotypeAndFormatFields(cfg: JointConfig, fieldsGen: JointFieldsGenerator, data: VcfRecordsContext, sampleIndex: Int): String {
     check(data.variantRecords.isEmpty())
 
     // count copies of other overlapping variants
@@ -238,7 +238,7 @@ fun generateRefGenotypeAndFormatFields(cfg: JointConfig, fieldsGen: JointFieldsG
     return gtOut.toString() + fieldsGen.generateFormatFields(data, sampleIndex, gtOut, null)
 }
 
-fun countAltCopies(records: List<UnpackedVcfRecord>, sampleIndex: Int): Int {
+fun countAltCopies(records: List<VcfRecordUnpacked>, sampleIndex: Int): Int {
     // TODO: report ambiguity if there only mutually-non-overlapping unphased variants.
     // that is, distinguish whether or not the observed ALT copies might all be on one chromosome
     // or else must affect both.
@@ -256,107 +256,15 @@ fun genotypeOverlapSentinel(mode: GT_OverlapMode): Int? = when (mode) {
 }
 
 /**
- * Helpers to assort callset records into reference bands, records containing the desired variant;
- * and other variants; and to expose all their sample-specific fields conveniently
+ * Callset records assorted into reference bands, records containing the desired variant,
+ * and other variants
  */
 
-data class DiploidGenotype(val allele1: Int?, val allele2: Int?, val phased: Boolean) {
-    fun validate(altAlleleCount: Int): DiploidGenotype {
-        require((allele1 == null || allele1 <= altAlleleCount) && (allele2 == null || allele2 <= altAlleleCount), { this.toString() })
-        return this
-    }
-
-    fun normalize(): DiploidGenotype {
-        if (!phased && allele1 != null && (allele2 == null || allele1 > allele2)) {
-            return DiploidGenotype(allele2, allele1, false)
-        }
-        return this
-    }
-
-    override fun toString(): String {
-        return (if (allele1 == null) "." else allele1.toString()) + (if (phased) "|" else "/") + (if (allele2 == null) "." else allele2.toString())
-    }
-}
-
-class UnpackedVcfRecord(val record: VcfRecord) {
-    val altVariants = record.altsToVariants()
-    val tsv: Array<String>
-    val format: Array<String>
-    val formatIndex: Map<String, Int>
-    val sampleCount: Int
-    private var lastSampleIndex: Int = -1
-    private var lastSampleFields: Array<String> = emptyArray()
-
-    init {
-        tsv = record.line.split('\t').toTypedArray()
-        sampleCount = tsv.size - VcfColumn.FIRST_SAMPLE.ordinal
-        format = tsv[VcfColumn.FORMAT.ordinal].split(':').toTypedArray()
-        formatIndex = format.mapIndexed { idx, field -> field to idx }.toMap()
-        check(format[0] == "GT")
-    }
-
-    fun getSampleFields(sampleIndex: Int): Array<String> {
-        if (sampleIndex != lastSampleIndex) {
-            lastSampleFields = tsv[sampleIndex + VcfColumn.FIRST_SAMPLE.ordinal].split(':').toTypedArray()
-            lastSampleIndex = sampleIndex
-        }
-        return lastSampleFields
-    }
-
-    fun getSampleField(sampleIndex: Int, fieldIndex: Int): String? {
-        val fields = getSampleFields(sampleIndex)
-        if (fieldIndex >= fields.size) {
-            return null
-        }
-        val ans = fields[fieldIndex]
-        return if (ans != "" && ans != ".") ans else null
-    }
-
-    fun getSampleField(sampleIndex: Int, field: String): String? {
-        val idx = formatIndex.get(field)
-        return if (idx == null) null else getSampleField(sampleIndex, idx)
-    }
-
-    fun getSampleFieldInt(sampleIndex: Int, field: String): Int? {
-        return getSampleField(sampleIndex, field)?.toInt()
-    }
-
-    fun getSampleFieldInts(sampleIndex: Int, field: String): Array<Int?> {
-        val fld = getSampleField(sampleIndex, field)
-        if (fld == null) {
-            return emptyArray()
-        }
-        return fld.split(',').map { if (it == "" || it == ".") null else it.toInt() }.toTypedArray()
-    }
-
-    fun getDiploidGenotype(sampleIndex: Int): DiploidGenotype {
-        val gt = getSampleField(sampleIndex, 0)
-        if (gt == null) {
-            return DiploidGenotype(null, null, false)
-        }
-        var parts = gt.split('|')
-        var phased = true
-        require(parts.size <= 2)
-        if (parts.size < 2) {
-            parts = gt.split('/')
-            require(parts.size == 2)
-            phased = false
-        }
-        val allele1 = (if (parts[0] == "" || parts[0] == ".") null else parts[0].toInt())
-        val allele2 = (if (parts[1] == "" || parts[1] == ".") null else parts[1].toInt())
-        return DiploidGenotype(allele1, allele2, phased).validate(tsv[VcfColumn.ALT.ordinal].split(',').size)
-    }
-
-    fun getAltIndex(variant: Variant): Int {
-        return altVariants.mapIndexed { idx, vt -> if (vt == variant) (idx + 1) else null }.firstNotNullOfOrNull { it } ?: -1
-    }
-}
-
-class UnpackedVcfRecords(val aggHeader: AggVcfHeader, val variant: Variant, val callsetRecordsRow: Row, val vcfRecordsCompressed: Boolean) {
+class VcfRecordsContext(val aggHeader: AggVcfHeader, val variant: Variant, val callsetRecordsRow: Row, val vcfRecordsCompressed: Boolean) {
     val callsetId: Int
-    val referenceBands: List<UnpackedVcfRecord>
-    val variantRecords: List<UnpackedVcfRecord>
-    val otherVariantRecords: List<UnpackedVcfRecord>
+    val referenceBands: List<VcfRecordUnpacked>
+    val variantRecords: List<VcfRecordUnpacked>
+    val otherVariantRecords: List<VcfRecordUnpacked>
 
     init {
         callsetId = callsetRecordsRow.getAs<Int>("callsetId")
@@ -370,7 +278,7 @@ class UnpackedVcfRecords(val aggHeader: AggVcfHeader, val variant: Variant, val 
         callsetRecords = callsetRecords.sortedBy { it.range }
 
         // reference bands have no (non-symbolic) ALT alleles
-        var parts = callsetRecords.map { UnpackedVcfRecord(it) }.partition { it.altVariants.filterNotNull().isEmpty() }
+        var parts = callsetRecords.map { VcfRecordUnpacked(it) }.partition { it.altVariants.filterNotNull().isEmpty() }
         referenceBands = parts.first
         // partition variant records based on whether they include the focal variant
         parts = parts.second.partition { it.altVariants.contains(variant) }
