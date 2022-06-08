@@ -15,7 +15,7 @@ SOURCE_DIR="$(pwd)"
 BASH_TAP_ROOT="$SOURCE_DIR/test/bash-tap"
 source "$BASH_TAP_ROOT/bash-tap-bootstrap"
 
-plan tests 3
+plan tests 5
 
 rm -f target/*.jar
 mvn package -Dorg.slf4j.simpleLogger.log.org.apache.maven.plugins.shade=warn
@@ -32,7 +32,13 @@ echo "$DN"
 tar xf /tmp/dv1KGP_ALDH2_gvcf.tar
 
 ls -1 $(pwd)/dv1KGP_ALDH2_gvcf/*vcf.gz > dv1KGP.manifest
-awk 'NR%20==0 { print; }' dv1KGP.manifest > dv1KGP.5pct.manifest
+MANIFEST=dv1KGP.manifest
+
+if [[ -n $DV1KGP_5PCT ]]; then
+    awk 'NR%20==0 { print; }' dv1KGP.manifest > dv1KGP.5pct.manifest
+    MANIFEST=dv1KGP.5pct.manifest
+fi
+
 export SPARK_LOCAL_IP=127.0.0.1
 export LD_LIBRARY_PATH="$SOURCE_DIR/dx/vcfGLuer/resources/usr/lib"
 #_JAVA_OPTIONS='-Dconfig.override.joint.gt.overlapMode=REF'
@@ -40,15 +46,14 @@ export LD_LIBRARY_PATH="$SOURCE_DIR/dx/vcfGLuer/resources/usr/lib"
 time "${SPARK_HOME}/bin/spark-submit" \
     --master 'local[*]' --driver-memory 8G \
     --name vcfGLuer --class vcfGLuer \
-    $SOURCE_DIR/target/vcfGLuer-*.jar $@ --manifest dv1KGP.5pct.manifest dv1KGP.5pct.out
-
-test -f dv1KGP.5pct.out/_EOF.bgz
-is "$?" "0" "vcfGLuer 5% run"
-
-time "${SPARK_HOME}/bin/spark-submit" \
-    --master 'local[*]' --driver-memory 8G \
-    --name vcfGLuer --class vcfGLuer \
-    $SOURCE_DIR/target/vcfGLuer-*.jar $@ --manifest dv1KGP.manifest dv1KGP.out
+    $SOURCE_DIR/target/vcfGLuer-*.jar $@ --manifest "$MANIFEST" dv1KGP.out
 
 test -f dv1KGP.out/_EOF.bgz
 is "$?" "0" "vcfGLuer 100% run"
+cat dv1KGP.out/_HEADER.bgz dv1KGP.out/part-*.bgz dv1KGP.out/_EOF.bgz > dv1KGP.vcf.gz
+bcftools view dv1KGP.vcf.gz > dv1KGP.vcf
+is "$?" "0" "bcftools view"
+tabix dv1KGP.vcf.gz
+is "$?" "0" "tabix"
+test -f dv1KGP.vcf.gz.tbi
+is "$?" "0" "tbi"

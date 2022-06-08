@@ -22,12 +22,16 @@ jobs:
       with:
         fetch-depth: 0
         submodules: recursive
-    - name: spark
+    - name: deps
       run: |
+        sudo apt-get -qq update
+        sudo apt-get install -y bcftools tabix
         curl -LSs https://dlcdn.apache.org/spark/spark-3.1.3/spark-3.1.3-bin-hadoop3.2.tgz | tar zx
         SPARK_HOME=$(find $(pwd) -type d -name "spark-*")
         echo "SPARK_HOME=$SPARK_HOME" >> $GITHUB_ENV
     - name: build
       run: mvn package -Dorg.slf4j.simpleLogger.log.org.apache.maven.plugins.shade=warn
-    - name: test
-      run: prove -v test/*.t
+    - name: test 5%
+      run: DV1KGP_5PCT=1 prove -v test/dv1KGP.t
+    - name: test 100%
+      run: prove -v test/dv1KGP.t
