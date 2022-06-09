@@ -22,6 +22,7 @@ export _JAVA_OPTIONS='
 '
 export SPARK_HOME=/spark
 export SPARK_LOCAL_IP=127.0.0.1
+export LC_ALL=C
 
 worker_main() {
     set -euo pipefail
@@ -49,6 +50,7 @@ worker_main() {
         | parallel $parallel_opts --halt 2 --verbose \
             bash -o pipefail -c "$localize_cmd"
     part_count=$(find /tmp/vcf_in -type f | tee vcf_in.manifest | wc -l)
+    >&2 echo "part count: $part_count"
 
     # start spark
     numa_nodes=$(detect_numa_nodes)

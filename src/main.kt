@@ -24,7 +24,7 @@ data class MainConfig(val spark: SparkConfig, val variantDiscovery: VariantDisco
 class CLI : CliktCommand() {
     val inputFiles: List<String> by argument(help = "Input VCF filenames (or manifest(s) with --manifest)").multiple(required = true)
     val pvcfDir: String by argument(help = "Output directory for pVCF parts (mustn't already exist)")
-    val manifest by option(help = "Input files are manifest(s) containing oVne CF filename per line").flag(default = false)
+    val manifest by option(help = "Input files are manifest(s) containing one VCF filename per line").flag(default = false)
     val config: String by option(help = "Configuration preset name").default("DeepVariant")
     val binSize: Int by option(help = "Genome range bin size").int().default(16)
     val allowDuplicateSamples by option(help = "If a sample appears in multiple input callsets, use one arbitrarily instead of failing").flag(default = false)
