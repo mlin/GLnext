@@ -77,6 +77,7 @@ class CLI : CliktCommand() {
             logger.setLevel(Level.INFO)
 
             logger.info("vcfGLuer v${getProjectVersion()}")
+            logger.info("Locale: ${java.util.Locale.getDefault()}")
             logger.info(cfg.toString())
             logger.info("binSize: $binSize")
             logger.info("input VCF files: ${effInputFiles.size.pretty()}")

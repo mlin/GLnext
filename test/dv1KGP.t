@@ -49,7 +49,7 @@ time "${SPARK_HOME}/bin/spark-submit" \
     $SOURCE_DIR/target/vcfGLuer-*.jar $@ --manifest "$MANIFEST" dv1KGP.out
 
 test -f dv1KGP.out/_EOF.bgz
-is "$?" "0" "vcfGLuer 100% run"
+is "$?" "0" "vcfGLuer"
 cat dv1KGP.out/_HEADER.bgz dv1KGP.out/part-*.bgz dv1KGP.out/_EOF.bgz > dv1KGP.vcf.gz
 bcftools view dv1KGP.vcf.gz > dv1KGP.vcf
 is "$?" "0" "bcftools view"
