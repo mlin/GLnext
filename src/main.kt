@@ -13,9 +13,10 @@ import org.apache.log4j.Level
 import org.apache.log4j.LogManager
 import org.apache.spark.sql.*
 import org.jetbrains.kotlinx.spark.api.*
-import java.io.FileOutputStream
-import java.io.OutputStreamWriter
+import java.io.File
 import java.util.Properties
+import org.apache.hadoop.fs.FileSystem as Hdfs
+import org.apache.hadoop.fs.Path as HdfsPath
 
 data class SparkConfig(val compressTempRecords: Boolean, val compressTempFiles: Boolean)
 data class VariantDiscoveryConfig(val minCopies: Int)
@@ -82,8 +83,14 @@ class CLI : CliktCommand() {
             logger.info("binSize: $binSize")
             logger.info("input VCF files: ${effInputFiles.size.pretty()}")
 
+            var hdfs: Hdfs? = null
+            if (pvcfDir.startsWith("hdfs:") || effInputFiles.any { it.startsWith("hdfs:") }) {
+                hdfs = Hdfs.get(org.apache.spark.deploy.SparkHadoopUtil.get().conf())
+                logger.info("initialized HDFS ${hdfs.getUri()}")
+            }
+
             // load & aggregate all input VCF headers
-            val aggHeader = aggregateVcfHeaders(spark, effInputFiles, allowDuplicateSamples = allowDuplicateSamples)
+            val aggHeader = aggregateVcfHeaders(spark, effInputFiles, allowDuplicateSamples = allowDuplicateSamples, hdfs = hdfs)
 
             logger.info("samples: ${aggHeader.samples.size.pretty()}")
             logger.info("callsets: ${aggHeader.callsetsDetails.size.pretty()}")
@@ -103,7 +110,7 @@ class CLI : CliktCommand() {
             val vcfRecordBytes = spark.sparkContext.longAccumulator("original VCF bytes)")
             readVcfRecordsDF(
                 spark, aggHeader, compressEachRecord = cfg.spark.compressTempRecords, deleteInputVcfs = deleteInputVcfs,
-                recordCount = vcfRecordCount, recordBytes = vcfRecordBytes
+                recordCount = vcfRecordCount, recordBytes = vcfRecordBytes, hdfs = hdfs
             ).withCached {
                 val vcfRecordsDF = this
 
@@ -128,21 +135,31 @@ class CLI : CliktCommand() {
                 logger.info("pVCF bytes: ${pvcfRecordBytes.sum().pretty()}")
 
                 // write output VCF header
-                val headerFile = java.io.File(pvcfDir, "_HEADER.bgz")
-                FileOutputStream(headerFile).use {
+                fileOrHdfsOutputStream(pvcfDir, "00HEADER.bgz", hdfs).use {
                     BGZFOutputStream(it).use {
-                        OutputStreamWriter(it, "UTF-8").use {
+                        java.io.OutputStreamWriter(it, "UTF-8").use {
                             it.write(pvcfHeader)
                         }
                     }
                 }
 
                 // atomically write _EOF.bgz
-                val eofFile = java.io.File(pvcfDir, ".wip._EOF.bgz")
-                FileOutputStream(eofFile).use {
+                val eofName = "zzEOF.bgz"
+                val eofTempName = ".wip." + eofName
+                fileOrHdfsOutputStream(pvcfDir, eofTempName, hdfs).use {
                     it.write(htsjdk.samtools.util.BlockCompressedStreamConstants.EMPTY_GZIP_BLOCK)
                 }
-                check(eofFile.renameTo(java.io.File(pvcfDir, "_EOF.bgz")), { "unable to finalize _EOF.bgz" })
+                if (pvcfDir.startsWith("hdfs:")) {
+                    check(
+                        hdfs != null && hdfs.rename(HdfsPath(pvcfDir, eofTempName), HdfsPath(pvcfDir, eofName)),
+                        { "unable to finalize $eofName" }
+                    )
+                } else {
+                    check(
+                        File(pvcfDir, eofTempName).renameTo(File(pvcfDir, eofName)),
+                        { "unable to finalize $eofName" }
+                    )
+                }
             }
         }
     }
@@ -159,4 +176,12 @@ fun getProjectVersion(): String {
     val props = Properties()
     props.load(Unit.javaClass.getClassLoader().getResourceAsStream("META-INF/maven/net.mlin/vcfGLuer/pom.properties"))
     return props.getProperty("version")
+}
+
+fun fileOrHdfsOutputStream(parent: String, child: String, hdfs: Hdfs?): java.io.OutputStream {
+    if (parent.startsWith("hdfs:")) {
+        check(hdfs != null)
+        return hdfs.create(HdfsPath(parent, child), true)
+    }
+    return java.io.FileOutputStream(java.io.File(parent, child))
 }

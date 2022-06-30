@@ -7,6 +7,7 @@
  */
 import org.apache.spark.sql.*
 import org.jetbrains.kotlinx.spark.api.*
+import org.apache.hadoop.fs.FileSystem as Hdfs
 
 /**
  * VCF header contig/FILTER/INFO/FORMAT lines
@@ -47,11 +48,11 @@ data class AggVcfHeader(
 /**
  * Use Spark to load all VCF headers and aggregate them
  */
-fun aggregateVcfHeaders(spark: org.apache.spark.sql.SparkSession, filenames: List<String>, allowDuplicateSamples: Boolean = false): AggVcfHeader {
+fun aggregateVcfHeaders(spark: org.apache.spark.sql.SparkSession, filenames: List<String>, allowDuplicateSamples: Boolean = false, hdfs: Hdfs? = null): AggVcfHeader {
     spark.toDS(filenames)
         // read & digest all VCF headers
         .map {
-            val (headerDigest, header) = readVcfHeader(it)
+            val (headerDigest, header) = readVcfHeader(it, hdfs)
             Triple(it, headerDigest, header)
         }
         // Group headers by callset (header digest) & consolidate filename list for each
@@ -165,8 +166,8 @@ fun validateVcfHeaderLines(headerLines: List<VcfHeaderLine>):
  * Read just the header from the VCF file and return (headerDigest, headerText) where headerDigest
  * is SHA-256 hex.
  */
-fun readVcfHeader(filename: String): Pair<String, String> {
-    val header = vcfInputStream(filename).bufferedReader().useLines {
+fun readVcfHeader(filename: String, hdfs: Hdfs? = null): Pair<String, String> {
+    val header = vcfInputStream(filename, hdfs).bufferedReader().useLines {
         return@useLines it.takeWhile { it.length > 0 && it.get(0) == '#' }
             .asSequence()
             .joinToString(separator = "\n", postfix = "\n")
@@ -182,8 +183,14 @@ fun readVcfHeader(filename: String): Pair<String, String> {
 /**
  * Open file InputStream, gunzipping if applicable
  */
-fun vcfInputStream(filename: String): java.io.InputStream {
-    var instream: java.io.InputStream = java.io.File(filename).inputStream()
+fun vcfInputStream(filename: String, hdfs: Hdfs? = null): java.io.InputStream {
+    var instream: java.io.InputStream
+    if (filename.startsWith("hdfs:")) {
+        check(hdfs != null)
+        instream = hdfs.open(org.apache.hadoop.fs.Path(filename.substring(5)))
+    } else {
+        instream = java.io.File(filename).inputStream()
+    }
     if (filename.endsWith(".gz")) {
         instream = java.util.zip.GZIPInputStream(instream)
     }

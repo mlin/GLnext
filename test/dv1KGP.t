@@ -48,9 +48,11 @@ time "${SPARK_HOME}/bin/spark-submit" \
     --name vcfGLuer --class vcfGLuer \
     $SOURCE_DIR/target/vcfGLuer-*.jar $@ --manifest "$MANIFEST" dv1KGP.out
 
-test -f dv1KGP.out/_EOF.bgz
+ls -l dv1KGP.out
+
+test -f dv1KGP.out/zzEOF.bgz
 is "$?" "0" "vcfGLuer"
-cat dv1KGP.out/_HEADER.bgz dv1KGP.out/part-*.bgz dv1KGP.out/_EOF.bgz > dv1KGP.vcf.gz
+cat dv1KGP.out/*.bgz > dv1KGP.vcf.gz
 bcftools view dv1KGP.vcf.gz > dv1KGP.vcf
 is "$?" "0" "bcftools view"
 tabix dv1KGP.vcf.gz

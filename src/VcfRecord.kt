@@ -7,6 +7,7 @@ import org.apache.spark.sql.types.*
 import org.apache.spark.util.LongAccumulator
 import org.jetbrains.kotlinx.spark.api.*
 import org.xerial.snappy.Snappy
+import org.apache.hadoop.fs.FileSystem as Hdfs
 
 enum class VcfColumn {
     CHROM, POS, ID, REF, ALT, QUAL, FILTER, INFO, FORMAT, FIRST_SAMPLE
@@ -83,7 +84,8 @@ fun readVcfRecordsDF(
     compressEachRecord: Boolean = false,
     deleteInputVcfs: Boolean = false,
     recordCount: LongAccumulator? = null,
-    recordBytes: LongAccumulator? = null
+    recordBytes: LongAccumulator? = null,
+    hdfs: Hdfs? = null
 ): Dataset<Row> {
     var filenamesWithCallsetIds = spark.toDS(aggHeader.filenameCallsetId.toList())
     // pigeonhole partitions (assume each file is a reasonable size)
@@ -98,7 +100,7 @@ fun readVcfRecordsDF(
             override fun call(p: Pair<String, Int>): Iterator<Row> {
                 val (filename, callsetId) = p
                 return sequence {
-                    vcfInputStream(filename).bufferedReader().useLines {
+                    vcfInputStream(filename, hdfs).bufferedReader().useLines {
                         it.forEach {
                             line ->
                             if (line.length > 0 && line.get(0) != '#') {
