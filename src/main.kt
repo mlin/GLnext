@@ -7,8 +7,6 @@ import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.int
 import com.sksamuel.hoplite.*
-import com.sksamuel.hoplite.sources.SystemPropertiesPropertySource
-import com.sksamuel.hoplite.toml.TomlParser
 import org.apache.log4j.Level
 import org.apache.log4j.LogManager
 import org.apache.spark.sql.*
@@ -32,14 +30,12 @@ class CLI : CliktCommand() {
     val deleteInputVcfs by option(help = "Delete input VCF files after loading them (DANGER!)").flag(default = false)
 
     // TODO: take a BED file of target regions
-    // TODO: read directly from https:// or dx:// URIs (with aggregate rate-limiting)
 
     override fun run() {
-        val cfg = ConfigLoaderBuilder.default()
-            .addParser("toml", TomlParser())
-            .addPropertySource(SystemPropertiesPropertySource())
-            .addResourceSource("/config/main.toml")
-            .addResourceSource("/config/$config.toml")
+        val cfg = ConfigLoader.Builder()
+            .addFileExtensionMapping("toml", com.sksamuel.hoplite.toml.TomlParser())
+            .addSource(PropertySource.resource("/config/main.toml"))
+            .addSource(PropertySource.resource("/config/$config.toml"))
             .build()
             .loadConfigOrThrow<MainConfig>()
 
@@ -151,7 +147,7 @@ class CLI : CliktCommand() {
                 }
                 if (pvcfDir.startsWith("hdfs:")) {
                     check(
-                        hdfs != null && hdfs.rename(HdfsPath(pvcfDir, eofTempName), HdfsPath(pvcfDir, eofName)),
+                        hdfs != null && hdfs.rename(HdfsPath(pvcfDir.substring(5), eofTempName), HdfsPath(pvcfDir.substring(5), eofName)),
                         { "unable to finalize $eofName" }
                     )
                 } else {
@@ -181,7 +177,7 @@ fun getProjectVersion(): String {
 fun fileOrHdfsOutputStream(parent: String, child: String, hdfs: Hdfs?): java.io.OutputStream {
     if (parent.startsWith("hdfs:")) {
         check(hdfs != null)
-        return hdfs.create(HdfsPath(parent, child), true)
+        return hdfs.create(HdfsPath(parent.substring(5), child), true)
     }
     return java.io.FileOutputStream(java.io.File(parent, child))
 }

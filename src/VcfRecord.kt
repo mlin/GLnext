@@ -111,7 +111,12 @@ fun readVcfRecordsDF(
                         }
                     }
                     if (deleteInputVcfs) {
-                        java.io.File(filename).delete()
+                        if (filename.startsWith("hdfs:")) {
+                            check(hdfs != null)
+                            hdfs.delete(org.apache.hadoop.fs.Path(filename.substring(5)), false)
+                        } else {
+                            java.io.File(filename).delete()
+                        }
                     }
                 }.iterator()
             }
