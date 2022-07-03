@@ -1,7 +1,9 @@
 
+import org.apache.spark.api.java.JavaSparkContext
 import org.apache.spark.api.java.function.MapFunction
 import org.apache.spark.api.java.function.MapGroupsFunction
 import org.apache.spark.sql.*
+import org.apache.spark.sql.Encoders
 import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.functions.*
 import org.apache.spark.sql.types.*
@@ -34,10 +36,12 @@ fun jointCall(
     pvcfRecordBytes: LongAccumulator? = null
 ): Pair<String, Dataset<String>> {
     val vcfRecordsCompressed = vcfRecordsDF.columns().contains("snappyLine")
-    val aggHeaderB = spark.broadcast(aggHeader)
+
+    val jsc = JavaSparkContext(spark.sparkContext) // circumvent kotlin-spark-api overrides of spark.broadcast() and spark.sparkContext.broadcast()
+    val aggHeaderB = jsc.broadcast(aggHeader)
     // FORMAT/INFO field helpers
     val fieldsGen = JointFieldsGenerator(cfg, aggHeader)
-    val fieldsGenB = spark.broadcast(fieldsGen)
+    val fieldsGenB = jsc.broadcast(fieldsGen)
     // joint-call each variant into a snappy-compressed pVCF line with GRange columns
     val pvcfToSort = joinVariantsAndVcfRecords(variantsDF, vcfRecordsDF, vcfRecordsCompressed, binSize).mapGroups(
         object : MapGroupsFunction<Row, Row, Row> {
@@ -61,11 +65,16 @@ fun jointCall(
     // sort pVCF lines by GRange & decompress
     return pvcfHeader to pvcfToSort
         .orderBy("rid", "beg", "end", "alt")
-        .map {
-            val ans = String(Snappy.uncompress(it.getAs<ByteArray>("snappyRecord")))
-            pvcfRecordBytes?.let { it.add(ans.length + 1L) }
-            ans
-        }
+        .map(
+            object : MapFunction<Row, String> {
+                override fun call(it: Row): String {
+                    val ans = String(Snappy.uncompress(it.getAs<ByteArray>("snappyRecord")))
+                    pvcfRecordBytes?.let { it.add(ans.length + 1L) }
+                    return ans
+                }
+            },
+            Encoders.STRING()
+        )
 }
 
 /**

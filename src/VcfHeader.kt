@@ -5,9 +5,13 @@
  * file per chromosome). The assumption is that files with identical headers (including the sample
  * identifier(s) on the #CHROM line) comprise one callset.
  */
+import org.apache.spark.api.java.JavaSparkContext
+import org.apache.spark.api.java.function.*
 import org.apache.spark.sql.*
 import org.jetbrains.kotlinx.spark.api.*
+import java.io.Serializable
 import org.apache.hadoop.fs.FileSystem as Hdfs
+import org.apache.spark.api.java.function.Function as Function1
 
 /**
  * VCF header contig/FILTER/INFO/FORMAT lines
@@ -43,95 +47,114 @@ data class AggVcfHeader(
     val filenameCallsetId: Map<String, Int>,
     // Info about each logical callset
     val callsetsDetails: Array<CallsetDetails>
-) : java.io.Serializable
+) : Serializable
 
 /**
  * Use Spark to load all VCF headers and aggregate them
  */
 fun aggregateVcfHeaders(spark: org.apache.spark.sql.SparkSession, filenames: List<String>, allowDuplicateSamples: Boolean = false, hdfs: Hdfs? = null): AggVcfHeader {
-    spark.toDS(filenames)
-        // read & digest all VCF headers
-        .map {
-            val (headerDigest, header) = readVcfHeader(it, hdfs)
-            Triple(it, headerDigest, header)
-        }
-        // Group headers by callset (header digest) & consolidate filename list for each
-        .groupByKey { it.second }
-        .mapGroups {
-            headerDigest, items ->
-            var header: String? = null
-            val callsetFilenames = items.map {
-                if (header == null) {
-                    header = it.third
+    val jsc = JavaSparkContext(spark.sparkContext)
+
+    // read the headers of all VCFs, and group the filenames by common header
+    data class _DigestedHeader(val filename: String, val headerDigest: String, val header: String) : Serializable
+    data class _FilenamesWithSameHeader(val header: String, val filenames: List<String>) : Serializable
+    val filenamesByHeader = jsc.parallelize(filenames)
+        .map(
+            object : Function1<String, _DigestedHeader> {
+                override fun call(filename: String): _DigestedHeader {
+                    val (headerDigest, header) = readVcfHeader(filename, hdfs)
+                    return _DigestedHeader(filename, headerDigest, header)
                 }
-                it.first
-            }.asSequence().toList().sorted()
-            Triple(headerDigest, header!!, callsetFilenames)
-        }.withCached {
-            // assign callsetIds as indexes into an array of distinct digests (arbitrary order)
-            val digests: Array<String> = map { it.first }.toArray()
-            val digestToCallsetId = sparkSession().sparkContext.broadcast(
-                digests.sorted().mapIndexed { callsetId, digest -> digest to callsetId }.toMap()
-            )
-
-            // collect CallsetDetails (precursor)
-            val callsetsDetailsPre = map {
-                (digest, headerText, filenames) ->
-                val callsetId = digestToCallsetId.value.get(digest)!!
-                // read samples from last line of header
-                val lastHeaderLine = headerText.trimEnd('\n').splitToSequence("\n").last()
-                require(lastHeaderLine.startsWith("#CHROM"))
-                val samples = lastHeaderLine.splitToSequence("\t").drop(9).toList()
-                require(samples.toSet().size == samples.size, {
-                    val exemplarFilename = java.io.File(filenames.first()).getName()!!
-                    "$exemplarFilename header has duplicate sample names"
-                })
-                callsetId to (filenames to samples)
-            }.collectAsList().sortedBy { it.first }.mapIndexed {
-                i, it ->
-                check(i == it.first)
-                it.second
+            })
+        .groupBy(
+            object : Function1<_DigestedHeader, String> {
+                override fun call(dh: _DigestedHeader): String {
+                    return dh.headerDigest
+                }
             }
-            val filenameToCallsetId = callsetsDetailsPre.flatMapIndexed {
-                i, (filenames, _) ->
-                filenames.map { it to i }
-            }.toMap()
+        )
+        .mapValues(
+            object : Function1<Iterable<_DigestedHeader>, _FilenamesWithSameHeader> {
+                override fun call(dhs: Iterable<_DigestedHeader>): _FilenamesWithSameHeader {
+                    var header: String = ""
+                    val callsetFilenames = dhs.map {
+                        header = it.header
+                        it.filename
+                    }.asSequence().toList().sorted()
+                    return _FilenamesWithSameHeader(header, callsetFilenames)
+                }
+            }
+        ).cache()
 
-            // collect samples from all callsets into an aggregated order, checking for duplicates
-            val flatSamples = callsetsDetailsPre.mapIndexed {
-                callsetId, it ->
-                it.second.map { sample -> sample to callsetId }
-            }.flatten()
-            val samples = flatSamples.map { it.first }.distinct().sorted().toTypedArray()
-            require(
-                flatSamples.size == samples.size || allowDuplicateSamples,
-                { "duplicate samples found among distinct VCF headers" }
-            )
-            val sampleIndex = samples.mapIndexed { i, sample -> sample to i }.toMap()
+    try {
+        // assign callsetIds as indexes into an array of header digests (arbitrary order)
+        val digestToCallsetId = jsc.broadcast(
+            filenamesByHeader.keys().collect().sorted().mapIndexed { callsetId, digest -> digest to callsetId }.toMap()
+        )
 
-            // if allowDuplicateSamples, arbitrarily select one source callset for any sample that
-            // appeared in multiple callsets
-            val sampleCallset = flatSamples.toMap()
+        // collect CallsetDetails (precursor)
+        data class _CallsetDetailsPre(val callsetId: Int, val filenames: List<String>, val samples: List<String>) : Serializable
+        val callsetsDetailsPre = filenamesByHeader.map(
+            object : Function1<scala.Tuple2<String, _FilenamesWithSameHeader>, _CallsetDetailsPre> {
+                override fun call(p: scala.Tuple2<String, _FilenamesWithSameHeader>): _CallsetDetailsPre {
+                    val callsetId = digestToCallsetId.value.get(p._1)!!
+                    // read samples from last line of header
+                    val lastHeaderLine = p._2.header.trimEnd('\n').splitToSequence("\n").last()
+                    require(lastHeaderLine.startsWith("#CHROM"))
+                    val samples = lastHeaderLine.splitToSequence("\t").drop(9).toList()
+                    require(samples.toSet().size == samples.size, {
+                        val exemplarFilename = java.io.File(filenames.first()).getName()!!
+                        "$exemplarFilename header has duplicate sample names"
+                    })
+                    return _CallsetDetailsPre(callsetId, p._2.filenames, samples)
+                }
+            }
+        ).collect().sortedBy { it.callsetId }
+        val filenameToCallsetId = callsetsDetailsPre.flatMapIndexed {
+            i, it ->
+            check(i == it.callsetId)
+            it.filenames.map { fn -> fn to i }
+        }.toMap()
 
-            // finalize CallsetsDetails by mapping callset sample names into the aggregated order
-            val callsetsDetails = callsetsDetailsPre.mapIndexed {
-                callsetId, (callsetFilenames, callsetSamples) ->
-                val callsetSampleIndexes = callsetSamples.map {
-                    if (sampleCallset.get(it)!! == callsetId) sampleIndex.get(it)!! else -1
-                }.toIntArray()
-                CallsetDetails(callsetFilenames, callsetSampleIndexes)
-            }.toTypedArray()
-
-            // collect & deduplicate the contig/FILTER/INFO/FORMAT lines
-            val headerLines = flatMap {
-                (_, headerText, _) ->
-                getVcfHeaderLines(headerText).iterator()
-            }.distinct().collectAsList()
-            val (headerLinesMap, contigs) = validateVcfHeaderLines(headerLines)
-            val contigId = contigs.mapIndexed { ord, id -> id to ord.toShort() }.toMap()
-
-            return AggVcfHeader(headerLinesMap, contigs, contigId, samples, filenameToCallsetId, callsetsDetails)
+        // collect samples from all callsets into an aggregated order, checking for duplicates
+        val flatSamples = callsetsDetailsPre.flatMap {
+            it.samples.map { sample -> sample to it.callsetId }
         }
+        val samples = flatSamples.map { it.first }.distinct().sorted().toTypedArray()
+        require(
+            flatSamples.size == samples.size || allowDuplicateSamples,
+            { "duplicate samples found among distinct VCF headers" }
+        )
+        val sampleIndex = samples.mapIndexed { i, sample -> sample to i }.toMap()
+
+        // if allowDuplicateSamples, arbitrarily select one source callset for any sample that
+        // appeared in multiple callsets
+        val sampleCallset = flatSamples.toMap()
+
+        // finalize CallsetsDetails by mapping callset sample names into the aggregated order
+        val callsetsDetails = callsetsDetailsPre.map {
+            val callsetSampleIndexes = it.samples.map {
+                sample ->
+                if (sampleCallset.get(sample)!! == it.callsetId) sampleIndex.get(sample)!! else -1
+            }.toIntArray()
+            CallsetDetails(it.filenames, callsetSampleIndexes)
+        }.toTypedArray()
+
+        // collect & deduplicate the contig/FILTER/INFO/FORMAT lines
+        val headerLines = filenamesByHeader.values().flatMap(
+            object : FlatMapFunction<_FilenamesWithSameHeader, VcfHeaderLine> {
+                override fun call(fwsh: _FilenamesWithSameHeader): Iterator<VcfHeaderLine> {
+                    return getVcfHeaderLines(fwsh.header).iterator()
+                }
+            }
+        ).distinct().collect()
+        val (headerLinesMap, contigs) = validateVcfHeaderLines(headerLines)
+        val contigId = contigs.mapIndexed { ord, id -> id to ord.toShort() }.toMap()
+
+        return AggVcfHeader(headerLinesMap, contigs, contigId, samples, filenameToCallsetId, callsetsDetails)
+    } finally {
+        filenamesByHeader.unpersist()
+    }
 }
 
 fun callsetExemplarFilename(aggHeader: AggVcfHeader, callsetId: Int): String {

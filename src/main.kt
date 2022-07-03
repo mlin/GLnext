@@ -73,8 +73,10 @@ class CLI : CliktCommand() {
             val logger = LogManager.getLogger("vcfGLuer")
             logger.setLevel(Level.INFO)
 
-            logger.info("vcfGLuer v${getProjectVersion()}")
+            logger.info("${System.getProperty("java.runtime.name")} ${System.getProperty("java.runtime.version")}")
+            logger.info("Spark v${spark.version()}")
             logger.info("Locale: ${java.util.Locale.getDefault()}")
+            logger.info("vcfGLuer v${getProjectVersion()}")
             logger.info(cfg.toString())
             logger.info("binSize: $binSize")
             logger.info("input VCF files: ${effInputFiles.size.pretty()}")

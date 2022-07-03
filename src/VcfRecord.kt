@@ -1,8 +1,7 @@
-import org.apache.spark.api.java.function.FlatMapFunction
+import org.apache.spark.api.java.JavaSparkContext
+import org.apache.spark.api.java.function.*
 import org.apache.spark.sql.*
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
-import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.types.*
 import org.apache.spark.util.LongAccumulator
 import org.jetbrains.kotlinx.spark.api.*
@@ -28,9 +27,9 @@ data class VcfRecord(val callsetId: Int, val range: GRange, val line: String) {
 }
 
 /**
- * RowEncoder for VcfRecord.toRow()
+ * StructType for VcfRecord.toRow()
  */
-fun VcfRecordRowEncoder(compress: Boolean = false): ExpressionEncoder<Row> {
+fun VcfRecordStructType(compress: Boolean = false): StructType {
     var ty = StructType()
         .add("callsetId", DataTypes.IntegerType, false)
         .add("rid", DataTypes.ShortType, false)
@@ -41,7 +40,7 @@ fun VcfRecordRowEncoder(compress: Boolean = false): ExpressionEncoder<Row> {
     } else {
         ty = ty.add("line", DataTypes.StringType, false)
     }
-    return RowEncoder.apply(ty)
+    return ty
 }
 
 /**
@@ -87,41 +86,40 @@ fun readVcfRecordsDF(
     recordBytes: LongAccumulator? = null,
     hdfs: Hdfs? = null
 ): Dataset<Row> {
-    var filenamesWithCallsetIds = spark.toDS(aggHeader.filenameCallsetId.toList())
-    // pigeonhole partitions (assume each file is a reasonable size)
-    filenamesWithCallsetIds = filenamesWithCallsetIds.repartitionByRange(
-        aggHeader.filenameCallsetId.size,
-        filenamesWithCallsetIds.col(filenamesWithCallsetIds.columns()[0])
-    )
+    val jsc = JavaSparkContext(spark.sparkContext)
+
+    val filenamesWithCallsetIds = jsc.parallelize(aggHeader.filenameCallsetId.toList())
+    // TODO: ensure pigeonhole partitions
     val contigId = aggHeader.contigId
     // flatMap each filename+callsetId onto all the records in the file
-    return filenamesWithCallsetIds.flatMap(
-        object : FlatMapFunction<Pair<String, Int>, Row> {
-            override fun call(p: Pair<String, Int>): Iterator<Row> {
-                val (filename, callsetId) = p
-                return sequence {
-                    vcfInputStream(filename, hdfs).bufferedReader().useLines {
-                        it.forEach {
-                            line ->
-                            if (line.length > 0 && line.get(0) != '#') {
-                                recordCount?.let { it.add(1L) }
-                                recordBytes?.let { it.add(line.length + 1L) }
-                                yield(parseVcfRecord(contigId, callsetId, line).toRow(compressEachRecord))
+    return spark.createDataFrame(
+        filenamesWithCallsetIds.flatMap(
+            object : FlatMapFunction<Pair<String, Int>, Row> {
+                override fun call(p: Pair<String, Int>): Iterator<Row> {
+                    val (filename, callsetId) = p
+                    return sequence {
+                        vcfInputStream(filename, hdfs).bufferedReader().useLines {
+                            it.forEach {
+                                line ->
+                                if (line.length > 0 && line.get(0) != '#') {
+                                    recordCount?.let { it.add(1L) }
+                                    recordBytes?.let { it.add(line.length + 1L) }
+                                    yield(parseVcfRecord(contigId, callsetId, line).toRow(compressEachRecord))
+                                }
                             }
                         }
-                    }
-                    if (deleteInputVcfs) {
-                        if (filename.startsWith("hdfs:")) {
-                            check(hdfs != null)
-                            hdfs.delete(org.apache.hadoop.fs.Path(filename.substring(5)), false)
-                        } else {
-                            java.io.File(filename).delete()
+                        if (deleteInputVcfs) {
+                            if (filename.startsWith("hdfs:")) {
+                                check(hdfs != null)
+                                hdfs.delete(org.apache.hadoop.fs.Path(filename.substring(5)), false)
+                            } else {
+                                java.io.File(filename).delete()
+                            }
                         }
-                    }
-                }.iterator()
-            }
-        },
-        VcfRecordRowEncoder(compressEachRecord)
+                    }.iterator()
+                }
+            }),
+        VcfRecordStructType(compressEachRecord)
     )
 }
 
