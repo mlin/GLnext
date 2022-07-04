@@ -6,7 +6,6 @@ import org.apache.spark.sql.types.*
 import org.apache.spark.util.LongAccumulator
 import org.jetbrains.kotlinx.spark.api.*
 import org.xerial.snappy.Snappy
-import org.apache.hadoop.fs.FileSystem as Hdfs
 
 enum class VcfColumn {
     CHROM, POS, ID, REF, ALT, QUAL, FILTER, INFO, FORMAT, FIRST_SAMPLE
@@ -83,8 +82,7 @@ fun readVcfRecordsDF(
     compressEachRecord: Boolean = false,
     deleteInputVcfs: Boolean = false,
     recordCount: LongAccumulator? = null,
-    recordBytes: LongAccumulator? = null,
-    hdfs: Hdfs? = null
+    recordBytes: LongAccumulator? = null
 ): Dataset<Row> {
     val jsc = JavaSparkContext(spark.sparkContext)
 
@@ -97,6 +95,7 @@ fun readVcfRecordsDF(
             object : FlatMapFunction<Pair<String, Int>, Row> {
                 override fun call(p: Pair<String, Int>): Iterator<Row> {
                     val (filename, callsetId) = p
+                    val hdfs = if (filename.startsWith("hdfs:")) sparkHdfs() else null
                     return sequence {
                         vcfInputStream(filename, hdfs).bufferedReader().useLines {
                             it.forEach {
@@ -109,8 +108,7 @@ fun readVcfRecordsDF(
                             }
                         }
                         if (deleteInputVcfs) {
-                            if (filename.startsWith("hdfs:")) {
-                                check(hdfs != null)
+                            if (hdfs != null) {
                                 hdfs.delete(org.apache.hadoop.fs.Path(filename.substring(5)), false)
                             } else {
                                 java.io.File(filename).delete()

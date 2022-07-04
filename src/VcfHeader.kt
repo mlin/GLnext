@@ -16,10 +16,10 @@ import org.apache.spark.api.java.function.Function as Function1
 /**
  * VCF header contig/FILTER/INFO/FORMAT lines
  */
-enum class VcfHeaderLineKind { FILTER, INFO, FORMAT, CONTIG }
+enum class VcfHeaderLineKind : Serializable { FILTER, INFO, FORMAT, CONTIG }
 data class VcfHeaderLine(val kind: VcfHeaderLineKind, val id: String, val lineText: String, val ord: Int = -1) :
-    java.io.Serializable, Comparable<VcfHeaderLine> {
-    override fun compareTo(other: VcfHeaderLine) = compareValuesBy(this, other, { it.kind }, { it.ord }, { it.id })
+    Serializable, Comparable<VcfHeaderLine> {
+    override fun compareTo(other: VcfHeaderLine) = compareValuesBy(this, other, { it.kind }, { it.ord }, { it.id }, { it.lineText })
 }
 typealias VcfHeaderLineIndex = Map<Pair<VcfHeaderLineKind, String>, VcfHeaderLine>
 
@@ -27,7 +27,7 @@ typealias VcfHeaderLineIndex = Map<Pair<VcfHeaderLineKind, String>, VcfHeaderLin
  * Details specific to one callset: for each sample in the original callset, its index in the
  * aggregated sample list
  */
-data class CallsetDetails(val callsetFilenames: List<String>, val callsetSamples: IntArray) : java.io.Serializable
+data class CallsetDetails(val callsetFilenames: List<String>, val callsetSamples: IntArray) : Serializable
 
 /**
  * Meta header aggregated from all input VCF files (header lines deduplicated & checked for
@@ -52,18 +52,22 @@ data class AggVcfHeader(
 /**
  * Use Spark to load all VCF headers and aggregate them
  */
-fun aggregateVcfHeaders(spark: org.apache.spark.sql.SparkSession, filenames: List<String>, allowDuplicateSamples: Boolean = false, hdfs: Hdfs? = null): AggVcfHeader {
+fun aggregateVcfHeaders(spark: org.apache.spark.sql.SparkSession, filenames: List<String>, allowDuplicateSamples: Boolean = false): AggVcfHeader {
     val jsc = JavaSparkContext(spark.sparkContext)
+    val anyHdfs = filenames.any { it.startsWith("hdfs:") }
 
     // read the headers of all VCFs, and group the filenames by common header
     data class _DigestedHeader(val filename: String, val headerDigest: String, val header: String) : Serializable
     data class _FilenamesWithSameHeader(val header: String, val filenames: List<String>) : Serializable
     val filenamesByHeader = jsc.parallelize(filenames)
-        .map(
-            object : Function1<String, _DigestedHeader> {
-                override fun call(filename: String): _DigestedHeader {
-                    val (headerDigest, header) = readVcfHeader(filename, hdfs)
-                    return _DigestedHeader(filename, headerDigest, header)
+        .mapPartitions(
+            object : FlatMapFunction<Iterator<String>, _DigestedHeader> {
+                override fun call(filenames: Iterator<String>): Iterator<_DigestedHeader> {
+                    val hdfs = if (anyHdfs) sparkHdfs() else null
+                    return filenames.asSequence().map {
+                        val (headerDigest, header) = readVcfHeader(it, hdfs)
+                        _DigestedHeader(it, headerDigest, header)
+                    }.iterator()
                 }
             })
         .groupBy(
@@ -147,7 +151,7 @@ fun aggregateVcfHeaders(spark: org.apache.spark.sql.SparkSession, filenames: Lis
                     return getVcfHeaderLines(fwsh.header).iterator()
                 }
             }
-        ).distinct().collect()
+        ).distinct().collect().distinct() // FIXME the second distinct() should not be needed, why is it?
         val (headerLinesMap, contigs) = validateVcfHeaderLines(headerLines)
         val contigId = contigs.mapIndexed { ord, id -> id to ord.toShort() }.toMap()
 
@@ -167,11 +171,18 @@ fun callsetExemplarFilename(aggHeader: AggVcfHeader, callsetId: Int): String {
  */
 fun validateVcfHeaderLines(headerLines: List<VcfHeaderLine>):
     Pair<VcfHeaderLineIndex, Array<String>> {
+    // headerLines.sorted().forEach {
+    //    println(it)
+    // }
+    require(headerLines.distinct().size == headerLines.size)
     // check for ID collisions/inconsistencies in header lines
     val headerLinesMap = headerLines.map { (it.kind to it.id) to it }.toMap()
     require(
         headerLines.size == headerLinesMap.size,
-        { "inconsistent FILTER/INFO/FORMAT/contig header lines found in distinct VCF headers (ID collision)" }
+        {
+            "inconsistent FILTER/INFO/FORMAT/contig header lines found in distinct VCF headers" +
+                " (ID collision; ${headerLines.size} != ${headerLinesMap.size})"
+        }
     )
 
     // compile contig list

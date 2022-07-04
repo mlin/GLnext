@@ -75,20 +75,15 @@ class CLI : CliktCommand() {
 
             logger.info("${System.getProperty("java.runtime.name")} ${System.getProperty("java.runtime.version")}")
             logger.info("Spark v${spark.version()}")
+            logger.info("Spark defaultParallelism: ${spark.sparkContext.defaultParallelism()}")
             logger.info("Locale: ${java.util.Locale.getDefault()}")
             logger.info("vcfGLuer v${getProjectVersion()}")
             logger.info(cfg.toString())
             logger.info("binSize: $binSize")
             logger.info("input VCF files: ${effInputFiles.size.pretty()}")
 
-            var hdfs: Hdfs? = null
-            if (pvcfDir.startsWith("hdfs:") || effInputFiles.any { it.startsWith("hdfs:") }) {
-                hdfs = Hdfs.get(org.apache.spark.deploy.SparkHadoopUtil.get().conf())
-                logger.info("initialized HDFS ${hdfs.getUri()}")
-            }
-
             // load & aggregate all input VCF headers
-            val aggHeader = aggregateVcfHeaders(spark, effInputFiles, allowDuplicateSamples = allowDuplicateSamples, hdfs = hdfs)
+            val aggHeader = aggregateVcfHeaders(spark, effInputFiles, allowDuplicateSamples = allowDuplicateSamples)
 
             logger.info("samples: ${aggHeader.samples.size.pretty()}")
             logger.info("callsets: ${aggHeader.callsetsDetails.size.pretty()}")
@@ -108,7 +103,7 @@ class CLI : CliktCommand() {
             val vcfRecordBytes = spark.sparkContext.longAccumulator("original VCF bytes)")
             readVcfRecordsDF(
                 spark, aggHeader, compressEachRecord = cfg.spark.compressTempRecords, deleteInputVcfs = deleteInputVcfs,
-                recordCount = vcfRecordCount, recordBytes = vcfRecordBytes, hdfs = hdfs
+                recordCount = vcfRecordCount, recordBytes = vcfRecordBytes
             ).withCached {
                 val vcfRecordsDF = this
 
@@ -133,6 +128,7 @@ class CLI : CliktCommand() {
                 logger.info("pVCF bytes: ${pvcfRecordBytes.sum().pretty()}")
 
                 // write output VCF header
+                val hdfs = if (pvcfDir.startsWith("hdfs:")) sparkHdfs() else null
                 fileOrHdfsOutputStream(pvcfDir, "00HEADER.bgz", hdfs).use {
                     BGZFOutputStream(it).use {
                         java.io.OutputStreamWriter(it, "UTF-8").use {
@@ -147,9 +143,9 @@ class CLI : CliktCommand() {
                 fileOrHdfsOutputStream(pvcfDir, eofTempName, hdfs).use {
                     it.write(htsjdk.samtools.util.BlockCompressedStreamConstants.EMPTY_GZIP_BLOCK)
                 }
-                if (pvcfDir.startsWith("hdfs:")) {
+                if (hdfs != null) {
                     check(
-                        hdfs != null && hdfs.rename(HdfsPath(pvcfDir.substring(5), eofTempName), HdfsPath(pvcfDir.substring(5), eofName)),
+                        hdfs.rename(HdfsPath(pvcfDir.substring(5), eofTempName), HdfsPath(pvcfDir.substring(5), eofName)),
                         { "unable to finalize $eofName" }
                     )
                 } else {
@@ -174,6 +170,10 @@ fun getProjectVersion(): String {
     val props = Properties()
     props.load(Unit.javaClass.getClassLoader().getResourceAsStream("META-INF/maven/net.mlin/vcfGLuer/pom.properties"))
     return props.getProperty("version")
+}
+
+fun sparkHdfs(): Hdfs {
+    return Hdfs.get(org.apache.spark.deploy.SparkHadoopUtil.get().conf())
 }
 
 fun fileOrHdfsOutputStream(parent: String, child: String, hdfs: Hdfs?): java.io.OutputStream {

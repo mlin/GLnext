@@ -37,12 +37,6 @@
       "class": "string",
       "default": "",
       "help": "command-line flags for vcfGLuer"
-    },
-    {
-      "name": "worker_instance_type",
-      "class": "string",
-      "default": "mem3_ssd3_x12",
-      "help": "Spark worker instance type"
     }
   ],
   "outputSpec": [
@@ -53,6 +47,14 @@
         "*.vcf.gz"
       ],
       "help": ""
+    },
+    {
+      "name": "cluster_runtime_logs_tarball",
+      "label": "Cluster runtime logs tarball",
+      "class": "file",
+      "patterns": [ "*.tar.gz" ],
+      "optional": true,
+      "help": "Spark cluster logs"
     }
   ],
   "runSpec": {
@@ -67,23 +69,29 @@
     "release": "20.04",
     "version": "0",
     "execDepends": [
-      {"name": "parallel"},
-      {"name": "openjdk-11-jre-headless"},
       {"name": "libsnappy1v5"},
-      {"name": "numactl"},
       {"name": "tabix"},
       {"name": "libhts3"},
       {"name": "libjemalloc2"},
-      {"name": "libgflags2.2"},
-      {"name": "dstat"}
+      {"name": "libgflags2.2"}
     ]
   },
-  "access": {},
+  "access": {
+    "network": [
+      "*"
+    ],
+    "project": "CONTRIBUTE"
+  },
   "regionalOptions": {
     "aws:us-east-1": {
       "systemRequirements": {
         "*": {
-          "instanceType": "mem1_ssd1_v2_x2"
+          "instanceType": "mem3_ssd3_x8",
+          "clusterSpec": {
+            "type": "apachespark",
+            "version": "3.2.0",
+            "initialInstanceCount": 3
+          }
         }
       }
     }
