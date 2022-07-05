@@ -37,15 +37,18 @@
       "class": "string",
       "default": "",
       "help": "command-line flags for vcfGLuer"
+    },
+    {
+      "name": "spark_default_parallelism",
+      "class": "int",
+      "default": 256,
+      "help": "spark.default.parallelism (for large jobs, set to several times the # cluster cores)"
     }
   ],
   "outputSpec": [
     {
-      "name": "pvcf_gz",
-      "class": "file",
-      "patterns": [
-        "*.vcf.gz"
-      ],
+      "name": "pvcf_parts",
+      "class": "array:file",
       "help": ""
     },
     {

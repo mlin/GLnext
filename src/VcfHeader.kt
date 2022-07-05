@@ -145,13 +145,17 @@ fun aggregateVcfHeaders(spark: org.apache.spark.sql.SparkSession, filenames: Lis
         }.toTypedArray()
 
         // collect & deduplicate the contig/FILTER/INFO/FORMAT lines
-        val headerLines = filenamesByHeader.values().flatMap(
+        var headerLines = filenamesByHeader.values().flatMap(
             object : FlatMapFunction<_FilenamesWithSameHeader, VcfHeaderLine> {
                 override fun call(fwsh: _FilenamesWithSameHeader): Iterator<VcfHeaderLine> {
                     return getVcfHeaderLines(fwsh.header).iterator()
                 }
             }
-        ).distinct().collect().distinct() // FIXME the second distinct() should not be needed, why is it?
+        ).distinct().collect()
+        // There's something weird with VcfHeaderLineKind enum serialization causing
+        // JavaRDD.distinct() to leave some duplicates when merging results from multiple JVMs. So
+        // re-distinct() the in-memory list. Troubling....
+        headerLines = headerLines.distinct()
         val (headerLinesMap, contigs) = validateVcfHeaderLines(headerLines)
         val contigId = contigs.mapIndexed { ord, id -> id to ord.toShort() }.toMap()
 

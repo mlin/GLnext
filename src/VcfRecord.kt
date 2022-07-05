@@ -6,6 +6,7 @@ import org.apache.spark.sql.types.*
 import org.apache.spark.util.LongAccumulator
 import org.jetbrains.kotlinx.spark.api.*
 import org.xerial.snappy.Snappy
+import kotlin.math.max
 
 enum class VcfColumn {
     CHROM, POS, ID, REF, ALT, QUAL, FILTER, INFO, FORMAT, FIRST_SAMPLE
@@ -87,7 +88,7 @@ fun readVcfRecordsDF(
     val jsc = JavaSparkContext(spark.sparkContext)
 
     val filenamesWithCallsetIds = jsc.parallelize(aggHeader.filenameCallsetId.toList())
-    // TODO: ensure pigeonhole partitions
+        .repartition(max(jsc.defaultParallelism(), 4 * aggHeader.filenameCallsetId.size))
     val contigId = aggHeader.contigId
     // flatMap each filename+callsetId onto all the records in the file
     return spark.createDataFrame(

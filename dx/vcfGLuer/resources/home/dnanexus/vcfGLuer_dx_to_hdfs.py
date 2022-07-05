@@ -19,10 +19,17 @@ for fn in glob.glob("/home/dnanexus/in/vcf_manifest/*"):
 
 print(f"copying {len(dxid_list)} dxfiles to hdfs:/vcfGLuer/in/", file=sys.stderr)
 spark = pyspark.sql.SparkSession.builder.getOrCreate()
-dxid_rdd = spark.sparkContext.parallelize(dxid_list, 64)
+dxid_rdd = spark.sparkContext.parallelize(dxid_list, max(spark.sparkContext.defaultParallelism, 64))
+subprocess.run("$HADOOP_HOME/bin/hadoop fs -mkdir -p /vcfGLuer/in", shell=True, check=True)
+
+dx_time_accumulator = spark.sparkContext.accumulator(0.0)
+hdfs_time_accumulator = spark.sparkContext.accumulator(0.0)
 
 
-def process_dxfile(dxid, dx_time_accumulator, hdfs_time_accumulator):
+def process_dxfile(dxid):
+    global dx_time_accumulator
+    global hdfs_time_accumulator
+
     project_id = None
     dxid = dxid.split(":")
     if len(dxid) == 1:
@@ -44,6 +51,8 @@ def process_dxfile(dxid, dx_time_accumulator, hdfs_time_accumulator):
                 os.path.join(os.environ["HADOOP_HOME"], "bin", "hadoop"),
                 "fs",
                 "-put",
+                "-f",  # Overwrites the destination if it already exists
+                "-l",  # Forces a replication factor of 1
                 os.path.join(tmpdir, fn),
                 "/vcfGLuer/in/",
             ],
@@ -55,12 +64,7 @@ def process_dxfile(dxid, dx_time_accumulator, hdfs_time_accumulator):
         return "hdfs:/vcfGLuer/in/" + fn
 
 
-dx_time_accumulator = spark.sparkContext.accumulator(0.0)
-hdfs_time_accumulator = spark.sparkContext.accumulator(0.0)
-subprocess.run("$HADOOP_HOME/bin/hadoop fs -mkdir -p /vcfGLuer/in", shell=True, check=True)
-hdfs_paths = dxid_rdd.map(
-    lambda dxid: process_dxfile(dxid, dx_time_accumulator, hdfs_time_accumulator)
-).collect()
+hdfs_paths = dxid_rdd.map(process_dxfile).collect()
 assert len(hdfs_paths) == len(dxid_list)
 
 print(f"cumulative seconds downloading dxfiles: {dx_time_accumulator.value}", file=sys.stderr)

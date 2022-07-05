@@ -75,7 +75,8 @@ class CLI : CliktCommand() {
 
             logger.info("${System.getProperty("java.runtime.name")} ${System.getProperty("java.runtime.version")}")
             logger.info("Spark v${spark.version()}")
-            logger.info("Spark defaultParallelism: ${spark.sparkContext.defaultParallelism()}")
+            logger.info("spark.default.parallelism: ${spark.sparkContext.defaultParallelism()}")
+            logger.info("spark executors: ${spark.sparkContext.statusTracker().getExecutorInfos().size}")
             logger.info("Locale: ${java.util.Locale.getDefault()}")
             logger.info("vcfGLuer v${getProjectVersion()}")
             logger.info(cfg.toString())
