@@ -17,7 +17,7 @@ for fn in glob.glob("/home/dnanexus/in/vcf_manifest/*"):
             assert "file-" in line, "manifest should contain file-xxxx IDs, one ID per line"
             dxid_list.append(line.strip())
 
-print(f"copying {len(dxid_list)} dxfiles to hdfs:/vcfGLuer/in/", file=sys.stderr)
+print(f"copying {len(dxid_list)} dxfiles to hdfs:///vcfGLuer/in/", file=sys.stderr)
 spark = pyspark.sql.SparkSession.builder.getOrCreate()
 dxid_rdd = spark.sparkContext.parallelize(dxid_list, max(spark.sparkContext.defaultParallelism, 64))
 subprocess.run("$HADOOP_HOME/bin/hadoop fs -mkdir -p /vcfGLuer/in", shell=True, check=True)
@@ -61,7 +61,7 @@ def process_dxfile(dxid):
         )
         assert proc.returncode == 0, f"Failed copying {dxid} to HDFS:\n{proc.stderr}"
         hdfs_time_accumulator += time.time() - t1
-        return "hdfs:/vcfGLuer/in/" + fn
+        return "hdfs:///vcfGLuer/in/" + fn
 
 
 hdfs_paths = dxid_rdd.map(process_dxfile).collect()

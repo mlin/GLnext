@@ -7,14 +7,15 @@ import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.int
 import com.sksamuel.hoplite.*
+import org.apache.hadoop.fs.FileSystem
+import org.apache.hadoop.fs.Path
 import org.apache.log4j.Level
 import org.apache.log4j.LogManager
 import org.apache.spark.sql.*
 import org.jetbrains.kotlinx.spark.api.*
 import java.io.File
+import java.net.URI
 import java.util.Properties
-import org.apache.hadoop.fs.FileSystem as Hdfs
-import org.apache.hadoop.fs.Path as HdfsPath
 
 data class SparkConfig(val compressTempRecords: Boolean, val compressTempFiles: Boolean)
 data class VariantDiscoveryConfig(val minCopies: Int)
@@ -128,33 +129,8 @@ class CLI : CliktCommand() {
                 logger.info("pVCF variants: ${pvcfRecordCount.sum().pretty()}")
                 logger.info("pVCF bytes: ${pvcfRecordBytes.sum().pretty()}")
 
-                // write output VCF header
-                val hdfs = if (pvcfDir.startsWith("hdfs:")) sparkHdfs() else null
-                fileOrHdfsOutputStream(pvcfDir, "00HEADER.bgz", hdfs).use {
-                    BGZFOutputStream(it).use {
-                        java.io.OutputStreamWriter(it, "UTF-8").use {
-                            it.write(pvcfHeader)
-                        }
-                    }
-                }
-
-                // atomically write _EOF.bgz
-                val eofName = "zzEOF.bgz"
-                val eofTempName = ".wip." + eofName
-                fileOrHdfsOutputStream(pvcfDir, eofTempName, hdfs).use {
-                    it.write(htsjdk.samtools.util.BlockCompressedStreamConstants.EMPTY_GZIP_BLOCK)
-                }
-                if (hdfs != null) {
-                    check(
-                        hdfs.rename(HdfsPath(pvcfDir.substring(5), eofTempName), HdfsPath(pvcfDir.substring(5), eofName)),
-                        { "unable to finalize $eofName" }
-                    )
-                } else {
-                    check(
-                        File(pvcfDir, eofTempName).renameTo(File(pvcfDir, eofName)),
-                        { "unable to finalize $eofName" }
-                    )
-                }
+                // write output VCF header & BGZF EOF marker
+                writeHeaderAndEOF(pvcfHeader, pvcfDir)
             }
         }
     }
@@ -173,14 +149,31 @@ fun getProjectVersion(): String {
     return props.getProperty("version")
 }
 
-fun sparkHdfs(): Hdfs {
-    return Hdfs.get(org.apache.spark.deploy.SparkHadoopUtil.get().conf())
+fun writeHeaderAndEOF(headerText: String, dir: String) {
+    val fs = getFileSystem(dir)
+
+    fs.create(Path(dir, "00HEADER.bgz"), true).use {
+        BGZFOutputStream(it).use {
+            java.io.OutputStreamWriter(it, "UTF-8").use {
+                it.write(headerText)
+            }
+        }
+    }
+
+    fs.create(Path(dir, ".wip.zzEOF.bgz"), true).use {
+        it.write(htsjdk.samtools.util.BlockCompressedStreamConstants.EMPTY_GZIP_BLOCK)
+    }
+    check(
+        fs.rename(Path(dir, ".wip.zzEOF.bgz"), Path(dir, "zzEOF.bgz")),
+        { "unable to finalize $dir/zzEOF.bgz" }
+    )
 }
 
-fun fileOrHdfsOutputStream(parent: String, child: String, hdfs: Hdfs?): java.io.OutputStream {
-    if (parent.startsWith("hdfs:")) {
-        check(hdfs != null)
-        return hdfs.create(HdfsPath(parent.substring(5), child), true)
+fun getFileSystem(path: String): FileSystem {
+    val normPath = if (path.startsWith("hdfs:") || path.startsWith("file://")) {
+        path
+    } else {
+        "file://" + path
     }
-    return java.io.FileOutputStream(java.io.File(parent, child))
+    return FileSystem.get(URI(normPath), org.apache.spark.deploy.SparkHadoopUtil.get().conf())
 }

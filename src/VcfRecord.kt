@@ -1,3 +1,5 @@
+
+import org.apache.hadoop.fs.Path
 import org.apache.spark.api.java.JavaSparkContext
 import org.apache.spark.api.java.function.*
 import org.apache.spark.sql.*
@@ -96,9 +98,9 @@ fun readVcfRecordsDF(
             object : FlatMapFunction<Pair<String, Int>, Row> {
                 override fun call(p: Pair<String, Int>): Iterator<Row> {
                     val (filename, callsetId) = p
-                    val hdfs = if (filename.startsWith("hdfs:")) sparkHdfs() else null
                     return sequence {
-                        vcfInputStream(filename, hdfs).bufferedReader().useLines {
+                        val fs = getFileSystem(filename)
+                        vcfInputStream(filename, fs).bufferedReader().useLines {
                             it.forEach {
                                 line ->
                                 if (line.length > 0 && line.get(0) != '#') {
@@ -109,11 +111,7 @@ fun readVcfRecordsDF(
                             }
                         }
                         if (deleteInputVcfs) {
-                            if (hdfs != null) {
-                                hdfs.delete(org.apache.hadoop.fs.Path(filename.substring(5)), false)
-                            } else {
-                                java.io.File(filename).delete()
-                            }
+                            fs.delete(Path(filename), false)
                         }
                     }.iterator()
                 }

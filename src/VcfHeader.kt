@@ -5,12 +5,13 @@
  * file per chromosome). The assumption is that files with identical headers (including the sample
  * identifier(s) on the #CHROM line) comprise one callset.
  */
+import org.apache.hadoop.fs.FileSystem
+import org.apache.hadoop.fs.Path
 import org.apache.spark.api.java.JavaSparkContext
 import org.apache.spark.api.java.function.*
 import org.apache.spark.sql.*
 import org.jetbrains.kotlinx.spark.api.*
 import java.io.Serializable
-import org.apache.hadoop.fs.FileSystem as Hdfs
 import org.apache.spark.api.java.function.Function as Function1
 
 /**
@@ -54,7 +55,7 @@ data class AggVcfHeader(
  */
 fun aggregateVcfHeaders(spark: org.apache.spark.sql.SparkSession, filenames: List<String>, allowDuplicateSamples: Boolean = false): AggVcfHeader {
     val jsc = JavaSparkContext(spark.sparkContext)
-    val anyHdfs = filenames.any { it.startsWith("hdfs:") }
+    val exampleFilename = filenames.first()
 
     // read the headers of all VCFs, and group the filenames by common header
     data class _DigestedHeader(val filename: String, val headerDigest: String, val header: String) : Serializable
@@ -63,9 +64,9 @@ fun aggregateVcfHeaders(spark: org.apache.spark.sql.SparkSession, filenames: Lis
         .mapPartitions(
             object : FlatMapFunction<Iterator<String>, _DigestedHeader> {
                 override fun call(filenames: Iterator<String>): Iterator<_DigestedHeader> {
-                    val hdfs = if (anyHdfs) sparkHdfs() else null
+                    val fs = getFileSystem(exampleFilename)
                     return filenames.asSequence().map {
-                        val (headerDigest, header) = readVcfHeader(it, hdfs)
+                        val (headerDigest, header) = readVcfHeader(it, fs)
                         _DigestedHeader(it, headerDigest, header)
                     }.iterator()
                 }
@@ -204,8 +205,8 @@ fun validateVcfHeaderLines(headerLines: List<VcfHeaderLine>):
  * Read just the header from the VCF file and return (headerDigest, headerText) where headerDigest
  * is SHA-256 hex.
  */
-fun readVcfHeader(filename: String, hdfs: Hdfs? = null): Pair<String, String> {
-    val header = vcfInputStream(filename, hdfs).bufferedReader().useLines {
+fun readVcfHeader(filename: String, fs: FileSystem? = null): Pair<String, String> {
+    val header = vcfInputStream(filename, fs).bufferedReader().useLines {
         return@useLines it.takeWhile { it.length > 0 && it.get(0) == '#' }
             .asSequence()
             .joinToString(separator = "\n", postfix = "\n")
@@ -221,14 +222,9 @@ fun readVcfHeader(filename: String, hdfs: Hdfs? = null): Pair<String, String> {
 /**
  * Open file InputStream, gunzipping if applicable
  */
-fun vcfInputStream(filename: String, hdfs: Hdfs? = null): java.io.InputStream {
-    var instream: java.io.InputStream
-    if (filename.startsWith("hdfs:")) {
-        check(hdfs != null)
-        instream = hdfs.open(org.apache.hadoop.fs.Path(filename.substring(5)))
-    } else {
-        instream = java.io.File(filename).inputStream()
-    }
+fun vcfInputStream(filename: String, fs: FileSystem? = null): java.io.InputStream {
+    val fs2 = if (fs != null) { fs } else { getFileSystem(filename) }
+    var instream: java.io.InputStream = fs2.open(Path(filename))
     if (filename.endsWith(".gz")) {
         instream = java.util.zip.GZIPInputStream(instream)
     }

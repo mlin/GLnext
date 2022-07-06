@@ -21,18 +21,6 @@
       "help": ""
     },
     {
-      "name": "genomic_range_filter",
-      "class": "string",
-      "default": "",
-      "help": "filter input VCF files to chr:beg-end"
-    },
-    {
-      "name": "streaming_split",
-      "class": "boolean",
-      "default": false,
-      "help": "split input VCFs during streaming localization (use for few, large input files)"
-    },
-    {
       "name": "flags",
       "class": "string",
       "default": "",
@@ -42,7 +30,7 @@
       "name": "spark_default_parallelism",
       "class": "int",
       "default": 256,
-      "help": "spark.default.parallelism (for large jobs, set to several times the # cluster cores)"
+      "help": "spark.default.parallelism (set at least the # cluster cores)"
     }
   ],
   "outputSpec": [
@@ -74,9 +62,7 @@
     "execDepends": [
       {"name": "libsnappy1v5"},
       {"name": "tabix"},
-      {"name": "libhts3"},
-      {"name": "libjemalloc2"},
-      {"name": "libgflags2.2"}
+      {"name": "libhts3"}
     ]
   },
   "access": {
@@ -89,11 +75,12 @@
     "aws:us-east-1": {
       "systemRequirements": {
         "*": {
-          "instanceType": "mem3_ssd3_x8",
+          "00COMMENT": "avoid _x96 b/c it has two NUMA nodes",
+          "instanceType": "mem3_ssd3_x24",
           "clusterSpec": {
             "type": "apachespark",
             "version": "3.2.0",
-            "initialInstanceCount": 3
+            "initialInstanceCount": 2
           }
         }
       }
