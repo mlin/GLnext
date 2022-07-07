@@ -7,6 +7,7 @@
  */
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
+import org.apache.log4j.LogManager
 import org.apache.spark.api.java.JavaSparkContext
 import org.apache.spark.api.java.function.*
 import org.apache.spark.sql.*
@@ -156,7 +157,12 @@ fun aggregateVcfHeaders(spark: org.apache.spark.sql.SparkSession, filenames: Lis
         // There's something weird with VcfHeaderLineKind enum serialization causing
         // JavaRDD.distinct() to leave some duplicates when merging results from multiple JVMs. So
         // re-distinct() the in-memory list. Troubling....
+        val headerLinesSize1 = headerLines.size
         headerLines = headerLines.distinct()
+        val headerLinesSize2 = headerLines.size
+        if (headerLinesSize1 != headerLinesSize2) {
+            LogManager.getLogger("vcfGLuer").warn("Corrected VcfHeaderLineKind duplicates left by Spark distinct() ($headerLinesSize1 > $headerLinesSize2)")
+        }
         val (headerLinesMap, contigs) = validateVcfHeaderLines(headerLines)
         val contigId = contigs.mapIndexed { ord, id -> id to ord.toShort() }.toMap()
 
