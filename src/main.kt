@@ -129,6 +129,9 @@ class CLI : CliktCommand() {
                 logger.info("pVCF variants: ${pvcfRecordCount.sum().pretty()}")
                 logger.info("pVCF bytes: ${pvcfRecordBytes.sum().pretty()}")
 
+                // reorganize part files
+                reorgJointFiles(spark, pvcfDir, aggHeader)
+
                 // write output VCF header & BGZF EOF marker
                 writeHeaderAndEOF(pvcfHeader, pvcfDir)
             }

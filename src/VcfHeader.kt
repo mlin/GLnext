@@ -161,7 +161,7 @@ fun aggregateVcfHeaders(spark: org.apache.spark.sql.SparkSession, filenames: Lis
         headerLines = headerLines.distinct()
         val headerLinesSize2 = headerLines.size
         if (headerLinesSize1 != headerLinesSize2) {
-            LogManager.getLogger("vcfGLuer").warn("Corrected VcfHeaderLineKind duplicates left by Spark distinct() ($headerLinesSize1 > $headerLinesSize2)")
+            LogManager.getLogger("vcfGLuer").warn("Deduplicated VcfHeaderLineKind left by Spark distinct() ($headerLinesSize1 > $headerLinesSize2)")
         }
         val (headerLinesMap, contigs) = validateVcfHeaderLines(headerLines)
         val contigId = contigs.mapIndexed { ord, id -> id to ord.toShort() }.toMap()
@@ -231,7 +231,7 @@ fun readVcfHeader(filename: String, fs: FileSystem? = null): Pair<String, String
 fun vcfInputStream(filename: String, fs: FileSystem? = null): java.io.InputStream {
     val fs2 = if (fs != null) { fs } else { getFileSystem(filename) }
     var instream: java.io.InputStream = fs2.open(Path(filename))
-    if (filename.endsWith(".gz")) {
+    if (filename.endsWith(".gz") || filename.endsWith(".bgz")) {
         instream = java.util.zip.GZIPInputStream(instream)
     }
     return instream
