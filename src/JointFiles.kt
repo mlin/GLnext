@@ -1,5 +1,6 @@
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
+import org.apache.log4j.LogManager
 import org.apache.spark.api.java.JavaSparkContext
 import org.apache.spark.api.java.function.*
 import org.apache.spark.sql.SparkSession
@@ -7,13 +8,16 @@ import org.jetbrains.kotlinx.spark.api.*
 import java.io.OutputStreamWriter
 
 // Reorganize the pVCF parts written out by spark:
-// Read the first VcfRecord from each part to infer (i) which parts span multiple CHROMs and
-// (ii) the POS ranges covered by the remaining parts.
+// Read the first VcfRecord from each part to infer (i) which parts may span multiple CHROMs and
+// (ii) the genomic ranges covered by the remaining parts.
 // For parts (ii): rename them so that filename indicates the genomic range
 // For parts (i): split them by CHROM, naming each subpart according to the same schema
 
 fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeader) {
+    val logger = LogManager.getLogger("vcfGLuer")
     val jsc = JavaSparkContext(spark.sparkContext)
+    // limits parallelism of tiny HDFS requests to prevent overloading metadata server
+    val parallelism = 16
 
     // List part filenames in pvcfDir
     val partBasenames = getFileSystem(pvcfDir).listSequence(pvcfDir, false).toList()
@@ -24,7 +28,7 @@ fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeade
 
     // Read the first VcfRecord GRange from each part
     val aggHeaderB = jsc.broadcast(aggHeader)
-    val partsAndFirstRange = jsc.parallelize(partBasenames).mapPartitions(
+    val partsAndFirstRange = jsc.parallelize(partBasenames, parallelism).mapPartitions(
         object : FlatMapFunction<Iterator<String>, Pair<String, GRange>> {
             override fun call(basenames: Iterator<String>): Iterator<Pair<String, GRange>> {
                 val fs = getFileSystem(pvcfDir)
@@ -51,15 +55,24 @@ fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeade
         val oneChrom = i + 1 < partsAndFirstRange.size && partsAndFirstRange[i + 1].second.rid == firstRange.rid
         if (oneChrom) Triple(firstRange.rid, firstRange.beg, basename) else Triple(-1, -1, basename)
     }
+    logger.info("Initial output part count = ${classifiedParts.size}")
 
     // Split parts potentially spanning multiple chromosomes
-    val splitParts = jsc.parallelize(classifiedParts.filter { it.first < 0 }.map { it.third }).flatMap(
-        object : FlatMapFunction<String, Triple<Short, Int, String>> {
-            override fun call(partBasename: String): Iterator<Triple<Short, Int, String>> {
-                return splitByChr(pvcfDir, partBasename, aggHeaderB.value).iterator()
-            }
+    val partsToSplit = classifiedParts.filter { it.first < 0 }.map { it.third }
+    var splitParts: List<Triple<Short, Int, String>> = emptyList()
+    if (!partsToSplit.isEmpty()) {
+        logger.info("Splitting output part files potentially spanning multiple chromosomes:")
+        partsToSplit.forEach {
+            logger.info("  $it")
         }
-    ).collect()
+        splitParts = jsc.parallelize(partsToSplit).flatMap(
+            object : FlatMapFunction<String, Triple<Short, Int, String>> {
+                override fun call(partBasename: String): Iterator<Triple<Short, Int, String>> {
+                    return splitByChr(pvcfDir, partBasename, aggHeaderB.value).iterator()
+                }
+            }
+        ).collect()
+    }
 
     // Consolidate the part list and calculate a last pos for each (-1 for chrom end)
     val revisedParts = (classifiedParts.filter { it.first >= 0 } + splitParts)
@@ -70,8 +83,8 @@ fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeade
         Triple(rid, (firstPos to lastPos), basename)
     }
 
-    // Rename the parts
-    val newNames = jsc.parallelize(rangeParts).mapPartitions(
+    // Rename all the parts
+    val newNames = jsc.parallelize(rangeParts, parallelism).mapPartitions(
         object : FlatMapFunction<Iterator<Triple<Short, Pair<Int, Int>, String>>, String> {
             override fun call(parts: Iterator<Triple<Short, Pair<Int, Int>, String>>): Iterator<String> {
                 val fs = getFileSystem(pvcfDir)
@@ -80,13 +93,14 @@ fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeade
                     val chrom = aggHeaderB.value.contigs[rid.toInt()]
                     val padBeg = pos.first.toString().padStart(9, '0')
                     val padEnd = if (pos.second >= 0) pos.second.toString().padStart(9, '0') else "end"
-                    val basename2 = "$chrom-$padBeg-$padEnd.bgz"
+                    val basename2 = "${chrom}_${padBeg}_$padEnd.bgz"
                     fs.rename(Path(pvcfDir, basename), Path(pvcfDir, basename2))
                     basename2
                 }.iterator()
             }
         }
     ).collect()
+    logger.info("Final output part count = ${newNames.size}")
     check(newNames.distinct().sorted() == newNames.sorted())
 }
 
@@ -106,12 +120,13 @@ fun splitByChr(pvcfDir: String, partBasename: String, aggHeader: AggVcfHeader): 
                 }
                 rid = rec.range.rid
 
-                val tempName = "${aggHeader.contigs[rid.toInt()]}-${rec.range.beg.toString().padStart(9,'0')}.bgz.wip"
+                val tempName = "${aggHeader.contigs[rid.toInt()]}_${rec.range.beg.toString().padStart(9,'0')}.bgz.wip"
                 writer = OutputStreamWriter(BGZFOutputStream(fs.create(Path(pvcfDir, tempName))), "UTF-8")
                 ans.add(Triple(rid, rec.range.beg, tempName))
             }
             check(writer != null)
             writer.write(line)
+            writer.write("\n")
         }
 
         if (writer != null) {
