@@ -6,6 +6,7 @@ import org.apache.spark.api.java.function.*
 import org.apache.spark.sql.SparkSession
 import org.jetbrains.kotlinx.spark.api.*
 import java.io.OutputStreamWriter
+import kotlin.math.log10
 
 // Reorganize the pVCF parts written out by spark:
 // Read the first VcfRecord from each part to infer (i) which parts may span multiple CHROMs and
@@ -80,27 +81,33 @@ fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeade
     val rangeParts = revisedParts.mapIndexed {
         i, (rid, firstPos, basename) ->
         val lastPos = if (i + 1 < revisedParts.size && revisedParts[i + 1].first == rid) revisedParts[i + 1].second else -1
-        Triple(rid, (firstPos to lastPos), basename)
+        i to Triple(rid, (firstPos to lastPos), basename)
     }
+    val finalPartCount = rangeParts.size
+    val finalPartCountDigits = 1 + log10(finalPartCount.toDouble()).toInt()
 
     // Rename all the parts
     val newNames = jsc.parallelize(rangeParts, parallelism).mapPartitions(
-        object : FlatMapFunction<Iterator<Triple<Short, Pair<Int, Int>, String>>, String> {
-            override fun call(parts: Iterator<Triple<Short, Pair<Int, Int>, String>>): Iterator<String> {
+        object : FlatMapFunction<Iterator<Pair<Int, Triple<Short, Pair<Int, Int>, String>>>, String> {
+            override fun call(parts: Iterator<Pair<Int, Triple<Short, Pair<Int, Int>, String>>>): Iterator<String> {
                 val fs = getFileSystem(pvcfDir)
                 return parts.asSequence().map {
-                    (rid, pos, basename) ->
+                    (i, t) ->
+                    val (rid, pos, basename) = t
+                    val (posBeg, posEnd) = pos
                     val chrom = aggHeaderB.value.contigs[rid.toInt()]
-                    val padBeg = pos.first.toString().padStart(9, '0')
-                    val padEnd = if (pos.second >= 0) pos.second.toString().padStart(9, '0') else "end"
-                    val basename2 = "${chrom}_${padBeg}_$padEnd.bgz"
+                    val iPad = (i + 1).toString().padStart(finalPartCountDigits, '0')
+                    val cPad = finalPartCount.toString().padStart(finalPartCountDigits, '0')
+                    val posEndStr = if (posEnd >= 0) posEnd.toString() else "end"
+                    val basename2 = "part-${iPad}of$cPad-$chrom-$posBeg-$posEndStr.bgz"
                     fs.rename(Path(pvcfDir, basename), Path(pvcfDir, basename2))
                     basename2
                 }.iterator()
             }
         }
     ).collect()
-    logger.info("Final output part count = ${newNames.size}")
+    check(newNames.size == finalPartCount)
+    logger.info("Final output part count = $finalPartCount")
     check(newNames.distinct().sorted() == newNames.sorted())
 }
 

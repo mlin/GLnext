@@ -30,7 +30,8 @@ class CLI : CliktCommand() {
     val allowDuplicateSamples by option(help = "If a sample appears in multiple input callsets, use one arbitrarily instead of failing").flag(default = false)
     val deleteInputVcfs by option(help = "Delete input VCF files after loading them (DANGER!)").flag(default = false)
 
-    // TODO: take a BED file of target regions
+    // TODO: take a BED file of target regions, use to filter variants
+    // https://www.javadoc.io/doc/com.github.samtools/htsjdk/2.24.1/htsjdk/samtools/util/IntervalTree.html
 
     override fun run() {
         val cfg = ConfigLoader.Builder()

@@ -19,7 +19,7 @@ ls = subprocess.run(
     universal_newlines=True,
     check=True,
 )
-part_re = re.compile("/vcfGLuer/out/[-A-Za-z0-9\\.]+\\.bgz")
+part_re = re.compile("/vcfGLuer/out/[-_A-Za-z0-9\\.]+\\.bgz")
 for line in ls.stdout.splitlines():
     m = part_re.search(line)
     if m:
