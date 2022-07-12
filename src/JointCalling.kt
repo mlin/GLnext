@@ -19,7 +19,7 @@ enum class GT_OverlapMode {
 }
 
 data class JointGenotypeConfig(val overlapMode: GT_OverlapMode) : Serializable
-data class JointConfig(val binSize: Int, val gt: JointGenotypeConfig, val formatFields: List<JointFormatField>) : Serializable
+data class JointConfig(val binSize: Int, val keepTrailingFields: Boolean, val gt: JointGenotypeConfig, val formatFields: List<JointFormatField>) : Serializable
 
 /**
  * Joint-call variantsDF & vcfRecordsDF into sorted pVCF lines

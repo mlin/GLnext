@@ -129,16 +129,19 @@ class JointFieldsGenerator(val cfg: JointConfig, aggHeader: AggVcfHeader) : Seri
     }
 
     /**
-     * generate the FORMAT fields  && defaultImpls.containsKey(it.name)for one sample (and update any INFO field accumulators)
+     * generate the FORMAT fields for one sample (and update any INFO field accumulators)
      */
     fun generateFormatFields(data: VcfRecordsContext, sampleIndex: Int, gt: DiploidGenotype, variantRecord: VcfRecordUnpacked?): String {
         val fields = formatImpls.map { it.generate(data, sampleIndex, gt, variantRecord) }
+
+        if (cfg.keepTrailingFields) {
+            return ":" + fields.map { it ?: "." }.joinToString(":")
+        }
 
         val maxNotNullIdx = fields.mapIndexed { i, v -> v?.let { i } }.filterNotNull().maxOrNull()
         if (maxNotNullIdx == null) {
             return ""
         }
-
         return ":" + fields.take(maxNotNullIdx + 1).map { it ?: "." }.joinToString(":")
     }
 
