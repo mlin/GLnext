@@ -18,7 +18,7 @@ fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeade
     val logger = LogManager.getLogger("vcfGLuer")
     val jsc = JavaSparkContext(spark.sparkContext)
     // limits parallelism of tiny HDFS requests to prevent overloading metadata server
-    val parallelism = 16
+    val parallelism = 64
 
     // List part filenames in pvcfDir
     val partBasenames = getFileSystem(pvcfDir).listSequence(pvcfDir, false).toList()

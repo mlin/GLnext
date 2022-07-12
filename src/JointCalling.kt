@@ -62,7 +62,7 @@ fun jointCall(
     )
     // formulate header
     val pvcfHeader = jointVcfHeader(cfg, aggHeader, pvcfHeaderMetaLines, fieldsGen)
-    // sort pVCF lines by GRange & decompress
+    // sort pVCF lines by GRange & decompress. TODO: optional coalesce here
     return pvcfHeader to pvcfToSort
         .orderBy("rid", "beg", "end", "alt")
         .map(
@@ -107,6 +107,9 @@ fun joinVariantsAndVcfRecords(variantsDF: Dataset<Row>, vcfRecordsDF: Dataset<Ro
     } else {
         joinDFpre.agg(collect_set("vcf.line").alias("callsetLines"))
     }
+
+    // possible optimization to above: tear off var ref/alt for purposes of the big join; to add
+    // back in afterwards (after the filter/collect_set)
 
     // finally group the (variant, callsetId, callsetSnappyLines) items by variant
     // using groupByKey instead of (relational) groupBy so that we can mapGroups for joint calling.

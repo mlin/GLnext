@@ -59,6 +59,7 @@ class CLI : CliktCommand() {
         if (cfg.spark.compressTempFiles) {
             sparkBuilder = sparkBuilder
                 .config("spark.shuffle.compress", true)
+                .config("spark.shuffle.spill.compress", true)
                 .config("spark.broadcast.compress", true)
                 .config("spark.checkpoint.compress", true)
                 .config("spark.rdd.compress", true)

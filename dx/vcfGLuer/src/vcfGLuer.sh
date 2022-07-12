@@ -3,7 +3,7 @@
 export LC_ALL=C
 
 main() {
-    export _JAVA_OPTIONS="$_JAVA_OPTIONS -Dspark.default.parallelism=$spark_default_parallelism -Dspark.sql.shuffle.partitions=$spark_default_parallelism"
+    export _JAVA_OPTIONS="$_JAVA_OPTIONS -Dspark.default.parallelism=$spark_default_parallelism -Dspark.sql.shuffle.partitions=$spark_default_parallelism -XX:+AlwaysPreTouch -Xss16m"
 
     set -euxo pipefail
 

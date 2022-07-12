@@ -75,8 +75,8 @@
     "aws:us-east-1": {
       "systemRequirements": {
         "*": {
-          "00COMMENT": "avoid _x96 b/c it has two NUMA nodes",
-          "instanceType": "mem3_ssd3_x24",
+          "00COMMENT": "avoid instance types with multiple NUMA nodes e.g. mem3_ssd3_x96",
+          "instanceType": "mem3_ssd3_x12",
           "clusterSpec": {
             "type": "apachespark",
             "version": "3.2.0",

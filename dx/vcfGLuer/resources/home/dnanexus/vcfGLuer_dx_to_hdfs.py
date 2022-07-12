@@ -51,8 +51,6 @@ def process_dxfile(dxid):
                 os.path.join(os.environ["HADOOP_HOME"], "bin", "hadoop"),
                 "fs",
                 "-put",
-                "-f",  # Overwrites the destination if it already exists
-                "-l",  # Forces a replication factor of 1
                 os.path.join(tmpdir, fn),
                 "/vcfGLuer/in/",
             ],
