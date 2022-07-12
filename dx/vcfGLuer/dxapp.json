@@ -21,38 +21,31 @@
       "help": ""
     },
     {
-      "name": "genomic_range_filter",
-      "class": "string",
-      "default": "",
-      "help": "filter input VCF files to chr:beg-end"
-    },
-    {
-      "name": "streaming_split",
-      "class": "boolean",
-      "default": false,
-      "help": "split input VCFs during streaming localization (use for few, large input files)"
-    },
-    {
       "name": "flags",
       "class": "string",
       "default": "",
       "help": "command-line flags for vcfGLuer"
     },
     {
-      "name": "worker_instance_type",
-      "class": "string",
-      "default": "mem3_ssd3_x12",
-      "help": "Spark worker instance type"
+      "name": "spark_default_parallelism",
+      "class": "int",
+      "default": 256,
+      "help": "spark.default.parallelism (set at least the # cluster cores)"
     }
   ],
   "outputSpec": [
     {
-      "name": "pvcf_gz",
-      "class": "file",
-      "patterns": [
-        "*.vcf.gz"
-      ],
+      "name": "pvcf_parts",
+      "class": "array:file",
       "help": ""
+    },
+    {
+      "name": "cluster_runtime_logs_tarball",
+      "label": "Cluster runtime logs tarball",
+      "class": "file",
+      "patterns": [ "*.tar.gz" ],
+      "optional": true,
+      "help": "Spark cluster logs"
     }
   ],
   "runSpec": {
@@ -67,23 +60,28 @@
     "release": "20.04",
     "version": "0",
     "execDepends": [
-      {"name": "parallel"},
-      {"name": "openjdk-11-jre-headless"},
       {"name": "libsnappy1v5"},
-      {"name": "numactl"},
       {"name": "tabix"},
-      {"name": "libhts3"},
-      {"name": "libjemalloc2"},
-      {"name": "libgflags2.2"},
-      {"name": "dstat"}
+      {"name": "libhts3"}
     ]
   },
-  "access": {},
+  "access": {
+    "network": [
+      "*"
+    ],
+    "project": "CONTRIBUTE"
+  },
   "regionalOptions": {
     "aws:us-east-1": {
       "systemRequirements": {
         "*": {
-          "instanceType": "mem1_ssd1_v2_x2"
+          "00COMMENT": "avoid instance types with multiple NUMA nodes e.g. mem3_ssd3_x96",
+          "instanceType": "mem3_ssd3_x12",
+          "clusterSpec": {
+            "type": "apachespark",
+            "version": "3.2.0",
+            "initialInstanceCount": 2
+          }
         }
       }
     }

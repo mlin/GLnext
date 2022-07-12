@@ -1,12 +1,14 @@
-import org.apache.spark.api.java.function.FlatMapFunction
+
+import org.apache.hadoop.fs.Path
+import org.apache.spark.api.java.JavaSparkContext
+import org.apache.spark.api.java.function.*
 import org.apache.spark.sql.*
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
-import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.types.*
 import org.apache.spark.util.LongAccumulator
 import org.jetbrains.kotlinx.spark.api.*
 import org.xerial.snappy.Snappy
+import kotlin.math.max
 
 enum class VcfColumn {
     CHROM, POS, ID, REF, ALT, QUAL, FILTER, INFO, FORMAT, FIRST_SAMPLE
@@ -27,9 +29,9 @@ data class VcfRecord(val callsetId: Int, val range: GRange, val line: String) {
 }
 
 /**
- * RowEncoder for VcfRecord.toRow()
+ * StructType for VcfRecord.toRow()
  */
-fun VcfRecordRowEncoder(compress: Boolean = false): ExpressionEncoder<Row> {
+fun VcfRecordStructType(compress: Boolean = false): StructType {
     var ty = StructType()
         .add("callsetId", DataTypes.IntegerType, false)
         .add("rid", DataTypes.ShortType, false)
@@ -40,7 +42,7 @@ fun VcfRecordRowEncoder(compress: Boolean = false): ExpressionEncoder<Row> {
     } else {
         ty = ty.add("line", DataTypes.StringType, false)
     }
-    return RowEncoder.apply(ty)
+    return ty
 }
 
 /**
@@ -85,36 +87,36 @@ fun readVcfRecordsDF(
     recordCount: LongAccumulator? = null,
     recordBytes: LongAccumulator? = null
 ): Dataset<Row> {
-    var filenamesWithCallsetIds = spark.toDS(aggHeader.filenameCallsetId.toList())
-    // pigeonhole partitions (assume each file is a reasonable size)
-    filenamesWithCallsetIds = filenamesWithCallsetIds.repartitionByRange(
-        aggHeader.filenameCallsetId.size,
-        filenamesWithCallsetIds.col(filenamesWithCallsetIds.columns()[0])
-    )
+    val jsc = JavaSparkContext(spark.sparkContext)
+
+    val filenamesWithCallsetIds = jsc.parallelize(aggHeader.filenameCallsetId.toList())
+        .repartition(max(jsc.defaultParallelism(), 4 * aggHeader.filenameCallsetId.size))
     val contigId = aggHeader.contigId
     // flatMap each filename+callsetId onto all the records in the file
-    return filenamesWithCallsetIds.flatMap(
-        object : FlatMapFunction<Pair<String, Int>, Row> {
-            override fun call(p: Pair<String, Int>): Iterator<Row> {
-                val (filename, callsetId) = p
-                return sequence {
-                    vcfInputStream(filename).bufferedReader().useLines {
-                        it.forEach {
-                            line ->
-                            if (line.length > 0 && line.get(0) != '#') {
-                                recordCount?.let { it.add(1L) }
-                                recordBytes?.let { it.add(line.length + 1L) }
-                                yield(parseVcfRecord(contigId, callsetId, line).toRow(compressEachRecord))
+    return spark.createDataFrame(
+        filenamesWithCallsetIds.flatMap(
+            object : FlatMapFunction<Pair<String, Int>, Row> {
+                override fun call(p: Pair<String, Int>): Iterator<Row> {
+                    val (filename, callsetId) = p
+                    return sequence {
+                        val fs = getFileSystem(filename)
+                        vcfInputStream(filename, fs).bufferedReader().useLines {
+                            it.forEach {
+                                line ->
+                                if (line.length > 0 && line.get(0) != '#') {
+                                    recordCount?.let { it.add(1L) }
+                                    recordBytes?.let { it.add(line.length + 1L) }
+                                    yield(parseVcfRecord(contigId, callsetId, line).toRow(compressEachRecord))
+                                }
                             }
                         }
-                    }
-                    if (deleteInputVcfs) {
-                        java.io.File(filename).delete()
-                    }
-                }.iterator()
-            }
-        },
-        VcfRecordRowEncoder(compressEachRecord)
+                        if (deleteInputVcfs) {
+                            fs.delete(Path(filename), false)
+                        }
+                    }.iterator()
+                }
+            }),
+        VcfRecordStructType(compressEachRecord)
     )
 }
 

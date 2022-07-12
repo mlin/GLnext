@@ -1,7 +1,9 @@
 
+import org.apache.spark.api.java.JavaSparkContext
 import org.apache.spark.api.java.function.MapFunction
 import org.apache.spark.api.java.function.MapGroupsFunction
 import org.apache.spark.sql.*
+import org.apache.spark.sql.Encoders
 import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.functions.*
 import org.apache.spark.sql.types.*
@@ -34,10 +36,12 @@ fun jointCall(
     pvcfRecordBytes: LongAccumulator? = null
 ): Pair<String, Dataset<String>> {
     val vcfRecordsCompressed = vcfRecordsDF.columns().contains("snappyLine")
-    val aggHeaderB = spark.broadcast(aggHeader)
+
+    val jsc = JavaSparkContext(spark.sparkContext) // circumvent kotlin-spark-api overrides of spark.broadcast() and spark.sparkContext.broadcast()
+    val aggHeaderB = jsc.broadcast(aggHeader)
     // FORMAT/INFO field helpers
     val fieldsGen = JointFieldsGenerator(cfg, aggHeader)
-    val fieldsGenB = spark.broadcast(fieldsGen)
+    val fieldsGenB = jsc.broadcast(fieldsGen)
     // joint-call each variant into a snappy-compressed pVCF line with GRange columns
     val pvcfToSort = joinVariantsAndVcfRecords(variantsDF, vcfRecordsDF, vcfRecordsCompressed, binSize).mapGroups(
         object : MapGroupsFunction<Row, Row, Row> {
@@ -58,14 +62,19 @@ fun jointCall(
     )
     // formulate header
     val pvcfHeader = jointVcfHeader(cfg, aggHeader, pvcfHeaderMetaLines, fieldsGen)
-    // sort pVCF lines by GRange & decompress
+    // sort pVCF lines by GRange & decompress. TODO: optional coalesce here
     return pvcfHeader to pvcfToSort
         .orderBy("rid", "beg", "end", "alt")
-        .map {
-            val ans = String(Snappy.uncompress(it.getAs<ByteArray>("snappyRecord")))
-            pvcfRecordBytes?.let { it.add(ans.length + 1L) }
-            ans
-        }
+        .map(
+            object : MapFunction<Row, String> {
+                override fun call(it: Row): String {
+                    val ans = String(Snappy.uncompress(it.getAs<ByteArray>("snappyRecord")))
+                    pvcfRecordBytes?.let { it.add(ans.length + 1L) }
+                    return ans
+                }
+            },
+            Encoders.STRING()
+        )
 }
 
 /**
@@ -98,6 +107,9 @@ fun joinVariantsAndVcfRecords(variantsDF: Dataset<Row>, vcfRecordsDF: Dataset<Ro
     } else {
         joinDFpre.agg(collect_set("vcf.line").alias("callsetLines"))
     }
+
+    // possible optimization to above: tear off var ref/alt for purposes of the big join; to add
+    // back in afterwards (after the filter/collect_set)
 
     // finally group the (variant, callsetId, callsetSnappyLines) items by variant
     // using groupByKey instead of (relational) groupBy so that we can mapGroups for joint calling.

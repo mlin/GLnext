@@ -7,14 +7,14 @@ import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.int
 import com.sksamuel.hoplite.*
-import com.sksamuel.hoplite.sources.SystemPropertiesPropertySource
-import com.sksamuel.hoplite.toml.TomlParser
+import org.apache.hadoop.fs.FileSystem
+import org.apache.hadoop.fs.Path
 import org.apache.log4j.Level
 import org.apache.log4j.LogManager
 import org.apache.spark.sql.*
 import org.jetbrains.kotlinx.spark.api.*
-import java.io.FileOutputStream
-import java.io.OutputStreamWriter
+import java.io.File
+import java.net.URI
 import java.util.Properties
 
 data class SparkConfig(val compressTempRecords: Boolean, val compressTempFiles: Boolean)
@@ -30,15 +30,14 @@ class CLI : CliktCommand() {
     val allowDuplicateSamples by option(help = "If a sample appears in multiple input callsets, use one arbitrarily instead of failing").flag(default = false)
     val deleteInputVcfs by option(help = "Delete input VCF files after loading them (DANGER!)").flag(default = false)
 
-    // TODO: take a BED file of target regions
-    // TODO: read directly from https:// or dx:// URIs (with aggregate rate-limiting)
+    // TODO: take a BED file of target regions, use to filter variants
+    // https://www.javadoc.io/doc/com.github.samtools/htsjdk/2.24.1/htsjdk/samtools/util/IntervalTree.html
 
     override fun run() {
-        val cfg = ConfigLoaderBuilder.default()
-            .addParser("toml", TomlParser())
-            .addPropertySource(SystemPropertiesPropertySource())
-            .addResourceSource("/config/main.toml")
-            .addResourceSource("/config/$config.toml")
+        val cfg = ConfigLoader.Builder()
+            .addFileExtensionMapping("toml", com.sksamuel.hoplite.toml.TomlParser())
+            .addSource(PropertySource.resource("/config/main.toml"))
+            .addSource(PropertySource.resource("/config/$config.toml"))
             .build()
             .loadConfigOrThrow<MainConfig>()
 
@@ -60,6 +59,7 @@ class CLI : CliktCommand() {
         if (cfg.spark.compressTempFiles) {
             sparkBuilder = sparkBuilder
                 .config("spark.shuffle.compress", true)
+                .config("spark.shuffle.spill.compress", true)
                 .config("spark.broadcast.compress", true)
                 .config("spark.checkpoint.compress", true)
                 .config("spark.rdd.compress", true)
@@ -76,6 +76,11 @@ class CLI : CliktCommand() {
             val logger = LogManager.getLogger("vcfGLuer")
             logger.setLevel(Level.INFO)
 
+            logger.info("${System.getProperty("java.runtime.name")} ${System.getProperty("java.runtime.version")}")
+            logger.info("Spark v${spark.version()}")
+            logger.info("spark.default.parallelism: ${spark.sparkContext.defaultParallelism()}")
+            logger.info("spark executors: ${spark.sparkContext.statusTracker().getExecutorInfos().size}")
+            logger.info("Locale: ${java.util.Locale.getDefault()}")
             logger.info("vcfGLuer v${getProjectVersion()}")
             logger.info(cfg.toString())
             logger.info("binSize: $binSize")
@@ -126,22 +131,11 @@ class CLI : CliktCommand() {
                 logger.info("pVCF variants: ${pvcfRecordCount.sum().pretty()}")
                 logger.info("pVCF bytes: ${pvcfRecordBytes.sum().pretty()}")
 
-                // write output VCF header
-                val headerFile = java.io.File(pvcfDir, "_HEADER.bgz")
-                FileOutputStream(headerFile).use {
-                    BGZFOutputStream(it).use {
-                        OutputStreamWriter(it, "UTF-8").use {
-                            it.write(pvcfHeader)
-                        }
-                    }
-                }
+                // reorganize part files
+                reorgJointFiles(spark, pvcfDir, aggHeader)
 
-                // atomically write _EOF.bgz
-                val eofFile = java.io.File(pvcfDir, ".wip._EOF.bgz")
-                FileOutputStream(eofFile).use {
-                    it.write(htsjdk.samtools.util.BlockCompressedStreamConstants.EMPTY_GZIP_BLOCK)
-                }
-                check(eofFile.renameTo(java.io.File(pvcfDir, "_EOF.bgz")), { "unable to finalize _EOF.bgz" })
+                // write output VCF header & BGZF EOF marker
+                writeHeaderAndEOF(pvcfHeader, pvcfDir)
             }
         }
     }
@@ -158,4 +152,33 @@ fun getProjectVersion(): String {
     val props = Properties()
     props.load(Unit.javaClass.getClassLoader().getResourceAsStream("META-INF/maven/net.mlin/vcfGLuer/pom.properties"))
     return props.getProperty("version")
+}
+
+fun writeHeaderAndEOF(headerText: String, dir: String) {
+    val fs = getFileSystem(dir)
+
+    fs.create(Path(dir, "00HEADER.bgz"), true).use {
+        BGZFOutputStream(it).use {
+            java.io.OutputStreamWriter(it, "UTF-8").use {
+                it.write(headerText)
+            }
+        }
+    }
+
+    fs.create(Path(dir, ".wip.zzEOF.bgz"), true).use {
+        it.write(htsjdk.samtools.util.BlockCompressedStreamConstants.EMPTY_GZIP_BLOCK)
+    }
+    check(
+        fs.rename(Path(dir, ".wip.zzEOF.bgz"), Path(dir, "zzEOF.bgz")),
+        { "unable to finalize $dir/zzEOF.bgz" }
+    )
+}
+
+fun getFileSystem(path: String): FileSystem {
+    val normPath = if (path.startsWith("hdfs:") || path.startsWith("file://")) {
+        path
+    } else {
+        "file://" + path
+    }
+    return FileSystem.get(URI(normPath), org.apache.spark.deploy.SparkHadoopUtil.get().conf())
 }

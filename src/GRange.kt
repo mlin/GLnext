@@ -6,7 +6,7 @@ import org.apache.spark.sql.types.*
  * Genomic range with reference sequence id (rid), one-based begin position, and inclusive end
  * position (matching the convention in the VCF text format).
  */
-data class GRange(val rid: Short, val beg: Int, val end: Int) : Comparable<GRange> {
+data class GRange(val rid: Short, val beg: Int, val end: Int) : Comparable<GRange>, java.io.Serializable {
     init {
         require(rid >= 0)
         require(beg > 0)

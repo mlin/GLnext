@@ -1,114 +1,35 @@
 #!/bin/bash
 
-main() {
-    worker_id=$(dx-jobutil-new-job -f job_input.json --instance-type "$worker_instance_type" worker_main)
-    dx-jobutil-add-output pvcf_gz "${worker_id}:pvcf_gz"
-}
-
-# Spark configuration
-export spark_workers_per_numa_node=4
-export spark_worker_memory_fraction=0.8
-export spark_driver_memory_fraction=0.1
-export _JAVA_OPTIONS='
-    -XX:+AlwaysPreTouch
-    -Xss16m
-    -Dspark.sql.shuffle.partitions=256
-    -Dspark.memory.fraction=0.6
-    -Dspark.executor.heartbeatInterval=300s
-    -Dspark.network.timeout=900s
-    -Dspark.worker.timeout=900
-    -Dspark.sql.broadcastTimeout=900
-    -Dspark.driver.maxResultSize=0
-'
-export SPARK_HOME=/spark
-export SPARK_LOCAL_IP=127.0.0.1
 export LC_ALL=C
 
-worker_main() {
-    set -euo pipefail
+main() {
+    export _JAVA_OPTIONS="$_JAVA_OPTIONS -Dspark.default.parallelism=$spark_default_parallelism -Dspark.sql.shuffle.partitions=$spark_default_parallelism -XX:+AlwaysPreTouch -Xss16m"
 
-    # log detailed utilization
-    dstat -cmdn -N lo,eth0 60 &
-    bash -c 'while true; do df -h /tmp; sleep 300; done' &
+    set -euxo pipefail
 
     dx-download-all-inputs
 
-    range_filter_arg=""
-    if [[ -n $genomic_range_filter ]]; then
-        range_filter_arg="-range $genomic_range_filter"
-    fi
-
-    # process dxid manifests under in/vcf_manifest/
-    mkdir /tmp/vcf_in
-    localize_cmd="'dx download --no-progress -o /tmp/vcf_in/ {}'"
-    parallel_opts=''
-    if [[ $streaming_split == "true" || -n $range_filter_arg ]]; then
-        localize_cmd="'dx cat {} | bgzip -dc@ 4 | vcf_line_splitter -threads 5 -MB 4096 -quiet $range_filter_arg /tmp/vcf_in/{}- > /dev/null'"
-        parallel_opts='--jobs 25% --delay 4'
-    fi
-    find in/vcf_manifest -type f -execdir cat {} + \
-        | parallel $parallel_opts --halt 2 --verbose \
-            bash -o pipefail -c "$localize_cmd"
-    part_count=$(find /tmp/vcf_in -type f | tee vcf_in.manifest | wc -l)
-    >&2 echo "part count: $part_count"
-
-    # start spark
-    numa_nodes=$(detect_numa_nodes)
-    spark_workers=$((numa_nodes * spark_workers_per_numa_node))
-    SPARK_EXECUTOR_MEMORY=$(awk '/MemTotal/ {printf("%.0f",$2*'"$spark_worker_memory_fraction"'/'"$spark_workers"')}' /proc/meminfo)k
-    SPARK_DRIVER_MEMORY=$(awk '/MemTotal/ {printf("%.0f",$2*'"$spark_driver_memory_fraction"')}' /proc/meminfo)k
-    mkdir /tmp/spark_logs
-    SPARK_LOG_DIR=/tmp/spark_logs
-    export numa_nodes spark_workers SPARK_EXECUTOR_MEMORY SPARK_DRIVER_MEMORY SPARK_LOG_DIR
-    start_spark
-
-    # run vcfGLuer
-    "${SPARK_HOME}/bin/spark-submit" \
-        --master 'spark://127.0.0.1:7077' --driver-memory "$SPARK_DRIVER_MEMORY" \
-        --name vcfGLuer --class vcfGLuer vcfGLuer-*.jar \
-        --manifest --delete-input-vcfs $flags \
-        vcf_in.manifest /tmp/pvcf_out \
-        || true
+    # copy input gVCFs from dnanexus to hdfs
+    dx-spark-submit --log-level WARN vcfGLuer_dx_to_hdfs.py || true
     # Spark occasionally throws some meaningless exception during shutdown of a successful app,
     # so ignore its exit code and check for _EOF.bgz which vcfGLuer writes atomically on success.
-    if ! [[ -f /tmp/pvcf_out/_EOF.bgz ]]; then
+    if ! [[ -f vcfGLuer_in.hdfs.manifest ]]; then
         exit 1
     fi
 
-    # concat & upload the merged pVCF
-    # TODO: option to omit header and EOF (upload separately) so that scatter shards concatenate
-    (cat /tmp/pvcf_out/_HEADER.bgz /tmp/pvcf_out/part-*.bgz /tmp/pvcf_out/_EOF.bgz) \
-        | dx upload --brief --buffer-size 1073741824 --destination "${output_name}.vcf.gz" - \
-        | xargs dx-jobutil-add-output pvcf_gz
-}
+    # run vcfGLuer
+    dx-spark-submit --log-level WARN --collect-logs \
+        --name vcfGLuer --class vcfGLuer vcfGLuer-*.jar \
+        --manifest --delete-input-vcfs $flags \
+        vcfGLuer_in.hdfs.manifest hdfs:///vcfGLuer/out \
+        || true
+    $HADOOP_HOME/bin/hadoop fs -ls /vcfGLuer/out
+    $HADOOP_HOME/bin/hadoop fs -get /vcfGLuer/out/zzEOF.bgz .
 
-detect_numa_nodes() {
-    if ! numactl --hardware > /dev/null ; then
-        echo "error detecting NUMA layout" >&2
+    # upload pVCF parts from hdfs to dnanexus
+    rm -f job_output.json
+    dx-spark-submit --log-level WARN vcfGLuer_hdfs_to_dx.py || true
+    if ! [[ -f job_output.json ]]; then
         exit 1
     fi
-    numactl --hardware | grep ^available | awk '{print $2}'
-}
-
-start_spark() {
-    # fetch & extract spark-3.1.2-bin-hadoop3.2.tgz
-    # TODO: make asset
-    mkdir -p "$SPARK_HOME"
-    dx cat file-G6BFy90076vpyG455X349YzZ | tar zx -C "$SPARK_HOME" --strip-components 1
-    # NOTE: ../resources/usr/lib/libhadoop.so.1.0.0 is extracted from hadoop binary distro.
-    # It provides Spark with fast, native-code compression routines.
-
-    # start Spark master
-    "${SPARK_HOME}/sbin/start-master.sh" --host 127.0.0.1 >&2
-    echo "started Spark master at spark://127.0.0.1:7077" >&2
-
-    # start Spark workers, binding each to one NUMA node
-    threads_per_numa_node=$(( $(nproc) / spark_workers ))
-    for ((i=0; i<spark_workers; i++)); do
-        numactl --cpunodebind "$((i % numa_nodes))" --membind="$((i % numa_nodes))" \
-            "${SPARK_HOME}/sbin/spark-daemon.sh" start org.apache.spark.deploy.worker.Worker "$(( i + 1 ))" \
-                --webui-port "$(( 8081 + i ))" spark://127.0.0.1:7077 --host 127.0.0.1 \
-                --cores "$threads_per_numa_node" --memory "$SPARK_EXECUTOR_MEMORY" >&2
-    done
-    echo "started $spark_workers Spark worker(s) each with $threads_per_numa_node threads and $SPARK_EXECUTOR_MEMORY memory" >&2
 }
