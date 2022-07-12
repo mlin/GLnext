@@ -5,3 +5,11 @@
 compressTempRecords = false
 # compressTempFiles: otherwise
 compressTempFiles = true
+
+[discovery]
+allowDuplicateSamples = false
+minCopies = 0
+
+[joint]
+# Genome range bin size used for joins; tunes perf with data-dependent goldilocks value
+binSize = 16

@@ -1,6 +1,3 @@
-[variantDiscovery]
-minCopies = 0
-
 [joint]
 formatFields = [
     { name = "DS" },

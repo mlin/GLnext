@@ -21,10 +21,10 @@
       "help": ""
     },
     {
-      "name": "flags",
+      "name": "java_options",
       "class": "string",
       "default": "",
-      "help": "command-line flags for vcfGLuer"
+      "help": "additional _JAVA_OPTIONS (including vcfGLuer config overrides)"
     },
     {
       "name": "spark_default_parallelism",

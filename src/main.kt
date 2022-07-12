@@ -5,7 +5,6 @@ import com.github.ajalt.clikt.parameters.arguments.multiple
 import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
-import com.github.ajalt.clikt.parameters.types.int
 import com.sksamuel.hoplite.*
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
@@ -18,16 +17,14 @@ import java.net.URI
 import java.util.Properties
 
 data class SparkConfig(val compressTempRecords: Boolean, val compressTempFiles: Boolean)
-data class VariantDiscoveryConfig(val minCopies: Int)
-data class MainConfig(val spark: SparkConfig, val variantDiscovery: VariantDiscoveryConfig, val joint: JointConfig)
+data class DiscoveryConfig(val allowDuplicateSamples: Boolean, val minCopies: Int)
+data class MainConfig(val spark: SparkConfig, val discovery: DiscoveryConfig, val joint: JointConfig)
 
 class CLI : CliktCommand() {
     val inputFiles: List<String> by argument(help = "Input VCF filenames (or manifest(s) with --manifest)").multiple(required = true)
     val pvcfDir: String by argument(help = "Output directory for pVCF parts (mustn't already exist)")
     val manifest by option(help = "Input files are manifest(s) containing one VCF filename per line").flag(default = false)
     val config: String by option(help = "Configuration preset name").default("DeepVariant")
-    val binSize: Int by option(help = "Genome range bin size").int().default(16)
-    val allowDuplicateSamples by option(help = "If a sample appears in multiple input callsets, use one arbitrarily instead of failing").flag(default = false)
     val deleteInputVcfs by option(help = "Delete input VCF files after loading them (DANGER!)").flag(default = false)
 
     // TODO: take a BED file of target regions, use to filter variants
@@ -41,7 +38,7 @@ class CLI : CliktCommand() {
             .build()
             .loadConfigOrThrow<MainConfig>()
 
-        require(cfg.variantDiscovery.minCopies <= 1, { "unsupported variantDiscovery.minCopies" })
+        require(cfg.discovery.minCopies <= 1, { "unsupported discovery.minCopies" })
 
         var effInputFiles = inputFiles
         if (manifest) {
@@ -83,11 +80,10 @@ class CLI : CliktCommand() {
             logger.info("Locale: ${java.util.Locale.getDefault()}")
             logger.info("vcfGLuer v${getProjectVersion()}")
             logger.info(cfg.toString())
-            logger.info("binSize: $binSize")
             logger.info("input VCF files: ${effInputFiles.size.pretty()}")
 
             // load & aggregate all input VCF headers
-            val aggHeader = aggregateVcfHeaders(spark, effInputFiles, allowDuplicateSamples = allowDuplicateSamples)
+            val aggHeader = aggregateVcfHeaders(spark, effInputFiles, allowDuplicateSamples = cfg.discovery.allowDuplicateSamples)
 
             logger.info("samples: ${aggHeader.samples.size.pretty()}")
             logger.info("callsets: ${aggHeader.callsetsDetails.size.pretty()}")
@@ -112,7 +108,7 @@ class CLI : CliktCommand() {
                 val vcfRecordsDF = this
 
                 // discover variants
-                val variantsDF = discoverVariants(vcfRecordsDF, onlyCalled = cfg.variantDiscovery.minCopies > 0)
+                val variantsDF = discoverVariants(vcfRecordsDF, onlyCalled = cfg.discovery.minCopies > 0)
 
                 // perform joint-calling
                 val pvcfHeaderMetaLines = listOf(
@@ -121,7 +117,7 @@ class CLI : CliktCommand() {
                 )
                 val pvcfRecordCount = spark.sparkContext.longAccumulator("pVCF records")
                 val pvcfRecordBytes = spark.sparkContext.longAccumulator("pVCF bytes")
-                val (pvcfHeader, pvcfLines) = jointCall(cfg.joint, spark, aggHeader, variantsDF, vcfRecordsDF, binSize, pvcfHeaderMetaLines, pvcfRecordCount, pvcfRecordBytes)
+                val (pvcfHeader, pvcfLines) = jointCall(cfg.joint, spark, aggHeader, variantsDF, vcfRecordsDF, pvcfHeaderMetaLines, pvcfRecordCount, pvcfRecordBytes)
 
                 // write pVCF records (in parts)
                 pvcfLines.write().option("compression", BGZFCodecClassName()).text(pvcfDir)

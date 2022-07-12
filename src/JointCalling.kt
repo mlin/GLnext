@@ -19,7 +19,7 @@ enum class GT_OverlapMode {
 }
 
 data class JointGenotypeConfig(val overlapMode: GT_OverlapMode) : Serializable
-data class JointConfig(val gt: JointGenotypeConfig, val formatFields: List<JointFormatField>) : Serializable
+data class JointConfig(val binSize: Int, val gt: JointGenotypeConfig, val formatFields: List<JointFormatField>) : Serializable
 
 /**
  * Joint-call variantsDF & vcfRecordsDF into sorted pVCF lines
@@ -30,7 +30,6 @@ fun jointCall(
     aggHeader: AggVcfHeader,
     variantsDF: Dataset<Row>,
     vcfRecordsDF: Dataset<Row>,
-    binSize: Int,
     pvcfHeaderMetaLines: List<String> = emptyList(),
     pvcfRecordCount: LongAccumulator? = null,
     pvcfRecordBytes: LongAccumulator? = null
@@ -43,7 +42,7 @@ fun jointCall(
     val fieldsGen = JointFieldsGenerator(cfg, aggHeader)
     val fieldsGenB = jsc.broadcast(fieldsGen)
     // joint-call each variant into a snappy-compressed pVCF line with GRange columns
-    val pvcfToSort = joinVariantsAndVcfRecords(variantsDF, vcfRecordsDF, vcfRecordsCompressed, binSize).mapGroups(
+    val pvcfToSort = joinVariantsAndVcfRecords(variantsDF, vcfRecordsDF, vcfRecordsCompressed, cfg.binSize).mapGroups(
         object : MapGroupsFunction<Row, Row, Row> {
             override fun call(variantRow: Row, callsetsData: Iterator<Row>): Row {
                 val ans = jointCallVariant(cfg, aggHeaderB.value, fieldsGenB.value, variantRow, callsetsData, vcfRecordsCompressed)
