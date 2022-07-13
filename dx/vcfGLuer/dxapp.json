@@ -21,6 +21,13 @@
       "help": ""
     },
     {
+      "name": "config",
+      "class": "string",
+      "default": "DeepVariant",
+      "choices": ["DeepVariant", "GLIMPSE"],
+      "help": "vcfGLuer configuration preset"
+    },
+    {
       "name": "java_options",
       "class": "string",
       "default": "",

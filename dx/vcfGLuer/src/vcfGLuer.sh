@@ -20,7 +20,7 @@ main() {
     # run vcfGLuer
     dx-spark-submit --log-level WARN --collect-logs \
         --name vcfGLuer --class vcfGLuer vcfGLuer-*.jar \
-        --manifest --delete-input-vcfs $flags \
+        --manifest --delete-input-vcfs --config $config \
         vcfGLuer_in.hdfs.manifest hdfs:///vcfGLuer/out \
         || true
     $HADOOP_HOME/bin/hadoop fs -ls /vcfGLuer/out
