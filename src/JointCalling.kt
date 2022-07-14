@@ -93,10 +93,14 @@ fun joinVariantsAndVcfRecords(variantsDF: Dataset<Row>, vcfRecordsDF: Dataset<Ro
 
     val joinDFpre =
         binnedVariants
-            // join variants & records by bin
-            .join(binnedRecords, col("var.bin") eq col("vcf.bin"), "left")
-            // filter joined bins by precise GRange overlap
-            .filter((col("var.beg") leq col("vcf.end")) and (col("var.end") geq col("vcf.beg")))
+            // join variants & records, first coarsely by bin, then finely by range overlap
+            .join(
+                binnedRecords,
+                col("var.bin") eq col("vcf.bin")
+                    and (col("var.beg") leq col("vcf.end"))
+                    and (col("var.end") geq col("vcf.beg")),
+                "left"
+            )
             // group overlappers by (variant, callsetId)
             .groupBy("var.rid", "var.beg", "var.end", "var.ref", "var.alt", "vcf.callsetId")
 
@@ -142,6 +146,8 @@ fun jointCallVariant(cfg: JointConfig, aggHeader: AggVcfHeader, fieldsGen: Joint
 
     // for each callset
     for (callsetRow in callsetsData) {
+        // TODO: handle case where callsetRow is just null, from left join
+
         // parse the input VCF records overlapping the variant
         val unpackedRecords = VcfRecordsContext(aggHeader, variant, callsetRow, vcfRecordsCompressed)
 
