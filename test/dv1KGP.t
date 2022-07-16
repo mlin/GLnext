@@ -15,7 +15,7 @@ SOURCE_DIR="$(pwd)"
 BASH_TAP_ROOT="$SOURCE_DIR/test/bash-tap"
 source "$BASH_TAP_ROOT/bash-tap-bootstrap"
 
-plan tests 5
+plan tests 6
 
 rm -f target/*.jar
 mvn package -Dorg.slf4j.simpleLogger.log.org.apache.maven.plugins.shade=warn
@@ -59,3 +59,7 @@ tabix dv1KGP.vcf.gz
 is "$?" "0" "tabix"
 test -f dv1KGP.vcf.gz.tbi
 is "$?" "0" "tbi"
+
+# regression test - merging config files
+zgrep 'minCopies=1' dv1KGP.out/00HEADER.bgz
+is "$?" "0" "config merging"

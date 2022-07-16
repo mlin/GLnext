@@ -33,8 +33,8 @@ class CLI : CliktCommand() {
     override fun run() {
         val cfg = ConfigLoader.Builder()
             .addFileExtensionMapping("toml", com.sksamuel.hoplite.toml.TomlParser())
-            .addSource(PropertySource.resource("/config/main.toml"))
             .addSource(PropertySource.resource("/config/$config.toml"))
+            .addSource(PropertySource.resource("/config/main.toml"))
             .build()
             .loadConfigOrThrow<MainConfig>()
 

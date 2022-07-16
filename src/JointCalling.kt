@@ -96,7 +96,7 @@ fun joinVariantsAndVcfRecords(variantsDF: Dataset<Row>, vcfRecordsDF: Dataset<Ro
             // join variants & records, first coarsely by bin, then finely by range overlap
             .join(
                 binnedRecords,
-                col("var.bin") eq col("vcf.bin")
+                (col("var.bin") eq col("vcf.bin"))
                     and (col("var.beg") leq col("vcf.end"))
                     and (col("var.end") geq col("vcf.beg")),
                 "left"
