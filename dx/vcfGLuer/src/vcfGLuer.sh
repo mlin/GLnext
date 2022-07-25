@@ -24,25 +24,20 @@ main() {
     #   https://www.oracle.com/technical-resources/articles/java/g1gc.html
     #   https://databricks.com/blog/2015/05/28/tuning-java-garbage-collection-for-spark-applications.html
     # dxspark JVM 8 notes:
-    #   - mixed experience with G1GC
-    #   - UseLargePages gets into fragmentation trouble (?) on larger instance types, potentially
-    #     triggering *kernel oom-killer* (vs. JVM OutOfMemory)
+    #   G1GC and UseLargePages both seem to get into trouble with the heap sizes typical on larger
+    #   I3 instances (>64G). G1GC tends to hit JVM OutOfMemory exceptions, while UseLargePages can
+    #   trigger kernel oom-killer (fragmentation?). These recommended features should be more
+    #   mature in newer JVM versions, which we'll hopefully get to try.
+    #   ParallelGC (the default on Java 8) seems solid albeit "only" up to 12-16 vCPUs.
+    #
     # -XX:+UseParallelGC -XX:GCTimeRatio=19 \
     # -XX:+UseG1GC -XX:MaxGCPauseMillis=500 -XX:ParallelGCThreads=8 -XX:ConcGCThreads=8 -XX:InitiatingHeapOccupancyPercent=35 \
     # -XX:+UseLargePages \
     all_java_options="\
     -Xss16m \
-    -XX:+UseG1GC -XX:MaxGCPauseMillis=500 -XX:ParallelGCThreads=8 -XX:ConcGCThreads=8 -XX:InitiatingHeapOccupancyPercent=35 \
+    -XX:+UseParallelGC -XX:GCTimeRatio=19 \
     -XX:+PrintFlagsFinal \
     $java_options"
-    #    --conf spark.sql.adaptive.coalescePartitions.initialPartitionNum=$spark_default_parallelism \
-    #    --conf spark.sql.adaptive.coalescePartitions.parallelismFirst=false \
-    #    --conf spark.sql.adaptive.advisoryPartitionSizeInBytes=512m \
-    #
-    #    --conf spark.sql.adaptive.coalescePartitions.initialPartitionNum=$spark_default_parallelism \
-    #    --conf spark.sql.adaptive.coalescePartitions.parallelismFirst=true \
-    #    --conf spark.sql.adaptive.minPartitionSize=16m \
-    #    --conf spark.sql.adaptive.advisoryPartitionSizeInBytes=80m \
     dx-spark-submit --log-level WARN --collect-logs \
         --conf spark.driver.defaultJavaOptions="$all_java_options" \
         --conf spark.executor.defaultJavaOptions="$all_java_options" \

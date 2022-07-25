@@ -59,14 +59,6 @@ fun jointCall(
     // perform the big range-join of variants to all overlapping VCF records
     VariantRanges(logger, aggHeader.contigs, variantsDF).deploy(spark)
     val vcfRecordsCompressed = vcfRecordsDF.columns().contains("snappyLine")
-    val groupedRecords = groupVcfRecordsByOverlappingVariantId(
-        variantsDF,
-        vcfRecordsDF,
-        vcfRecordsCompressed
-    )
-
-    // process groupedRecords into Snappy-compressed pVCF lines (+ Variant info)
-    // the temporary Snappy compression is just to streamline the I/O burden of the ensuing sort
     val pvcfRowSchema = StructType()
         .add("rid", DataTypes.ShortType, false)
         .add("beg", DataTypes.IntegerType, false)
@@ -74,38 +66,30 @@ fun jointCall(
         .add("ref", DataTypes.StringType, false)
         .add("alt", DataTypes.StringType, false)
         .add("snappyRecord", DataTypes.BinaryType, false)
-    val pvcfRows = variantsDF
-        // 'join' variants to the vid-keyed groupedRecords; using cogroup avoids having to
-        // materialize all the variant details (rid, beg, end, ref, alt) within groupedRecords
-        .groupByKey(MapFunction<Row, Long> { it.getAs<Long>("vid") }, Encoders.LONG())
-        .cogroup(
-            groupedRecords,
-            CoGroupFunction<Long, Row, Row, Row> {
-                vid, variantRows, callsetsData ->
-                val variantRow = variantRows.next()
-                check(variantRow.getAs<Long>("vid") == vid && !variantRows.hasNext())
-                sequence {
-                    // run joint-calling given the variant details and all overlapping records
-                    yield(
-                        jointCallVariant(
-                            cfg,
-                            aggHeaderB.value,
-                            fieldsGenB.value,
-                            variantRow,
-                            callsetsData,
-                            vcfRecordsCompressed
-                        )
-                    )
-                    pvcfRecordCount?.let { it.add(1L) }
-                }.iterator()
-            },
-            RowEncoder.apply(pvcfRowSchema)
-        ).cache() // cache() before sorting: https://stackoverflow.com/a/56310076
+    val pvcfRows = joinVariantsAndVcfRecords(
+        variantsDF,
+        vcfRecordsDF, vcfRecordsCompressed,
+        MapGroupsFunction<Row, Row, Row> {
+            variantRow, callsetsData ->
+            // generate pVCF row given all overlapping VCF records for each callset;
+            // row text is Snappy-compressed just to streamline I/O in the ensuring sort
+            pvcfRecordCount?.let { it.add(1L) }
+            jointCallVariant(
+                cfg,
+                aggHeaderB.value,
+                fieldsGenB.value,
+                variantRow,
+                callsetsData,
+                vcfRecordsCompressed
+            )
+        },
+        RowEncoder.apply(pvcfRowSchema)
+    ).cache() // cache() before sorting: https://stackoverflow.com/a/56310076
     // Perform a count() to force pvcfRows, ensuring it registers as an SQL query in the history
     // server before next dropping to RDD. This provides useful diagnostic info that would
     // otherwise go missing. The log message also provides a progress marker.
     val pvcfRowCount = pvcfRows.count()
-    logger.info("sorting $pvcfRowCount pVCF lines...")
+    logger.info("sorting & bgzipping $pvcfRowCount pVCF lines...")
 
     // sort pVCF rows by Variant and return the decompressed text of each line
     return pvcfHeader to pvcfRows
@@ -136,17 +120,17 @@ fun jointCall(
 }
 
 class VariantRanges : Serializable {
-    // This helper for joinVariantsAndVcfRecordsByRange() indexes all distinct variant GRanges,
-    // associating an ID with each one, and registers Spark UDFs allowing fast overlap queries
-    // (i.e. list IDs of all variant ranges overlapping a given query range). These IDs will
-    // serve as the join key.
+    // This helper for joinVariantsAndVcfRecords() indexes all variant GRanges and registers a
+    // Spark UDF for fast overlap queries, to list IDs of all variants overlapping a given query
+    // range.
     private val iitByRid: Array<IntegerIntervalTree?>
+    private val vidLink: Array<LongArray> // maps IntegerIntervalTree IDs to variant IDs
 
     constructor(logger: Logger, contigs: Array<String>, variantsDF: Dataset<Row>) {
         // use spark to build the interval tree for each contig (rid)
         val treesByRidPre =
-            // group distinct variant ranges by rid
-            variantsDF.select("rid", "beg", "end").distinct().groupByKey(
+            // group variant ranges by rid
+            variantsDF.select("rid", "beg", "end", "vid").groupByKey(
                 MapFunction<Row, Short> { row -> row.getShort(0) },
                 Encoders.SHORT()
             ).mapGroups(
@@ -157,81 +141,84 @@ class VariantRanges : Serializable {
                         check(it.getShort(0) == rid)
                         val beg = it.getInt(1)
                         val end = it.getInt(2)
-                        beg to end
-                    }.toList().sortedWith(compareBy({ it.first }, { it.second }))
+                        val vid = it.getLong(3)
+                        Triple(beg, end, vid)
+                    }.toList().sortedWith(compareBy({ it.first }, { it.second }, { it.third }))
                     check(!sortedRanges.isEmpty())
                     val builder = IntegerIntervalTree.Builder()
-                    sortedRanges.forEach {
-                        (beg, end) ->
+                    val vids = LongArray(sortedRanges.size)
+                    sortedRanges.forEachIndexed {
+                        i, trip ->
+                        val (beg, end, vid) = trip
                         // add 1 to end b/c IntegerIntervalTree uses the half-open convention
-                        builder.add(beg, end + 1)
+                        val id = builder.add(beg, end + 1)
+                        check(i == id)
+                        // remember vid for this tree ID
+                        vids[i] = vid
                     }
                     check(builder.isSorted())
-                    RowFactory.create(rid, builder.build().serializeToByteArray())
+                    RowFactory.create(
+                        rid,
+                        builder.build().serializeToByteArray(),
+                        vids.serializeToByteArray()
+                    )
                 },
                 RowEncoder.apply(
                     StructType()
                         .add("rid", DataTypes.ShortType, false)
                         .add("iit", DataTypes.BinaryType, false)
+                        .add("vids", DataTypes.BinaryType, false)
                 )
             )
 
         // collect interval trees to driver
         iitByRid = Array<IntegerIntervalTree?>(contigs.size) { null }
-        var iitBytes = 0L
-        var variantRangeCount = 0L
-        treesByRidPre.collectAsList().map {
-            it.getShort(0).toInt() to it.getAs<ByteArray>(1)!!
-        }.forEach {
-            (rid, buf) ->
-            val iit = deserializeFromByteArray(buf) as IntegerIntervalTree
-            check(iit.size() > 0 && iitByRid[rid] == null)
+        vidLink = Array<LongArray>(contigs.size) { LongArray(0) }
+        var broadcastBytes = 0L
+        treesByRidPre.collectAsList().forEach {
+            row ->
+            val rid = row.getShort(0).toInt()
+            val iitBuf = row.getAs<ByteArray>(1)
+            val vidsBuf = row.getAs<ByteArray>(2)
+
+            val iit = deserializeFromByteArray(iitBuf) as IntegerIntervalTree
+            val vids = deserializeFromByteArray(vidsBuf) as LongArray
+            check(iit.size() > 0 && iitByRid[rid] == null && iit.size() == vids.size)
+
             iitByRid[rid] = iit
-            iitBytes += buf.size.toLong()
-            variantRangeCount += iit.size().toLong()
+            vidLink[rid] = vids
+
+            broadcastBytes += iitBuf.size.toLong() + vidsBuf.size.toLong()
         }
-        logger.info("VariantRanges count: $variantRangeCount")
-        logger.info("VariantRanges broadcast: $iitBytes bytes")
+
+        logger.info("VariantRanges broadcast: $broadcastBytes bytes")
     }
 
-    // get ID of the exact given variant range (-1 if not found)
-    fun variantRangeId(rid: Short, beg: Int, end: Int): Long {
-        val id = iitByRid[rid.toInt()]!!.queryAnyExactId(beg, end + 1)
-        if (id < 0) {
-            return -1L
+    // list IDs of all variants overlapping the given arbitrary range
+    fun overlappingVariantIds(rid: Short, beg: Int, end: Int): LongArray {
+        val iit = iitByRid[rid.toInt()]
+        if (iit == null) {
+            return LongArray(0)
         }
-        // add rid to high bytes of contig-specific ID
-        return (rid.toLong() shl 48) + id.toLong()
-    }
-
-    // list IDs of all variant ranges overlapping the given arbitrary range
-    fun overlappingVariantRangeIds(rid: Short, beg: Int, end: Int): List<Long> {
         val ans: MutableList<Long> = mutableListOf()
-        iitByRid[rid.toInt()]!!.queryOverlapId(beg, end + 1, {
-            ans.add((rid.toLong() shl 48) + it.toLong())
+        iit.queryOverlapId(beg, end + 1, {
+            // lookup vid for each hit
+            ans.add(vidLink[rid.toInt()][it])
             true
         })
-        return ans
+        return ans.toLongArray()
     }
 
-    // install UDFs for variantRangeId() and overlappingVariantRangeIds()
+    // install UDF for overlappingVariantIds(), depending on a broadcast of this
     fun deploy(spark: SparkSession): Broadcast<VariantRanges> {
         // broadcast interval trees to cluster (~12 bytes per distinct variant range)
         val variantRangesB = JavaSparkContext(spark.sparkContext).broadcast(this)
-        // register functions using them
+        // register UDF
         spark.udf().register(
-            "variantRangeId",
-            UDF3<Short, Int, Int, Long> {
-                rid, beg, end ->
-                variantRangesB.value.variantRangeId(rid, beg, end)
-            },
-            DataTypes.LongType
-        )
-        spark.udf().register(
-            "overlappingVariantRangeIds",
+            "overlappingVariantIds",
             UDF3<Short, Int, Int, LongArray> {
                 rid, beg, end ->
-                variantRangesB.value.overlappingVariantRangeIds(rid, beg, end).toLongArray()
+                variantRangesB.value.overlappingVariantIds(rid, beg, end)
             },
             ArrayType(DataTypes.LongType, false)
         )
@@ -240,42 +227,55 @@ class VariantRanges : Serializable {
 }
 
 /**
- * Join discovered variants with overlapping VCF records from each callset
- *
- * Keys of the returned groups are variant IDs
- * Values in the returned groups are:
- *  |-- callsetId: integer (nullable = true)
- *  |-- callsetLines: array (nullable = false)
- *  |    |-- element: binary (containsNull = false)
+ * Join variants with overlapping VCF records from each callset; the callback function takes a
+ * variant Row and an Iterator<Row> yielding
+ *                             |-- callsetId: integer (nullable = true)
+ *                             |-- callsetLines: array (nullable = false)
+ *                             |    |-- element: string (containsNull = false)
  * nb: the callsetLines are unsorted
+ *
+ * @return result rows produced by callback
  */
-fun groupVcfRecordsByOverlappingVariantId(
+fun joinVariantsAndVcfRecords(
     variantsDF: Dataset<Row>,
     vcfRecordsDF: Dataset<Row>,
-    vcfRecordsCompressed: Boolean
-): KeyValueGroupedDataset<Long, Row> {
-    // for each distinct variant range, list the overlapping VCF records in each callset
-    var vridRecords = vcfRecordsDF.selectExpr(
-        "explode(overlappingVariantRangeIds(rid,beg,end)) as vrid",
-        "callsetId", if (vcfRecordsCompressed) "snappyLine" else "line"
-    ).groupBy("vrid", "callsetId").agg(
-        if (vcfRecordsCompressed) {
-            collect_list("snappyLine").alias("callsetSnappyLines")
-        } else {
-            collect_list("line").alias("callsetLines")
-        }
-    ).alias("vcf")
+    vcfRecordsCompressed: Boolean,
+    processVariantAndVcfRecords: MapGroupsFunction<Row, Row, Row>,
+    resultEncoder: Encoder<Row>
+): Dataset<Row> {
+    // use VariantRanges UDF to join the ID of each variant to all overlapping VCF records
+    val groupedRecords = vcfRecordsDF.selectExpr(
+        "explode(overlappingVariantIds(rid,beg,end)) as vid",
+        "callsetId as callsetId", // ?? https://stackoverflow.com/q/45713290
+        if (vcfRecordsCompressed) "snappyLine" else "line"
+    )
+        .groupBy("vid", "callsetId").agg(
+            // collect into a list for each callset
+            if (vcfRecordsCompressed) {
+                collect_list("snappyLine").alias("callsetSnappyLines")
+            } else {
+                collect_list("line").alias("callsetLines")
+            }
+        )
+        // regroup by variant ID.
+        // TODO: is there a way to elide this second shuffle? (in view of the cogrouping plan)
+        .groupByKey(MapFunction<Row, Long> { it.getAs<Long>("vid") }, Encoders.LONG())
 
-    // join that to variant IDs via many-to-one link table from variant IDs to variant range IDs
     return variantsDF
-        // assume the link table is small enough to broadcast (~20 bytes per variant), saving one
-        // costly shuffle of vridRecords
-        .selectExpr("vid", "variantRangeId(rid,beg,end) as vrid").alias("var").hint("broadcast")
-        .join(vridRecords, col("var.vrid") eq col("vcf.vrid"))
-        // group by variant ID
-        .groupByKey(
-            MapFunction<Row, Long> { row -> row.getAs<Long>("vid") },
-            Encoders.LONG()
+        // 'join' variantDF to groupedRecords by vid; using cogroup lets us dock the variant row
+        // without having it exploded within groupedRecords
+        .groupByKey(MapFunction<Row, Long> { it.getAs<Long>("vid") }, Encoders.LONG())
+        .cogroup(
+            groupedRecords,
+            CoGroupFunction<Long, Row, Row, Row> {
+                vid, variantRows, callsetsData ->
+                val variantRow = variantRows.next()
+                check(variantRow.getAs<Long>("vid") == vid && !variantRows.hasNext())
+                sequence {
+                    yield(processVariantAndVcfRecords.call(variantRow, callsetsData))
+                }.iterator()
+            },
+            resultEncoder
         )
 }
 
