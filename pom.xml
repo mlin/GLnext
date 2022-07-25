@@ -14,6 +14,13 @@
         <kotlin.code.style>official</kotlin.code.style>
     </properties>
 
+    <repositories>
+        <repository>
+            <id>iitj</id>
+            <url>https://raw.githubusercontent.com/wiki/mlin/iitj/mvn-repo/</url>
+        </repository>
+    </repositories>
+
     <dependencies>
         <dependency>
             <groupId>org.jetbrains.kotlin</groupId>
@@ -58,6 +65,11 @@
             <artifactId>hoplite-toml</artifactId>
             <version>1.4.16</version>
         </dependency>
+        <dependency>
+            <groupId>net.mlin</groupId>
+            <artifactId>iitj</artifactId>
+            <version>0.0.2</version>
+        </dependency>
     </dependencies>
 
     <build>
@@ -86,6 +98,7 @@
                                     <include>com.github.ajalt.clikt:*</include>
                                     <include>com.sksamuel.hoplite:*</include>
                                     <include>org.tomlj:*</include>
+                                    <include>net.mlin:*</include>
                                 </includes>
                             </artifactSet>
                         </configuration>

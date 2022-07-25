@@ -47,11 +47,12 @@ class CLI : CliktCommand() {
 
         var sparkBuilder = org.apache.spark.sql.SparkSession.builder()
             .appName("vcfGLuer")
-            // disabling broadcast hash join: during initial scale-testing spark 3.1.2 seemed to
-            // use it on far-too-large datasets, leading to OOM failures
+            .config("io.compression.codecs", compressionCodecsWithBGZF())
+            // Disabling some Spark optimizations involving in-memory hash maps; they seem to cause
+            // a lot of OOM problems for our usage patterns.
             .config("spark.sql.join.preferSortMergeJoin", true)
             .config("spark.sql.autoBroadcastJoinThreshold", -1)
-            .config("io.compression.codecs", compressionCodecsWithBGZF())
+            .config("spark.sql.execution.useObjectHashAggregateExec", false)
 
         if (cfg.spark.compressTempFiles) {
             sparkBuilder = sparkBuilder
@@ -68,14 +69,13 @@ class CLI : CliktCommand() {
             builder = sparkBuilder,
             logLevel = SparkLogLevel.ERROR
         ) {
-            registerGRangeBinsUDF(spark)
-
+            val defaultParallelism = spark.sparkContext.defaultParallelism()
             val logger = LogManager.getLogger("vcfGLuer")
             logger.setLevel(Level.INFO)
 
             logger.info("${System.getProperty("java.runtime.name")} ${System.getProperty("java.runtime.version")}")
             logger.info("Spark v${spark.version()}")
-            logger.info("spark.default.parallelism: ${spark.sparkContext.defaultParallelism()}")
+            logger.info("spark.default.parallelism: $defaultParallelism")
             logger.info("spark executors: ${spark.sparkContext.statusTracker().getExecutorInfos().size}")
             logger.info("Locale: ${java.util.Locale.getDefault()}")
             logger.info("vcfGLuer v${getProjectVersion()}")
@@ -98,41 +98,59 @@ class CLI : CliktCommand() {
             }
             logger.info("contigs: ${aggHeader.contigId.size.pretty()}")
 
-            // load all VCF records
+            // accumulators
             val vcfRecordCount = spark.sparkContext.longAccumulator("original VCF records")
             val vcfRecordBytes = spark.sparkContext.longAccumulator("original VCF bytes)")
-            readVcfRecordsDF(
+            val pvcfRecordCount = spark.sparkContext.longAccumulator("pVCF records")
+            val pvcfRecordBytes = spark.sparkContext.longAccumulator("pVCF bytes")
+
+            // load all VCF records
+            var vcfRecordsDF = readVcfRecordsDF(
                 spark, aggHeader, compressEachRecord = cfg.spark.compressTempRecords, deleteInputVcfs = deleteInputVcfs,
                 recordCount = vcfRecordCount, recordBytes = vcfRecordBytes
-            ).withCached {
-                val vcfRecordsDF = this
-
-                // discover variants
-                val variantsDF = discoverVariants(vcfRecordsDF, onlyCalled = cfg.discovery.minCopies > 0)
-
-                // perform joint-calling
-                val pvcfHeaderMetaLines = listOf(
-                    "vcfGLuer_version=${getProjectVersion()}",
-                    "vcfGLuer_config=$cfg"
-                )
-                val pvcfRecordCount = spark.sparkContext.longAccumulator("pVCF records")
-                val pvcfRecordBytes = spark.sparkContext.longAccumulator("pVCF bytes")
-                val (pvcfHeader, pvcfLines) = jointCall(cfg.joint, spark, aggHeader, variantsDF, vcfRecordsDF, pvcfHeaderMetaLines, pvcfRecordCount, pvcfRecordBytes)
-
-                // write pVCF records (in parts)
-                pvcfLines.write().option("compression", BGZFCodecClassName()).text(pvcfDir)
-
-                logger.info("original VCF records: ${vcfRecordCount.sum().pretty()}")
-                logger.info("original VCF bytes: ${vcfRecordBytes.sum().pretty()}")
-                logger.info("pVCF variants: ${pvcfRecordCount.sum().pretty()}")
-                logger.info("pVCF bytes: ${pvcfRecordBytes.sum().pretty()}")
-
-                // reorganize part files
-                reorgJointFiles(spark, pvcfDir, aggHeader)
-
-                // write output VCF header & BGZF EOF marker
-                writeHeaderAndEOF(pvcfHeader, pvcfDir)
+            )
+            // in general vcfRecordsDF # partitions now = # files; repartition if # files is way
+            // below defaultParallelism
+            // this is costly, but heuristically needed to prevent OOM when we explode vcfRecordsDF
+            // against overlapping variants
+            if (aggHeader.filenameCallsetId.size * 3 < defaultParallelism * 2) {
+                logger.info("shuffle vcfRecordsDF from ${aggHeader.filenameCallsetId.size} to $defaultParallelism partitions =(")
+                vcfRecordsDF = vcfRecordsDF.repartition(defaultParallelism)
             }
+            vcfRecordsDF = vcfRecordsDF.cache()
+
+            // discover variants
+            val variantsDF = discoverVariants(vcfRecordsDF, onlyCalled = cfg.discovery.minCopies > 0).cache()
+            val variantCount = variantsDF.count()
+            logger.info("original VCF records: ${vcfRecordCount.sum().pretty()}")
+            logger.info("original VCF bytes: ${vcfRecordBytes.sum().pretty()}")
+            logger.info("joint variants: $variantCount")
+
+            // perform joint-calling
+            val pvcfHeaderMetaLines = listOf(
+                "vcfGLuer_version=${getProjectVersion()}",
+                "vcfGLuer_config=$cfg"
+            )
+            val (pvcfHeader, pvcfLines) = jointCall(
+                logger, cfg.joint, spark, aggHeader,
+                variantsDF, vcfRecordsDF, pvcfHeaderMetaLines,
+                pvcfRecordCount, pvcfRecordBytes
+            )
+
+            // write pVCF records (in parts)
+            pvcfLines.saveAsTextFile(pvcfDir, BGZFCodec::class.java)
+            // pvcfLines.write().option("compression", BGZFCodecClassName()).text(pvcfDir)
+            variantsDF.unpersist()
+            vcfRecordsDF.unpersist()
+
+            logger.info("pVCF bytes: ${pvcfRecordBytes.sum().pretty()}")
+            check(pvcfRecordCount.sum() == variantCount) // checks Spark query plan
+
+            // reorganize part files
+            reorgJointFiles(spark, pvcfDir, aggHeader)
+
+            // write output VCF header & BGZF EOF marker
+            writeHeaderAndEOF(pvcfHeader, pvcfDir)
         }
     }
 }

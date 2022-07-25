@@ -34,7 +34,7 @@ print(f"copying {len(hdfs_parts)} dxfiles to hdfs:/vcfGLuer/in/", file=sys.stder
 spark = pyspark.sql.SparkSession.builder.getOrCreate()
 hdfs_parts_rdd = spark.sparkContext.parallelize(
     list(part for part in hdfs_parts if part not in (header_part, eof_part)),
-    max(spark.sparkContext.defaultParallelism, 64),
+    min(spark.sparkContext.defaultParallelism, 64),
 )
 
 output_name = os.environ.get("output_name", "merged")

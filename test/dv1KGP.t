@@ -27,7 +27,6 @@ fi
 DN=$(mktemp -d "${TMPDIR}/vcfGLuer_tests_XXXXXX")
 DN=$(realpath "$DN")
 cd $DN
-echo "$DN"
 
 tar xf /tmp/dv1KGP_ALDH2_gvcf.tar
 
@@ -41,6 +40,8 @@ fi
 
 export SPARK_LOCAL_IP=127.0.0.1
 export LD_LIBRARY_PATH="$SOURCE_DIR/dx/vcfGLuer/resources/usr/lib"
+mkdir spark-events
+export _JAVA_OPTIONS="$_JAVA_OPTIONS -Dspark.default.parallelism=$(nproc) -Dspark.sql.shuffle.partitions=$(nproc) -Dspark.eventLog.enabled=true -Dspark.eventLog.dir=${DN}/spark-events"
 #_JAVA_OPTIONS='-Dconfig.override.joint.gt.overlapMode=REF'
 
 time "${SPARK_HOME}/bin/spark-submit" \
@@ -63,3 +64,6 @@ is "$?" "0" "tbi"
 # regression test - merging config files
 zgrep 'minCopies=1' dv1KGP.out/00HEADER.bgz
 is "$?" "0" "config merging"
+
+echo "$DN"
+# rm -rf "$DN"

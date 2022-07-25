@@ -10,7 +10,18 @@ import kotlin.math.min
 /**
  * Elementary variant
  */
-data class Variant(val range: GRange, val ref: String, val alt: String) {
+data class Variant(val range: GRange, val ref: String, val alt: String) : Comparable<Variant>, java.io.Serializable {
+    constructor(row: Row) :
+        this(
+            GRange(
+                row.getAs<Short>("rid"),
+                row.getAs<Int>("beg"),
+                row.getAs<Int>("end")
+            ),
+            row.getAs<String>("ref"),
+            row.getAs<String>("alt")
+        )
+    override fun compareTo(other: Variant) = compareValuesBy(this, other, { it.range }, { it.ref }, { it.alt })
     fun str(contigs: Array<String>): String {
         val contigName = contigs[range.rid.toInt()]
         return "$contigName:${range.beg}/$ref/$alt"
@@ -99,6 +110,6 @@ fun discoverVariants(vcfRecordsDF: Dataset<Row>, onlyCalled: Boolean = false): D
                 }
             },
             VariantRowEncoder()
-        ).distinct()
-    // TODO: accumulate instead of distinct() to collect summary stats
+        ).distinct() // TODO: accumulate instead of distinct() to collect summary stats
+        .selectExpr("*", "monotonically_increasing_id() as vid")
 }
