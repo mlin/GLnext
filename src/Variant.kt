@@ -1,3 +1,4 @@
+import kotlin.math.min
 import org.apache.spark.api.java.function.FlatMapFunction
 import org.apache.spark.sql.*
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
@@ -5,12 +6,12 @@ import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.types.*
 import org.jetbrains.kotlinx.spark.api.*
 import org.xerial.snappy.Snappy
-import kotlin.math.min
 
 /**
  * Elementary variant
  */
-data class Variant(val range: GRange, val ref: String, val alt: String) : Comparable<Variant>, java.io.Serializable {
+data class Variant(val range: GRange, val ref: String, val alt: String) :
+    Comparable<Variant>, java.io.Serializable {
     constructor(row: Row) :
         this(
             GRange(
@@ -21,7 +22,9 @@ data class Variant(val range: GRange, val ref: String, val alt: String) : Compar
             row.getAs<String>("ref"),
             row.getAs<String>("alt")
         )
-    override fun compareTo(other: Variant) = compareValuesBy(this, other, { it.range }, { it.ref }, { it.alt })
+    override fun compareTo(other: Variant) = compareValuesBy(
+        this, other, { it.range }, { it.ref }, { it.alt }
+    )
     fun str(contigs: Array<String>): String {
         val contigName = contigs[range.rid.toInt()]
         return "$contigName:${range.beg}/$ref/$alt"
@@ -51,7 +54,9 @@ fun VariantRowEncoder(): ExpressionEncoder<Row> {
  */
 fun Variant.normalize(): Variant {
     var trimR = 0
-    while (trimR < min(ref.length, alt.length) - 1 && ref[ref.length - trimR - 1] == alt[alt.length - trimR - 1]) {
+    while (trimR < min(ref.length, alt.length) - 1 &&
+        ref[ref.length - trimR - 1] == alt[alt.length - trimR - 1]
+    ) {
         trimR++
     }
     var trimL = 0
@@ -81,7 +86,11 @@ fun discoverVariants(vcfRecordsDF: Dataset<Row>, onlyCalled: Boolean = false): D
         .flatMap(
             FlatMapFunction<Row, Row> {
                 row ->
-                val range = GRange(row.getAs<Short>("rid"), row.getAs<Int>("beg"), row.getAs<Int>("end"))
+                val range = GRange(
+                    row.getAs<Short>("rid"),
+                    row.getAs<Int>("beg"),
+                    row.getAs<Int>("end")
+                )
                 val vcfRecord = VcfRecordUnpacked(
                     VcfRecord(
                         row.getAs<Int>("callsetId"), range,
@@ -106,7 +115,8 @@ fun discoverVariants(vcfRecordsDF: Dataset<Row>, onlyCalled: Boolean = false): D
                             copies[gt.allele2 - 1]++
                         }
                     }
-                    variants.filterIndexed { i, _ -> copies[i] > 0 }.filterNotNull().map { it.toRow() }.iterator()
+                    variants.filterIndexed { i, _ -> copies[i] > 0 }.filterNotNull()
+                        .map { it.toRow() }.iterator()
                 }
             },
             VariantRowEncoder()

@@ -9,9 +9,9 @@
  */
 
 import htsjdk.samtools.util.BlockCompressedOutputStream
-import org.apache.hadoop.io.compress.CompressionOutputStream
 import java.io.File
 import java.io.OutputStream
+import org.apache.hadoop.io.compress.CompressionOutputStream
 
 class BGZFOutputStream(val sink: OutputStream) : CompressionOutputStream(sink) {
     protected val nullFile: File? = null

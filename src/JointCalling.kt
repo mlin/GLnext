@@ -1,4 +1,6 @@
 
+import java.io.Serializable
+import kotlin.math.pow
 import net.mlin.iitj.IntegerIntervalTree
 import org.apache.log4j.Logger
 import org.apache.spark.api.java.JavaRDD
@@ -19,8 +21,6 @@ import org.apache.spark.sql.types.*
 import org.apache.spark.util.LongAccumulator
 import org.jetbrains.kotlinx.spark.api.*
 import org.xerial.snappy.Snappy
-import java.io.Serializable
-import kotlin.math.pow
 
 enum class GT_OverlapMode {
     MISSING,
@@ -29,7 +29,11 @@ enum class GT_OverlapMode {
 }
 
 data class JointGenotypeConfig(val overlapMode: GT_OverlapMode) : Serializable
-data class JointConfig(val keepTrailingFields: Boolean, val gt: JointGenotypeConfig, val formatFields: List<JointFormatField>) : Serializable
+data class JointConfig(
+    val keepTrailingFields: Boolean,
+    val gt: JointGenotypeConfig,
+    val formatFields: List<JointFormatField>
+) : Serializable
 
 /**
  * Joint-call variantsDF & vcfRecordsDF into sorted pVCF lines
@@ -55,7 +59,11 @@ fun jointCall(
     // perform the big range-join of variants to all overlapping VCF records
     VariantRanges(logger, aggHeader.contigs, variantsDF).deploy(spark)
     val vcfRecordsCompressed = vcfRecordsDF.columns().contains("snappyLine")
-    val groupedRecords = groupVcfRecordsByOverlappingVariantId(variantsDF, vcfRecordsDF, vcfRecordsCompressed)
+    val groupedRecords = groupVcfRecordsByOverlappingVariantId(
+        variantsDF,
+        vcfRecordsDF,
+        vcfRecordsCompressed
+    )
 
     // process groupedRecords into Snappy-compressed pVCF lines (+ Variant info)
     // the temporary Snappy compression is just to streamline the I/O burden of the ensuing sort
@@ -78,7 +86,16 @@ fun jointCall(
                 check(variantRow.getAs<Long>("vid") == vid && !variantRows.hasNext())
                 sequence {
                     // run joint-calling given the variant details and all overlapping records
-                    yield(jointCallVariant(cfg, aggHeaderB.value, fieldsGenB.value, variantRow, callsetsData, vcfRecordsCompressed))
+                    yield(
+                        jointCallVariant(
+                            cfg,
+                            aggHeaderB.value,
+                            fieldsGenB.value,
+                            variantRow,
+                            callsetsData,
+                            vcfRecordsCompressed
+                        )
+                    )
                     pvcfRecordCount?.let { it.add(1L) }
                 }.iterator()
             },
@@ -232,7 +249,11 @@ class VariantRanges : Serializable {
  *  |    |-- element: binary (containsNull = false)
  * nb: the callsetLines are unsorted
  */
-fun groupVcfRecordsByOverlappingVariantId(variantsDF: Dataset<Row>, vcfRecordsDF: Dataset<Row>, vcfRecordsCompressed: Boolean): KeyValueGroupedDataset<Long, Row> {
+fun groupVcfRecordsByOverlappingVariantId(
+    variantsDF: Dataset<Row>,
+    vcfRecordsDF: Dataset<Row>,
+    vcfRecordsCompressed: Boolean
+): KeyValueGroupedDataset<Long, Row> {
     // for each distinct variant range, list the overlapping VCF records in each callset
     var vridRecords = vcfRecordsDF.selectExpr(
         "explode(overlappingVariantRangeIds(rid,beg,end)) as vrid",
@@ -261,7 +282,14 @@ fun groupVcfRecordsByOverlappingVariantId(variantsDF: Dataset<Row>, vcfRecordsDF
 /**
  * Generate pVCF record (with GRange columns) for one variant given the data group
  */
-fun jointCallVariant(cfg: JointConfig, aggHeader: AggVcfHeader, fieldsGen: JointFieldsGenerator, variantRow: Row, callsetsData: Iterator<Row>, vcfRecordsCompressed: Boolean): Row {
+fun jointCallVariant(
+    cfg: JointConfig,
+    aggHeader: AggVcfHeader,
+    fieldsGen: JointFieldsGenerator,
+    variantRow: Row,
+    callsetsData: Iterator<Row>,
+    vcfRecordsCompressed: Boolean
+): Row {
     // extract variant
     val variant = Variant(variantRow)
 
@@ -273,17 +301,24 @@ fun jointCallVariant(cfg: JointConfig, aggHeader: AggVcfHeader, fieldsGen: Joint
         // TODO: handle case where callsetRow is just null, from left join
 
         // parse the input VCF records overlapping the variant
-        val unpackedRecords = VcfRecordsContext(aggHeader, variant, callsetRow, vcfRecordsCompressed)
+        val unpackedRecords = VcfRecordsContext(
+            aggHeader,
+            variant,
+            callsetRow,
+            vcfRecordsCompressed
+        )
 
         // generate genotype & FORMAT fields for each sample in the callset
         aggHeader.callsetsDetails[unpackedRecords.callsetId].callsetSamples.forEachIndexed {
             inSampleIdx, outSampleIdx ->
             if (outSampleIdx >= 0) {
                 check(recordTsv[VcfColumn.FIRST_SAMPLE.ordinal + outSampleIdx] == ".", {
-                    "duplicate genotype entries ${variant.str(aggHeader.contigs)} ${aggHeader.samples[outSampleIdx]}"
+                    "duplicate genotype entries" +
+                        " ${variant.str(aggHeader.contigs)} ${aggHeader.samples[outSampleIdx]}"
                 })
                 // fill in the output record
-                recordTsv[VcfColumn.FIRST_SAMPLE.ordinal + outSampleIdx] = generateGenotypeAndFormatFields(cfg, fieldsGen, unpackedRecords, inSampleIdx)
+                recordTsv[VcfColumn.FIRST_SAMPLE.ordinal + outSampleIdx] =
+                    generateGenotypeAndFormatFields(cfg, fieldsGen, unpackedRecords, inSampleIdx)
             }
         }
     }
@@ -293,10 +328,17 @@ fun jointCallVariant(cfg: JointConfig, aggHeader: AggVcfHeader, fieldsGen: Joint
 
     // generate compressed line for pVCF sorting
     val snappyRecord = Snappy.compress(recordTsv.joinToString("\t").toByteArray())
-    return RowFactory.create(variant.range.rid, variant.range.beg, variant.range.end, variant.ref, variant.alt, snappyRecord)
+    return RowFactory.create(
+        variant.range.rid, variant.range.beg, variant.range.end,
+        variant.ref, variant.alt, snappyRecord
+    )
 }
 
-fun initializeOutputTsv(cfg: JointConfig, aggHeader: AggVcfHeader, variant: Variant): Array<String> {
+fun initializeOutputTsv(
+    cfg: JointConfig,
+    aggHeader: AggVcfHeader,
+    variant: Variant
+): Array<String> {
     val recordTsv = Array<String>(VcfColumn.FIRST_SAMPLE.ordinal + aggHeader.samples.size) { "." }
     recordTsv[VcfColumn.CHROM.ordinal] = aggHeader.contigs[variant.range.rid.toInt()] // CHROM
     recordTsv[VcfColumn.POS.ordinal] = variant.range.beg.toString() // POS
@@ -306,11 +348,18 @@ fun initializeOutputTsv(cfg: JointConfig, aggHeader: AggVcfHeader, variant: Vari
     // QUAL
     recordTsv[VcfColumn.FILTER.ordinal] = "PASS" // FILTER
     // INFO
-    recordTsv[VcfColumn.FORMAT.ordinal] = (listOf("GT") + cfg.formatFields.map { it.name }).joinToString(":") // FORMAT
+    recordTsv[VcfColumn.FORMAT.ordinal] =
+        (listOf("GT") + cfg.formatFields.map { it.name })
+            .joinToString(":") // FORMAT
     return recordTsv
 }
 
-fun generateGenotypeAndFormatFields(cfg: JointConfig, fieldsGen: JointFieldsGenerator, data: VcfRecordsContext, sampleIndex: Int): String {
+fun generateGenotypeAndFormatFields(
+    cfg: JointConfig,
+    fieldsGen: JointFieldsGenerator,
+    data: VcfRecordsContext,
+    sampleIndex: Int
+): String {
     if (data.variantRecords.isEmpty()) {
         return generateRefGenotypeAndFormatFields(cfg, fieldsGen, data, sampleIndex)
     }
@@ -350,11 +399,20 @@ fun generateGenotypeAndFormatFields(cfg: JointConfig, fieldsGen: JointFieldsGene
         else -> genotypeOverlapSentinel(cfg.gt.overlapMode)
     }
 
-    val gtOut = DiploidGenotype(translate(gtIn.allele1), translate(gtIn.allele2), gtIn.phased).normalize()
+    val gtOut = DiploidGenotype(
+        translate(gtIn.allele1),
+        translate(gtIn.allele2),
+        gtIn.phased
+    ).normalize()
     return gtOut.toString() + fieldsGen.generateFormatFields(data, sampleIndex, gtOut, record)
 }
 
-fun generateRefGenotypeAndFormatFields(cfg: JointConfig, fieldsGen: JointFieldsGenerator, data: VcfRecordsContext, sampleIndex: Int): String {
+fun generateRefGenotypeAndFormatFields(
+    cfg: JointConfig,
+    fieldsGen: JointFieldsGenerator,
+    data: VcfRecordsContext,
+    sampleIndex: Int
+): String {
     check(data.variantRecords.isEmpty())
 
     // count copies of other overlapping variants
@@ -401,7 +459,12 @@ fun genotypeOverlapSentinel(mode: GT_OverlapMode): Int? = when (mode) {
  * and other variants
  */
 
-class VcfRecordsContext(val aggHeader: AggVcfHeader, val variant: Variant, val callsetRecordsRow: Row, val vcfRecordsCompressed: Boolean) {
+class VcfRecordsContext(
+    val aggHeader: AggVcfHeader,
+    val variant: Variant,
+    val callsetRecordsRow: Row,
+    val vcfRecordsCompressed: Boolean
+) {
     val callsetId: Int
     val referenceBands: List<VcfRecordUnpacked>
     val variantRecords: List<VcfRecordUnpacked>
@@ -410,8 +473,11 @@ class VcfRecordsContext(val aggHeader: AggVcfHeader, val variant: Variant, val c
     init {
         callsetId = callsetRecordsRow.getAs<Int>("callsetId")
         var callsetRecords = if (vcfRecordsCompressed) {
-            callsetRecordsRow.getList<ByteArray>(callsetRecordsRow.fieldIndex("callsetSnappyLines"))
-                .map { parseVcfRecord(aggHeader.contigId, callsetId, String(Snappy.uncompress(it))) }
+            callsetRecordsRow.getList<ByteArray>(
+                callsetRecordsRow.fieldIndex("callsetSnappyLines")
+            ).map {
+                parseVcfRecord(aggHeader.contigId, callsetId, String(Snappy.uncompress(it)))
+            }
         } else {
             callsetRecordsRow.getList<String>(callsetRecordsRow.fieldIndex("callsetLines"))
                 .map { parseVcfRecord(aggHeader.contigId, callsetId, it) }
@@ -419,7 +485,8 @@ class VcfRecordsContext(val aggHeader: AggVcfHeader, val variant: Variant, val c
         callsetRecords = callsetRecords.sortedBy { it.range }
 
         // reference bands have no (non-symbolic) ALT alleles
-        var parts = callsetRecords.map { VcfRecordUnpacked(it) }.partition { it.altVariants.filterNotNull().isEmpty() }
+        var parts = callsetRecords.map { VcfRecordUnpacked(it) }
+            .partition { it.altVariants.filterNotNull().isEmpty() }
         referenceBands = parts.first
         // partition variant records based on whether they include the focal variant
         parts = parts.second.partition { it.altVariants.contains(variant) }

@@ -1,4 +1,5 @@
 
+import kotlin.math.max
 import org.apache.hadoop.fs.Path
 import org.apache.spark.api.java.JavaSparkContext
 import org.apache.spark.api.java.function.*
@@ -8,7 +9,6 @@ import org.apache.spark.sql.types.*
 import org.apache.spark.util.LongAccumulator
 import org.jetbrains.kotlinx.spark.api.*
 import org.xerial.snappy.Snappy
-import kotlin.math.max
 
 enum class VcfColumn {
     CHROM, POS, ID, REF, ALT, QUAL, FILTER, INFO, FORMAT, FIRST_SAMPLE
@@ -106,7 +106,10 @@ fun readVcfRecordsDF(
                             if (line.length > 0 && line.get(0) != '#') {
                                 recordCount?.let { it.add(1L) }
                                 recordBytes?.let { it.add(line.length + 1L) }
-                                yield(parseVcfRecord(contigId, callsetId, line).toRow(compressEachRecord))
+                                yield(
+                                    parseVcfRecord(contigId, callsetId, line)
+                                        .toRow(compressEachRecord)
+                                )
                             }
                         }
                     }
@@ -148,7 +151,8 @@ class VcfRecordUnpacked(val record: VcfRecord) {
                 null
             } else {
                 require(
-                    ref.length == record.range.end - record.range.beg + 1 && !alt.contains('.') && !alt.contains('<'),
+                    ref.length == record.range.end - record.range.beg + 1 &&
+                        !alt.contains('.') && !alt.contains('<'),
                     { "invalid variant ${tsv.joinToString("\t")} (END=${record.range.end})" }
                 )
                 Variant(record.range, ref, alt).normalize()
@@ -158,7 +162,8 @@ class VcfRecordUnpacked(val record: VcfRecord) {
 
     fun getSampleFields(sampleIndex: Int): Array<String> {
         if (sampleIndex != lastSampleIndex) {
-            lastSampleFields = tsv[sampleIndex + VcfColumn.FIRST_SAMPLE.ordinal].split(':').toTypedArray()
+            lastSampleFields = tsv[sampleIndex + VcfColumn.FIRST_SAMPLE.ordinal]
+                .split(':').toTypedArray()
             lastSampleIndex = sampleIndex
         }
         return lastSampleFields
@@ -187,7 +192,9 @@ class VcfRecordUnpacked(val record: VcfRecord) {
         if (fld == null) {
             return emptyArray()
         }
-        return fld.split(',').map { if (it == "" || it == ".") null else it.toInt() }.toTypedArray()
+        return fld.split(',')
+            .map { if (it == "" || it == ".") null else it.toInt() }
+            .toTypedArray()
     }
 
     fun getDiploidGenotype(sampleIndex: Int): DiploidGenotype {
@@ -205,17 +212,25 @@ class VcfRecordUnpacked(val record: VcfRecord) {
         }
         val allele1 = (if (parts[0] == "" || parts[0] == ".") null else parts[0].toInt())
         val allele2 = (if (parts[1] == "" || parts[1] == ".") null else parts[1].toInt())
-        return DiploidGenotype(allele1, allele2, phased).validate(tsv[VcfColumn.ALT.ordinal].split(',').size)
+        return DiploidGenotype(allele1, allele2, phased)
+            .validate(tsv[VcfColumn.ALT.ordinal].split(',').size)
     }
 
     fun getAltIndex(variant: Variant): Int {
-        return altVariants.mapIndexed { idx, vt -> if (vt == variant) (idx + 1) else null }.firstNotNullOfOrNull { it } ?: -1
+        return altVariants.mapIndexed {
+            idx, vt ->
+            if (vt == variant) (idx + 1) else null
+        }.firstNotNullOfOrNull { it } ?: -1
     }
 }
 
 data class DiploidGenotype(val allele1: Int?, val allele2: Int?, val phased: Boolean) {
     fun validate(altAlleleCount: Int): DiploidGenotype {
-        require((allele1 == null || allele1 <= altAlleleCount) && (allele2 == null || allele2 <= altAlleleCount), { this.toString() })
+        require(
+            (allele1 == null || allele1 <= altAlleleCount) &&
+                (allele2 == null || allele2 <= altAlleleCount),
+            { this.toString() }
+        )
         return this
     }
 
@@ -227,6 +242,8 @@ data class DiploidGenotype(val allele1: Int?, val allele2: Int?, val phased: Boo
     }
 
     override fun toString(): String {
-        return (if (allele1 == null) "." else allele1.toString()) + (if (phased) "|" else "/") + (if (allele2 == null) "." else allele2.toString())
+        return (if (allele1 == null) "." else allele1.toString()) +
+            (if (phased) "|" else "/") +
+            (if (allele2 == null) "." else allele2.toString())
     }
 }

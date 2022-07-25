@@ -1,3 +1,5 @@
+import java.io.OutputStreamWriter
+import kotlin.math.log10
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
 import org.apache.log4j.LogManager
@@ -5,8 +7,6 @@ import org.apache.spark.api.java.JavaSparkContext
 import org.apache.spark.api.java.function.*
 import org.apache.spark.sql.SparkSession
 import org.jetbrains.kotlinx.spark.api.*
-import java.io.OutputStreamWriter
-import kotlin.math.log10
 
 // Reorganize the pVCF parts written out by spark:
 // Read the first VcfRecord from each part to infer (i) which parts may span multiple CHROMs and
@@ -50,11 +50,19 @@ fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeade
 
     // Infer which parts have content from only one chromosome, storing the rid and first POS.
     // -1 for parts potentially spanning multiple chromosomes.
-    val classifiedParts: List<Triple<Short, Int, String>> = partsAndFirstRange.toList().mapIndexed {
-        i, (basename, firstRange) ->
-        val oneChrom = i + 1 < partsAndFirstRange.size && partsAndFirstRange[i + 1].second.rid == firstRange.rid
-        if (oneChrom) Triple(firstRange.rid, firstRange.beg, basename) else Triple(-1, -1, basename)
-    }
+    val classifiedParts: List<Triple<Short, Int, String>> = partsAndFirstRange
+        .toList().mapIndexed {
+            i, (basename, firstRange) ->
+            val oneChrom = (
+                i + 1 < partsAndFirstRange.size &&
+                    partsAndFirstRange[i + 1].second.rid == firstRange.rid
+                )
+            if (oneChrom) {
+                Triple(firstRange.rid, firstRange.beg, basename)
+            } else {
+                Triple(-1, -1, basename)
+            }
+        }
     logger.info("Initial output part count = ${classifiedParts.size}")
 
     // Split parts potentially spanning multiple chromosomes
@@ -77,7 +85,11 @@ fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeade
         .sortedWith(compareBy({ it.first }, { it.second })).toTypedArray()
     val rangeParts = revisedParts.mapIndexed {
         i, (rid, firstPos, basename) ->
-        val lastPos = if (i + 1 < revisedParts.size && revisedParts[i + 1].first == rid) revisedParts[i + 1].second else -1
+        val lastPos = if (i + 1 < revisedParts.size && revisedParts[i + 1].first == rid) {
+            revisedParts[i + 1].second
+        } else {
+            -1
+        }
         i to Triple(rid, (firstPos to lastPos), basename)
     }
     val finalPartCount = rangeParts.size
@@ -106,7 +118,11 @@ fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeade
     check(newNames.distinct().sorted() == newNames.sorted())
 }
 
-fun splitByChr(pvcfDir: String, partBasename: String, aggHeader: AggVcfHeader): List<Triple<Short, Int, String>> {
+fun splitByChr(
+    pvcfDir: String,
+    partBasename: String,
+    aggHeader: AggVcfHeader
+): List<Triple<Short, Int, String>> {
     val fs = getFileSystem(pvcfDir)
 
     val ans: MutableList<Triple<Short, Int, String>> = mutableListOf()
@@ -122,8 +138,14 @@ fun splitByChr(pvcfDir: String, partBasename: String, aggHeader: AggVcfHeader): 
                 }
                 rid = rec.range.rid
 
-                val tempName = "${aggHeader.contigs[rid.toInt()]}_${rec.range.beg.toString().padStart(9,'0')}.bgz.wip"
-                writer = OutputStreamWriter(BGZFOutputStream(fs.create(Path(pvcfDir, tempName))), "UTF-8")
+                val tempName = (
+                    "${aggHeader.contigs[rid.toInt()]}_" +
+                        "${rec.range.beg.toString().padStart(9,'0')}.bgz.wip"
+                    )
+                writer = OutputStreamWriter(
+                    BGZFOutputStream(fs.create(Path(pvcfDir, tempName))),
+                    "UTF-8"
+                )
                 ans.add(Triple(rid, rec.range.beg, tempName))
             }
             check(writer != null)
@@ -141,7 +163,10 @@ fun splitByChr(pvcfDir: String, partBasename: String, aggHeader: AggVcfHeader): 
     return ans
 }
 
-fun FileSystem.listSequence(path: String, recursive: Boolean): Sequence<org.apache.hadoop.fs.LocatedFileStatus> {
+fun FileSystem.listSequence(
+    path: String,
+    recursive: Boolean
+): Sequence<org.apache.hadoop.fs.LocatedFileStatus> {
     val it = getFileSystem(path).listFiles(Path(path), recursive)
     return sequence {
         while (it.hasNext()) {

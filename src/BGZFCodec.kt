@@ -7,17 +7,20 @@
  *
  */
 
+import java.io.OutputStream
 import org.apache.hadoop.io.compress.CompressionOutputStream
 import org.apache.hadoop.io.compress.Compressor
 import org.apache.hadoop.io.compress.GzipCodec
-import java.io.OutputStream
 
 class BGZFCodec : GzipCodec() {
     override fun createOutputStream(sink: OutputStream): CompressionOutputStream {
         return BGZFOutputStream(sink)
     }
 
-    override fun createOutputStream(sink: OutputStream, moot: Compressor?): CompressionOutputStream {
+    override fun createOutputStream(
+        sink: OutputStream,
+        moot: Compressor?
+    ): CompressionOutputStream {
         return createOutputStream(sink)
     }
 

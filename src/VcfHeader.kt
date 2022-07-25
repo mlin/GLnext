@@ -5,23 +5,30 @@
  * file per chromosome). The assumption is that files with identical headers (including the sample
  * identifier(s) on the #CHROM line) comprise one callset.
  */
+import java.io.Serializable
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
 import org.apache.log4j.LogManager
 import org.apache.spark.api.java.JavaSparkContext
 import org.apache.spark.api.java.function.*
+import org.apache.spark.api.java.function.Function as Function1
 import org.apache.spark.sql.*
 import org.jetbrains.kotlinx.spark.api.*
-import java.io.Serializable
-import org.apache.spark.api.java.function.Function as Function1
 
 /**
  * VCF header contig/FILTER/INFO/FORMAT lines
  */
 enum class VcfHeaderLineKind : Serializable { FILTER, INFO, FORMAT, CONTIG }
-data class VcfHeaderLine(val kind: VcfHeaderLineKind, val id: String, val lineText: String, val ord: Int = -1) :
+data class VcfHeaderLine(
+    val kind: VcfHeaderLineKind,
+    val id: String,
+    val lineText: String,
+    val ord: Int = -1
+) :
     Serializable, Comparable<VcfHeaderLine> {
-    override fun compareTo(other: VcfHeaderLine) = compareValuesBy(this, other, { it.kind }, { it.ord }, { it.id }, { it.lineText })
+    override fun compareTo(other: VcfHeaderLine) = compareValuesBy(
+        this, other, { it.kind }, { it.ord }, { it.id }, { it.lineText }
+    )
 }
 typealias VcfHeaderLineIndex = Map<Pair<VcfHeaderLineKind, String>, VcfHeaderLine>
 
@@ -29,7 +36,8 @@ typealias VcfHeaderLineIndex = Map<Pair<VcfHeaderLineKind, String>, VcfHeaderLin
  * Details specific to one callset: for each sample in the original callset, its index in the
  * aggregated sample list
  */
-data class CallsetDetails(val callsetFilenames: List<String>, val callsetSamples: IntArray) : Serializable
+data class CallsetDetails(val callsetFilenames: List<String>, val callsetSamples: IntArray) :
+    Serializable
 
 /**
  * Meta header aggregated from all input VCF files (header lines deduplicated & checked for
@@ -54,13 +62,19 @@ data class AggVcfHeader(
 /**
  * Use Spark to load all VCF headers and aggregate them
  */
-fun aggregateVcfHeaders(spark: org.apache.spark.sql.SparkSession, filenames: List<String>, allowDuplicateSamples: Boolean = false): AggVcfHeader {
+fun aggregateVcfHeaders(
+    spark: org.apache.spark.sql.SparkSession,
+    filenames: List<String>,
+    allowDuplicateSamples: Boolean = false
+): AggVcfHeader {
     val jsc = JavaSparkContext(spark.sparkContext)
     val exampleFilename = filenames.first()
 
     // read the headers of all VCFs, and group the filenames by common header
-    data class _DigestedHeader(val filename: String, val headerDigest: String, val header: String) : Serializable
-    data class _FilenamesWithSameHeader(val header: String, val filenames: List<String>) : Serializable
+    data class _DigestedHeader(val filename: String, val headerDigest: String, val header: String) :
+        Serializable
+    data class _FilenamesWithSameHeader(val header: String, val filenames: List<String>) :
+        Serializable
     val filenamesByHeader = jsc.parallelize(filenames)
         .mapPartitions(
             FlatMapFunction<Iterator<String>, _DigestedHeader> {
@@ -88,11 +102,18 @@ fun aggregateVcfHeaders(spark: org.apache.spark.sql.SparkSession, filenames: Lis
     try {
         // assign callsetIds as indexes into an array of header digests (arbitrary order)
         val digestToCallsetId = jsc.broadcast(
-            filenamesByHeader.keys().collect().sorted().mapIndexed { callsetId, digest -> digest to callsetId }.toMap()
+            filenamesByHeader.keys().collect().sorted().mapIndexed {
+                callsetId, digest ->
+                digest to callsetId
+            }.toMap()
         )
 
         // collect CallsetDetails (precursor)
-        data class _CallsetDetailsPre(val callsetId: Int, val filenames: List<String>, val samples: List<String>) : Serializable
+        data class _CallsetDetailsPre(
+            val callsetId: Int,
+            val filenames: List<String>,
+            val samples: List<String>
+        ) : Serializable
         val callsetsDetailsPre = filenamesByHeader.map(
             Function1<scala.Tuple2<String, _FilenamesWithSameHeader>, _CallsetDetailsPre> {
                 val callsetId = digestToCallsetId.value.get(it._1)!!
@@ -150,12 +171,17 @@ fun aggregateVcfHeaders(spark: org.apache.spark.sql.SparkSession, filenames: Lis
         headerLines = headerLines.distinct()
         val headerLinesSize2 = headerLines.size
         if (headerLinesSize1 != headerLinesSize2) {
-            LogManager.getLogger("vcfGLuer").warn("Deduplicated VcfHeaderLineKind left by Spark distinct() ($headerLinesSize1 > $headerLinesSize2)")
+            LogManager.getLogger("vcfGLuer").warn(
+                "Deduplicated VcfHeaderLineKind left by Spark distinct()" +
+                    " ($headerLinesSize1 > $headerLinesSize2)"
+            )
         }
         val (headerLinesMap, contigs) = validateVcfHeaderLines(headerLines)
         val contigId = contigs.mapIndexed { ord, id -> id to ord.toShort() }.toMap()
 
-        return AggVcfHeader(headerLinesMap, contigs, contigId, samples, filenameToCallsetId, callsetsDetails)
+        return AggVcfHeader(
+            headerLinesMap, contigs, contigId, samples, filenameToCallsetId, callsetsDetails
+        )
     } finally {
         filenamesByHeader.unpersist()
     }
@@ -206,7 +232,10 @@ fun readVcfHeader(filename: String, fs: FileSystem? = null): Pair<String, String
             .asSequence()
             .joinToString(separator = "\n", postfix = "\n")
     }
-    require(header.length > 0 && header.startsWith("##fileformat=VCF"), { "invalid VCF header in $filename" })
+    require(
+        header.length > 0 && header.startsWith("##fileformat=VCF"),
+        { "invalid VCF header in $filename" }
+    )
     val headerDigest = java.security.MessageDigest.getInstance("SHA-256")
         .digest(header.toByteArray())
         .map { "%02x".format(it) }
@@ -231,7 +260,9 @@ fun vcfInputStream(filename: String, fs: FileSystem? = null): java.io.InputStrea
  */
 fun getVcfHeaderLines(headerText: String): Sequence<VcfHeaderLine> {
     // use htsjdk's VCF header parser
-    val headerLineIterator = HtsJdkLineIteratorImpl(headerText.trimEnd('\n').splitToSequence("\n").iterator())
+    val headerLineIterator = HtsJdkLineIteratorImpl(
+        headerText.trimEnd('\n').splitToSequence("\n").iterator()
+    )
     val hdr = htsjdk.variant.vcf.VCFCodec().readActualHeader(headerLineIterator)
     check(hdr is htsjdk.variant.vcf.VCFHeader)
     return sequence {

@@ -6,26 +6,36 @@ import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.sksamuel.hoplite.*
+import java.io.File
+import java.net.URI
+import java.util.Properties
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
 import org.apache.log4j.Level
 import org.apache.log4j.LogManager
 import org.apache.spark.sql.*
 import org.jetbrains.kotlinx.spark.api.*
-import java.io.File
-import java.net.URI
-import java.util.Properties
 
 data class SparkConfig(val compressTempRecords: Boolean, val compressTempFiles: Boolean)
 data class DiscoveryConfig(val allowDuplicateSamples: Boolean, val minCopies: Int)
-data class MainConfig(val spark: SparkConfig, val discovery: DiscoveryConfig, val joint: JointConfig)
+data class MainConfig(
+    val spark: SparkConfig,
+    val discovery: DiscoveryConfig,
+    val joint: JointConfig
+)
 
 class CLI : CliktCommand() {
-    val inputFiles: List<String> by argument(help = "Input VCF filenames (or manifest(s) with --manifest)").multiple(required = true)
-    val pvcfDir: String by argument(help = "Output directory for pVCF parts (mustn't already exist)")
-    val manifest by option(help = "Input files are manifest(s) containing one VCF filename per line").flag(default = false)
+    val inputFiles: List<String> by
+    argument(help = "Input VCF filenames (or manifest(s) with --manifest)")
+        .multiple(required = true)
+    val pvcfDir: String by
+    argument(help = "Output directory for pVCF parts (mustn't already exist)")
+    val manifest by
+    option(help = "Input files are manifest(s) containing one VCF filename per line")
+        .flag(default = false)
     val config: String by option(help = "Configuration preset name").default("DeepVariant")
-    val deleteInputVcfs by option(help = "Delete input VCF files after loading them (DANGER!)").flag(default = false)
+    val deleteInputVcfs by
+    option(help = "Delete input VCF files after loading them (DANGER!)").flag(default = false)
 
     // TODO: take a BED file of target regions, use to filter variants
     // https://www.javadoc.io/doc/com.github.samtools/htsjdk/2.24.1/htsjdk/samtools/util/IntervalTree.html
@@ -73,17 +83,27 @@ class CLI : CliktCommand() {
             val logger = LogManager.getLogger("vcfGLuer")
             logger.setLevel(Level.INFO)
 
-            logger.info("${System.getProperty("java.runtime.name")} ${System.getProperty("java.runtime.version")}")
+            logger.info(
+                "${System.getProperty("java.runtime.name")}" +
+                    " ${System.getProperty("java.runtime.version")}"
+            )
             logger.info("Spark v${spark.version()}")
             logger.info("spark.default.parallelism: $defaultParallelism")
-            logger.info("spark executors: ${spark.sparkContext.statusTracker().getExecutorInfos().size}")
+            logger.info(
+                "spark executors: " +
+                    spark.sparkContext.statusTracker().getExecutorInfos().size.toString()
+            )
             logger.info("Locale: ${java.util.Locale.getDefault()}")
             logger.info("vcfGLuer v${getProjectVersion()}")
             logger.info(cfg.toString())
             logger.info("input VCF files: ${effInputFiles.size.pretty()}")
 
             // load & aggregate all input VCF headers
-            val aggHeader = aggregateVcfHeaders(spark, effInputFiles, allowDuplicateSamples = cfg.discovery.allowDuplicateSamples)
+            val aggHeader = aggregateVcfHeaders(
+                spark,
+                effInputFiles,
+                allowDuplicateSamples = cfg.discovery.allowDuplicateSamples
+            )
 
             logger.info("samples: ${aggHeader.samples.size.pretty()}")
             logger.info("callsets: ${aggHeader.callsetsDetails.size.pretty()}")
@@ -93,7 +113,10 @@ class CLI : CliktCommand() {
                 ("FORMAT" to VcfHeaderLineKind.FORMAT)
             ).forEach {
                 (kindName, kind) ->
-                val fields = aggHeader.headerLines.filter { it.value.kind == kind }.map { it.value.id }.sorted().joinToString(" ")
+                val fields = aggHeader.headerLines
+                    .filter { it.value.kind == kind }
+                    .map { it.value.id }.sorted()
+                    .joinToString(" ")
                 logger.info("$kindName: $fields")
             }
             logger.info("contigs: ${aggHeader.contigId.size.pretty()}")
@@ -106,21 +129,30 @@ class CLI : CliktCommand() {
 
             // load all VCF records
             var vcfRecordsDF = readVcfRecordsDF(
-                spark, aggHeader, compressEachRecord = cfg.spark.compressTempRecords, deleteInputVcfs = deleteInputVcfs,
-                recordCount = vcfRecordCount, recordBytes = vcfRecordBytes
+                spark, aggHeader,
+                compressEachRecord = cfg.spark.compressTempRecords,
+                deleteInputVcfs = deleteInputVcfs,
+                recordCount = vcfRecordCount,
+                recordBytes = vcfRecordBytes
             )
             // in general vcfRecordsDF # partitions now = # files; repartition if # files is way
             // below defaultParallelism
             // this is costly, but heuristically needed to prevent OOM when we explode vcfRecordsDF
             // against overlapping variants
             if (aggHeader.filenameCallsetId.size * 3 < defaultParallelism * 2) {
-                logger.info("shuffle vcfRecordsDF from ${aggHeader.filenameCallsetId.size} to $defaultParallelism partitions =(")
+                logger.info(
+                    "shuffle vcfRecordsDF from ${aggHeader.filenameCallsetId.size}" +
+                        " to $defaultParallelism partitions =("
+                )
                 vcfRecordsDF = vcfRecordsDF.repartition(defaultParallelism)
             }
             vcfRecordsDF = vcfRecordsDF.cache()
 
             // discover variants
-            val variantsDF = discoverVariants(vcfRecordsDF, onlyCalled = cfg.discovery.minCopies > 0).cache()
+            val variantsDF = discoverVariants(
+                vcfRecordsDF,
+                onlyCalled = cfg.discovery.minCopies > 0
+            ).cache()
             val variantCount = variantsDF.count()
             logger.info("original VCF records: ${vcfRecordCount.sum().pretty()}")
             logger.info("original VCF bytes: ${vcfRecordBytes.sum().pretty()}")
@@ -164,7 +196,10 @@ fun Long.pretty(): String = java.text.NumberFormat.getIntegerInstance().format(t
 
 fun getProjectVersion(): String {
     val props = Properties()
-    props.load(Unit.javaClass.getClassLoader().getResourceAsStream("META-INF/maven/net.mlin/vcfGLuer/pom.properties"))
+    props.load(
+        Unit.javaClass.getClassLoader()
+            .getResourceAsStream("META-INF/maven/net.mlin/vcfGLuer/pom.properties")
+    )
     return props.getProperty("version")
 }
 
