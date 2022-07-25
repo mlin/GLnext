@@ -63,32 +63,25 @@ fun aggregateVcfHeaders(spark: org.apache.spark.sql.SparkSession, filenames: Lis
     data class _FilenamesWithSameHeader(val header: String, val filenames: List<String>) : Serializable
     val filenamesByHeader = jsc.parallelize(filenames)
         .mapPartitions(
-            object : FlatMapFunction<Iterator<String>, _DigestedHeader> {
-                override fun call(filenames: Iterator<String>): Iterator<_DigestedHeader> {
-                    val fs = getFileSystem(exampleFilename)
-                    return filenames.asSequence().map {
-                        val (headerDigest, header) = readVcfHeader(it, fs)
-                        _DigestedHeader(it, headerDigest, header)
-                    }.iterator()
-                }
-            })
-        .groupBy(
-            object : Function1<_DigestedHeader, String> {
-                override fun call(dh: _DigestedHeader): String {
-                    return dh.headerDigest
-                }
+            FlatMapFunction<Iterator<String>, _DigestedHeader> {
+                filenames ->
+                val fs = getFileSystem(exampleFilename)
+                filenames.asSequence().map {
+                    val (headerDigest, header) = readVcfHeader(it, fs)
+                    _DigestedHeader(it, headerDigest, header)
+                }.iterator()
             }
         )
+        .groupBy(Function1<_DigestedHeader, String> { it.headerDigest })
         .mapValues(
-            object : Function1<Iterable<_DigestedHeader>, _FilenamesWithSameHeader> {
-                override fun call(dhs: Iterable<_DigestedHeader>): _FilenamesWithSameHeader {
-                    var header: String = ""
-                    val callsetFilenames = dhs.map {
-                        header = it.header
-                        it.filename
-                    }.asSequence().toList().sorted()
-                    return _FilenamesWithSameHeader(header, callsetFilenames)
-                }
+            Function1<Iterable<_DigestedHeader>, _FilenamesWithSameHeader> {
+                dhs ->
+                var header: String = ""
+                val callsetFilenames = dhs.map {
+                    header = it.header
+                    it.filename
+                }.asSequence().toList().sorted()
+                _FilenamesWithSameHeader(header, callsetFilenames)
             }
         ).cache()
 
@@ -101,19 +94,17 @@ fun aggregateVcfHeaders(spark: org.apache.spark.sql.SparkSession, filenames: Lis
         // collect CallsetDetails (precursor)
         data class _CallsetDetailsPre(val callsetId: Int, val filenames: List<String>, val samples: List<String>) : Serializable
         val callsetsDetailsPre = filenamesByHeader.map(
-            object : Function1<scala.Tuple2<String, _FilenamesWithSameHeader>, _CallsetDetailsPre> {
-                override fun call(p: scala.Tuple2<String, _FilenamesWithSameHeader>): _CallsetDetailsPre {
-                    val callsetId = digestToCallsetId.value.get(p._1)!!
-                    // read samples from last line of header
-                    val lastHeaderLine = p._2.header.trimEnd('\n').splitToSequence("\n").last()
-                    require(lastHeaderLine.startsWith("#CHROM"))
-                    val samples = lastHeaderLine.splitToSequence("\t").drop(9).toList()
-                    require(samples.toSet().size == samples.size, {
-                        val exemplarFilename = java.io.File(filenames.first()).getName()!!
-                        "$exemplarFilename header has duplicate sample names"
-                    })
-                    return _CallsetDetailsPre(callsetId, p._2.filenames, samples)
-                }
+            Function1<scala.Tuple2<String, _FilenamesWithSameHeader>, _CallsetDetailsPre> {
+                val callsetId = digestToCallsetId.value.get(it._1)!!
+                // read samples from last line of header
+                val lastHeaderLine = it._2.header.trimEnd('\n').splitToSequence("\n").last()
+                require(lastHeaderLine.startsWith("#CHROM"))
+                val samples = lastHeaderLine.splitToSequence("\t").drop(9).toList()
+                require(samples.toSet().size == samples.size, {
+                    val exemplarFilename = java.io.File(filenames.first()).getName()!!
+                    "$exemplarFilename header has duplicate sample names"
+                })
+                _CallsetDetailsPre(callsetId, it._2.filenames, samples)
             }
         ).collect().sortedBy { it.callsetId }
         val filenameToCallsetId = callsetsDetailsPre.flatMapIndexed {
@@ -148,10 +139,8 @@ fun aggregateVcfHeaders(spark: org.apache.spark.sql.SparkSession, filenames: Lis
 
         // collect & deduplicate the contig/FILTER/INFO/FORMAT lines
         var headerLines = filenamesByHeader.values().flatMap(
-            object : FlatMapFunction<_FilenamesWithSameHeader, VcfHeaderLine> {
-                override fun call(fwsh: _FilenamesWithSameHeader): Iterator<VcfHeaderLine> {
-                    return getVcfHeaderLines(fwsh.header).iterator()
-                }
+            FlatMapFunction<_FilenamesWithSameHeader, VcfHeaderLine> {
+                getVcfHeaderLines(it.header).iterator()
             }
         ).distinct().collect()
         // There's something weird with VcfHeaderLineKind enum serialization causing

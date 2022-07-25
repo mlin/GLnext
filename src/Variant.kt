@@ -79,23 +79,23 @@ fun discoverVariants(vcfRecordsDF: Dataset<Row>, onlyCalled: Boolean = false): D
     val vcfRecordsCompressed = vcfRecordsDF.columns().contains("snappyLine")
     return vcfRecordsDF
         .flatMap(
-            object : FlatMapFunction<Row, Row> {
-                override fun call(row: Row): Iterator<Row> {
-                    val range = GRange(row.getAs<Short>("rid"), row.getAs<Int>("beg"), row.getAs<Int>("end"))
-                    val vcfRecord = VcfRecordUnpacked(
-                        VcfRecord(
-                            row.getAs<Int>("callsetId"), range,
-                            if (vcfRecordsCompressed) {
-                                String(Snappy.uncompress(row.getAs<ByteArray>("snappyLine")))
-                            } else {
-                                row.getAs<String>("line")
-                            }
-                        )
+            FlatMapFunction<Row, Row> {
+                row ->
+                val range = GRange(row.getAs<Short>("rid"), row.getAs<Int>("beg"), row.getAs<Int>("end"))
+                val vcfRecord = VcfRecordUnpacked(
+                    VcfRecord(
+                        row.getAs<Int>("callsetId"), range,
+                        if (vcfRecordsCompressed) {
+                            String(Snappy.uncompress(row.getAs<ByteArray>("snappyLine")))
+                        } else {
+                            row.getAs<String>("line")
+                        }
                     )
-                    val variants = vcfRecord.altVariants.copyOf()
-                    if (!onlyCalled) {
-                        return variants.filterNotNull().map { it.toRow() }.iterator()
-                    }
+                )
+                val variants = vcfRecord.altVariants.copyOf()
+                if (!onlyCalled) {
+                    variants.filterNotNull().map { it.toRow() }.iterator()
+                } else {
                     val copies = variants.map { 0 }.toTypedArray()
                     for (sampleIndex in 0 until vcfRecord.sampleCount) {
                         val gt = vcfRecord.getDiploidGenotype(sampleIndex)
@@ -106,7 +106,7 @@ fun discoverVariants(vcfRecordsDF: Dataset<Row>, onlyCalled: Boolean = false): D
                             copies[gt.allele2 - 1]++
                         }
                     }
-                    return variants.filterIndexed { i, _ -> copies[i] > 0 }.filterNotNull().map { it.toRow() }.iterator()
+                    variants.filterIndexed { i, _ -> copies[i] > 0 }.filterNotNull().map { it.toRow() }.iterator()
                 }
             },
             VariantRowEncoder()

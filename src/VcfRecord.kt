@@ -95,27 +95,27 @@ fun readVcfRecordsDF(
     // flatMap each filename+callsetId onto all the records in the file
     return spark.createDataFrame(
         filenamesWithCallsetIds.flatMap(
-            object : FlatMapFunction<Pair<String, Int>, Row> {
-                override fun call(p: Pair<String, Int>): Iterator<Row> {
-                    val (filename, callsetId) = p
-                    return sequence {
-                        val fs = getFileSystem(filename)
-                        vcfInputStream(filename, fs).bufferedReader().useLines {
-                            it.forEach {
-                                line ->
-                                if (line.length > 0 && line.get(0) != '#') {
-                                    recordCount?.let { it.add(1L) }
-                                    recordBytes?.let { it.add(line.length + 1L) }
-                                    yield(parseVcfRecord(contigId, callsetId, line).toRow(compressEachRecord))
-                                }
+            FlatMapFunction<Pair<String, Int>, Row> {
+                p ->
+                val (filename, callsetId) = p
+                sequence {
+                    val fs = getFileSystem(filename)
+                    vcfInputStream(filename, fs).bufferedReader().useLines {
+                        it.forEach {
+                            line ->
+                            if (line.length > 0 && line.get(0) != '#') {
+                                recordCount?.let { it.add(1L) }
+                                recordBytes?.let { it.add(line.length + 1L) }
+                                yield(parseVcfRecord(contigId, callsetId, line).toRow(compressEachRecord))
                             }
                         }
-                        if (deleteInputVcfs) {
-                            fs.delete(Path(filename), false)
-                        }
-                    }.iterator()
-                }
-            }),
+                    }
+                    if (deleteInputVcfs) {
+                        fs.delete(Path(filename), false)
+                    }
+                }.iterator()
+            }
+        ),
         VcfRecordStructType(compressEachRecord)
     )
 }

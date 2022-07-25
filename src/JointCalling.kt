@@ -94,12 +94,11 @@ fun jointCall(
     return pvcfHeader to pvcfRows
         .toJavaRDD()
         .sortBy(
-            object : Function<Row, Variant> {
-                override fun call(row: Row): Variant {
-                    check(row.length() == 6)
-                    val itArray = IntRange(0, 4).map { row.get(it) }.toTypedArray()
-                    return Variant(GenericRowWithSchema(itArray, pvcfRowSchema))
-                }
+            Function<Row, Variant> {
+                row ->
+                check(row.length() == 6)
+                val itArray = IntRange(0, 4).map { row.get(it) }.toTypedArray()
+                Variant(GenericRowWithSchema(itArray, pvcfRowSchema))
             },
             true,
             // Coalesce to fewer partitions now that the data size has been greatly reduced,
@@ -109,13 +108,12 @@ fun jointCall(
             // control of the output partitioning.
             jsc.defaultParallelism().toDouble().pow(2.0 / 3.0).toInt()
         ).map(
-            object : Function<Row, String> {
-                override fun call(it: Row): String {
-                    check(it.length() == 6)
-                    val ans = String(Snappy.uncompress(it.getAs<ByteArray>(5)))
-                    pvcfRecordBytes?.let { it.add(ans.length + 1L) }
-                    return ans
-                }
+            Function<Row, String> {
+                row ->
+                check(row.length() == 6)
+                val ans = String(Snappy.uncompress(row.getAs<ByteArray>(5)))
+                pvcfRecordBytes?.let { it.add(ans.length + 1L) }
+                ans
             }
         )
 }
@@ -132,32 +130,27 @@ class VariantRanges : Serializable {
         val treesByRidPre =
             // group distinct variant ranges by rid
             variantsDF.select("rid", "beg", "end").distinct().groupByKey(
-                object : MapFunction<Row, Short> {
-                    override fun call(row: Row): Short {
-                        return row.getShort(0)
-                    }
-                },
+                MapFunction<Row, Short> { row -> row.getShort(0) },
                 Encoders.SHORT()
             ).mapGroups(
                 // build interval tree from each such group
-                object : MapGroupsFunction<Short, Row, Row> {
-                    override fun call(rid: Short, ranges: Iterator<Row>): Row {
-                        val sortedRanges = ranges.asSequence().map {
-                            check(it.getShort(0) == rid)
-                            val beg = it.getInt(1)
-                            val end = it.getInt(2)
-                            beg to end
-                        }.toList().sortedWith(compareBy({ it.first }, { it.second }))
-                        check(!sortedRanges.isEmpty())
-                        val builder = IntegerIntervalTree.Builder()
-                        sortedRanges.forEach {
-                            (beg, end) ->
-                            // add 1 to end b/c IntegerIntervalTree uses the half-open convention
-                            builder.add(beg, end + 1)
-                        }
-                        check(builder.isSorted())
-                        return RowFactory.create(rid, builder.build().serializeToByteArray())
+                MapGroupsFunction<Short, Row, Row> {
+                    rid, ranges ->
+                    val sortedRanges = ranges.asSequence().map {
+                        check(it.getShort(0) == rid)
+                        val beg = it.getInt(1)
+                        val end = it.getInt(2)
+                        beg to end
+                    }.toList().sortedWith(compareBy({ it.first }, { it.second }))
+                    check(!sortedRanges.isEmpty())
+                    val builder = IntegerIntervalTree.Builder()
+                    sortedRanges.forEach {
+                        (beg, end) ->
+                        // add 1 to end b/c IntegerIntervalTree uses the half-open convention
+                        builder.add(beg, end + 1)
                     }
+                    check(builder.isSorted())
+                    RowFactory.create(rid, builder.build().serializeToByteArray())
                 },
                 RowEncoder.apply(
                     StructType()
@@ -211,19 +204,17 @@ class VariantRanges : Serializable {
         // register functions using them
         spark.udf().register(
             "variantRangeId",
-            object : UDF3<Short, Int, Int, Long> {
-                override fun call(rid: Short?, beg: Int?, end: Int?): Long {
-                    return variantRangesB.value.variantRangeId(rid!!, beg!!, end!!)
-                }
+            UDF3<Short, Int, Int, Long> {
+                rid, beg, end ->
+                variantRangesB.value.variantRangeId(rid, beg, end)
             },
             DataTypes.LongType
         )
         spark.udf().register(
             "overlappingVariantRangeIds",
-            object : UDF3<Short, Int, Int, LongArray> {
-                override fun call(rid: Short?, beg: Int?, end: Int?): LongArray {
-                    return variantRangesB.value.overlappingVariantRangeIds(rid!!, beg!!, end!!).toLongArray()
-                }
+            UDF3<Short, Int, Int, LongArray> {
+                rid, beg, end ->
+                variantRangesB.value.overlappingVariantRangeIds(rid, beg, end).toLongArray()
             },
             ArrayType(DataTypes.LongType, false)
         )
@@ -262,11 +253,7 @@ fun groupVcfRecordsByOverlappingVariantId(variantsDF: Dataset<Row>, vcfRecordsDF
         .join(vridRecords, col("var.vrid") eq col("vcf.vrid"))
         // group by variant ID
         .groupByKey(
-            object : MapFunction<Row, Long> {
-                override fun call(row: Row): Long {
-                    return row.getAs<Long>("vid")
-                }
-            },
+            MapFunction<Row, Long> { row -> row.getAs<Long>("vid") },
             Encoders.LONG()
         )
 }

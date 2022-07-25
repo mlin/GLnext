@@ -30,17 +30,16 @@ fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeade
     // Read the first VcfRecord GRange from each part
     val aggHeaderB = jsc.broadcast(aggHeader)
     val partsAndFirstRange = jsc.parallelize(partBasenames, parallelism).mapPartitions(
-        object : FlatMapFunction<Iterator<String>, Pair<String, GRange>> {
-            override fun call(basenames: Iterator<String>): Iterator<Pair<String, GRange>> {
-                val fs = getFileSystem(pvcfDir)
-                return basenames.asSequence().map {
-                    basename ->
-                    vcfInputStream("$pvcfDir/$basename", fs).bufferedReader().useLines {
-                        val rec = parseVcfRecord(aggHeaderB.value.contigId, -1, it.first())
-                        basename to rec.range
-                    }
-                }.iterator()
-            }
+        FlatMapFunction<Iterator<String>, Pair<String, GRange>> {
+            basenames ->
+            val fs = getFileSystem(pvcfDir)
+            basenames.asSequence().map {
+                basename ->
+                vcfInputStream("$pvcfDir/$basename", fs).bufferedReader().useLines {
+                    val rec = parseVcfRecord(aggHeaderB.value.contigId, -1, it.first())
+                    basename to rec.range
+                }
+            }.iterator()
         }
     ).collect().sortedBy { it.first }.toTypedArray()
 
@@ -67,10 +66,8 @@ fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeade
             logger.info("  $it")
         }
         splitParts = jsc.parallelize(partsToSplit).flatMap(
-            object : FlatMapFunction<String, Triple<Short, Int, String>> {
-                override fun call(partBasename: String): Iterator<Triple<Short, Int, String>> {
-                    return splitByChr(pvcfDir, partBasename, aggHeaderB.value).iterator()
-                }
+            FlatMapFunction<String, Triple<Short, Int, String>> {
+                splitByChr(pvcfDir, it, aggHeaderB.value).iterator()
             }
         ).collect()
     }
@@ -88,22 +85,20 @@ fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeade
 
     // Rename all the parts
     val newNames = jsc.parallelize(rangeParts, parallelism).mapPartitions(
-        object : FlatMapFunction<Iterator<Pair<Int, Triple<Short, Pair<Int, Int>, String>>>, String> {
-            override fun call(parts: Iterator<Pair<Int, Triple<Short, Pair<Int, Int>, String>>>): Iterator<String> {
-                val fs = getFileSystem(pvcfDir)
-                return parts.asSequence().map {
-                    (i, t) ->
-                    val (rid, pos, basename) = t
-                    val (posBeg, posEnd) = pos
-                    val chrom = aggHeaderB.value.contigs[rid.toInt()]
-                    val iPad = (i + 1).toString().padStart(finalPartCountDigits, '0')
-                    val cPad = finalPartCount.toString().padStart(finalPartCountDigits, '0')
-                    val posEndStr = if (posEnd >= 0) posEnd.toString() else "end"
-                    val basename2 = "part-${iPad}of$cPad-$chrom-$posBeg-$posEndStr.bgz"
-                    fs.rename(Path(pvcfDir, basename), Path(pvcfDir, basename2))
-                    basename2
-                }.iterator()
-            }
+        FlatMapFunction<Iterator<Pair<Int, Triple<Short, Pair<Int, Int>, String>>>, String> {
+            val fs = getFileSystem(pvcfDir)
+            it.asSequence().map {
+                (i, t) ->
+                val (rid, pos, basename) = t
+                val (posBeg, posEnd) = pos
+                val chrom = aggHeaderB.value.contigs[rid.toInt()]
+                val iPad = (i + 1).toString().padStart(finalPartCountDigits, '0')
+                val cPad = finalPartCount.toString().padStart(finalPartCountDigits, '0')
+                val posEndStr = if (posEnd >= 0) posEnd.toString() else "end"
+                val basename2 = "part-${iPad}of$cPad-$chrom-$posBeg-$posEndStr.bgz"
+                fs.rename(Path(pvcfDir, basename), Path(pvcfDir, basename2))
+                basename2
+            }.iterator()
         }
     ).collect()
     check(newNames.size == finalPartCount)
