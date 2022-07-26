@@ -82,10 +82,12 @@ fun parseVcfRecordInfo(info: String): Map<String, String> {
 fun readVcfRecordsDF(
     spark: SparkSession,
     aggHeader: AggVcfHeader,
+    filterRanges: org.apache.spark.broadcast.Broadcast<BedRanges>?,
     compressEachRecord: Boolean = false,
     deleteInputVcfs: Boolean = false,
     recordCount: LongAccumulator? = null,
-    recordBytes: LongAccumulator? = null
+    recordBytes: LongAccumulator? = null,
+    unfilteredRecordCount: LongAccumulator? = null,
 ): Dataset<Row> {
     val jsc = JavaSparkContext(spark.sparkContext)
 
@@ -100,16 +102,20 @@ fun readVcfRecordsDF(
                 val (filename, callsetId) = p
                 sequence {
                     val fs = getFileSystem(filename)
-                    vcfInputStream(filename, fs).bufferedReader().useLines {
+                    openMaybeGzFile(filename, fs).bufferedReader().useLines {
                         it.forEach {
                             line ->
                             if (line.length > 0 && line.get(0) != '#') {
-                                recordCount?.let { it.add(1L) }
-                                recordBytes?.let { it.add(line.length + 1L) }
-                                yield(
-                                    parseVcfRecord(contigId, callsetId, line)
-                                        .toRow(compressEachRecord)
-                                )
+                                val rec = parseVcfRecord(contigId, callsetId, line)
+                                unfilteredRecordCount?.add(1L)
+                                if (filterRanges?.let {
+                                    it.value!!.hasOverlapping(rec.range)
+                                } ?: true
+                                ) {
+                                    recordCount?.let { it.add(1L) }
+                                    recordBytes?.let { it.add(line.length + 1L) }
+                                    yield(rec.toRow(compressEachRecord))
+                                }
                             }
                         }
                     }

@@ -131,7 +131,7 @@ class VariantRanges : Serializable {
         val treesByRidPre =
             // group variant ranges by rid
             variantsDF.select("rid", "beg", "end", "vid").groupByKey(
-                MapFunction<Row, Short> { row -> row.getShort(0) },
+                MapFunction<Row, Short> { it.getShort(0) },
                 Encoders.SHORT()
             ).mapGroups(
                 // build interval tree from each such group
@@ -153,7 +153,7 @@ class VariantRanges : Serializable {
                         // add 1 to end b/c IntegerIntervalTree uses the half-open convention
                         val id = builder.add(beg, end + 1)
                         check(i == id)
-                        // remember vid for this tree ID
+                        // remember vid for this IntegerIntervalTree insert ID
                         vids[i] = vid
                     }
                     check(builder.isSorted())
@@ -209,9 +209,9 @@ class VariantRanges : Serializable {
         return ans.toLongArray()
     }
 
-    // install UDF for overlappingVariantIds(), depending on a broadcast of this
+    // install UDF for overlappingVariantIds(), internally using a broadcast of this
     fun deploy(spark: SparkSession): Broadcast<VariantRanges> {
-        // broadcast interval trees to cluster (~12 bytes per distinct variant range)
+        // broadcast interval trees & vids to cluster (~20 bytes per variant)
         val variantRangesB = JavaSparkContext(spark.sparkContext).broadcast(this)
         // register UDF
         spark.udf().register(
@@ -232,7 +232,7 @@ class VariantRanges : Serializable {
  *                             |-- callsetId: integer (nullable = true)
  *                             |-- callsetLines: array (nullable = false)
  *                             |    |-- element: string (containsNull = false)
- * nb: the callsetLines are unsorted
+ *                             nb: the callsetLines are unsorted
  *
  * @return result rows produced by callback
  */
@@ -257,13 +257,12 @@ fun joinVariantsAndVcfRecords(
                 collect_list("line").alias("callsetLines")
             }
         )
-        // regroup by variant ID.
-        // TODO: is there a way to elide this second shuffle? (in view of the cogrouping plan)
+        // regroup by variant ID. TODO: is there a way to combine the two shuffles?
         .groupByKey(MapFunction<Row, Long> { it.getAs<Long>("vid") }, Encoders.LONG())
 
     return variantsDF
         // 'join' variantDF to groupedRecords by vid; using cogroup lets us dock the variant row
-        // without having it exploded within groupedRecords
+        // to groupedRecords without having had to explode+materialize it before grouping
         .groupByKey(MapFunction<Row, Long> { it.getAs<Long>("vid") }, Encoders.LONG())
         .cogroup(
             groupedRecords,

@@ -7,9 +7,7 @@ import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.sksamuel.hoplite.*
 import java.io.File
-import java.net.URI
 import java.util.Properties
-import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
 import org.apache.log4j.Level
 import org.apache.log4j.LogManager
@@ -34,6 +32,8 @@ class CLI : CliktCommand() {
     option(help = "Input files are manifest(s) containing one VCF filename per line")
         .flag(default = false)
     val config: String by option(help = "Configuration preset name").default("DeepVariant")
+    val filterBed: String? by
+    option(help = "only call variants within a region from this BED file")
     val deleteInputVcfs by
     option(help = "Delete input VCF files after loading them (DANGER!)").flag(default = false)
 
@@ -121,19 +121,28 @@ class CLI : CliktCommand() {
             }
             logger.info("contigs: ${aggHeader.contigId.size.pretty()}")
 
+            val filterRangesB = filterBed?.let {
+                val filterRanges = BedRanges(aggHeader.contigId, openMaybeGzFile(it))
+                logger.info("BED filter ranges: ${filterRanges.size}")
+                org.apache.spark.api.java.JavaSparkContext(spark.sparkContext)
+                    .broadcast(filterRanges)
+            }
+
             // accumulators
-            val vcfRecordCount = spark.sparkContext.longAccumulator("original VCF records")
-            val vcfRecordBytes = spark.sparkContext.longAccumulator("original VCF bytes)")
+            val allRecordCount = spark.sparkContext.longAccumulator("unfiltered VCF records")
+            val vcfRecordCount = spark.sparkContext.longAccumulator("input VCF records")
+            val vcfRecordBytes = spark.sparkContext.longAccumulator("input VCF bytes)")
             val pvcfRecordCount = spark.sparkContext.longAccumulator("pVCF records")
             val pvcfRecordBytes = spark.sparkContext.longAccumulator("pVCF bytes")
 
             // load all VCF records
             var vcfRecordsDF = readVcfRecordsDF(
-                spark, aggHeader,
+                spark, aggHeader, filterRangesB,
                 compressEachRecord = cfg.spark.compressTempRecords,
                 deleteInputVcfs = deleteInputVcfs,
                 recordCount = vcfRecordCount,
-                recordBytes = vcfRecordBytes
+                recordBytes = vcfRecordBytes,
+                unfilteredRecordCount = allRecordCount,
             )
             // in general vcfRecordsDF # partitions now = # files; repartition if # files is way
             // below defaultParallelism
@@ -150,12 +159,16 @@ class CLI : CliktCommand() {
 
             // discover variants
             val variantsDF = discoverVariants(
-                vcfRecordsDF,
+                vcfRecordsDF, filterRangesB,
                 onlyCalled = cfg.discovery.minCopies > 0
             ).cache()
             val variantCount = variantsDF.count()
-            logger.info("original VCF records: ${vcfRecordCount.sum().pretty()}")
-            logger.info("original VCF bytes: ${vcfRecordBytes.sum().pretty()}")
+            filterRangesB?.let {
+                it.unpersist()
+                logger.info("unfiltered VCF records: ${allRecordCount.sum().pretty()}")
+            }
+            logger.info("input VCF records: ${vcfRecordCount.sum().pretty()}")
+            logger.info("input VCF bytes: ${vcfRecordBytes.sum().pretty()}")
             logger.info("joint variants: $variantCount")
 
             // perform joint-calling
@@ -171,9 +184,8 @@ class CLI : CliktCommand() {
 
             // write pVCF records (in parts)
             pvcfLines.saveAsTextFile(pvcfDir, BGZFCodec::class.java)
-            // pvcfLines.write().option("compression", BGZFCodecClassName()).text(pvcfDir)
-            variantsDF.unpersist()
-            vcfRecordsDF.unpersist()
+            // variantsDF.unpersist()
+            // vcfRecordsDF.unpersist()
 
             logger.info("pVCF bytes: ${pvcfRecordBytes.sum().pretty()}")
             check(pvcfRecordCount.sum() == variantCount) // checks Spark query plan
@@ -221,13 +233,4 @@ fun writeHeaderAndEOF(headerText: String, dir: String) {
         fs.rename(Path(dir, ".wip.zzEOF.bgz"), Path(dir, "zzEOF.bgz")),
         { "unable to finalize $dir/zzEOF.bgz" }
     )
-}
-
-fun getFileSystem(path: String): FileSystem {
-    val normPath = if (path.startsWith("hdfs:") || path.startsWith("file://")) {
-        path
-    } else {
-        "file://" + path
-    }
-    return FileSystem.get(URI(normPath), org.apache.spark.deploy.SparkHadoopUtil.get().conf())
 }

@@ -7,7 +7,6 @@
  */
 import java.io.Serializable
 import org.apache.hadoop.fs.FileSystem
-import org.apache.hadoop.fs.Path
 import org.apache.log4j.LogManager
 import org.apache.spark.api.java.JavaSparkContext
 import org.apache.spark.api.java.function.*
@@ -227,7 +226,7 @@ fun validateVcfHeaderLines(headerLines: List<VcfHeaderLine>):
  * is SHA-256 hex.
  */
 fun readVcfHeader(filename: String, fs: FileSystem? = null): Pair<String, String> {
-    val header = vcfInputStream(filename, fs).bufferedReader().useLines {
+    val header = openMaybeGzFile(filename, fs).bufferedReader().useLines {
         return@useLines it.takeWhile { it.length > 0 && it.get(0) == '#' }
             .asSequence()
             .joinToString(separator = "\n", postfix = "\n")
@@ -241,18 +240,6 @@ fun readVcfHeader(filename: String, fs: FileSystem? = null): Pair<String, String
         .map { "%02x".format(it) }
         .joinToString("")
     return headerDigest to header
-}
-
-/**
- * Open file InputStream, gunzipping if applicable
- */
-fun vcfInputStream(filename: String, fs: FileSystem? = null): java.io.InputStream {
-    val fs2 = if (fs != null) { fs } else { getFileSystem(filename) }
-    var instream: java.io.InputStream = fs2.open(Path(filename))
-    if (filename.endsWith(".gz") || filename.endsWith(".bgz")) {
-        instream = java.util.zip.GZIPInputStream(instream)
-    }
-    return instream
 }
 
 /**

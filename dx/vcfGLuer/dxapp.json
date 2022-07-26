@@ -9,9 +9,6 @@
       "name": "vcf_manifest",
       "class": "file",
       "optional": false,
-      "patterns": [
-        "*.vcf.gz"
-      ],
       "help": ""
     },
     {
@@ -26,6 +23,13 @@
       "default": "DeepVariant",
       "choices": ["DeepVariant", "GLIMPSE"],
       "help": "vcfGLuer configuration preset"
+    },
+    {
+      "name": "filter_bed",
+      "class": "file",
+      "optional": true,
+      "patterns": ["*.bed", "*.bed.gz"],
+      "help": "only call variants within a region from this BED file"
     },
     {
       "name": "java_options",

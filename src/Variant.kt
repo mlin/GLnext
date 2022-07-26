@@ -80,7 +80,11 @@ fun Variant.normalize(): Variant {
  * Harvest all distinct Variants from VcfRecord DataFrame
  * onlyCalled: only include variants with at least one copy called in a sample GT
  */
-fun discoverVariants(vcfRecordsDF: Dataset<Row>, onlyCalled: Boolean = false): Dataset<Row> {
+fun discoverVariants(
+    vcfRecordsDF: Dataset<Row>,
+    filterRanges: org.apache.spark.broadcast.Broadcast<BedRanges>?,
+    onlyCalled: Boolean = false
+): Dataset<Row> {
     val vcfRecordsCompressed = vcfRecordsDF.columns().contains("snappyLine")
     return vcfRecordsDF
         .flatMap(
@@ -103,7 +107,11 @@ fun discoverVariants(vcfRecordsDF: Dataset<Row>, onlyCalled: Boolean = false): D
                 )
                 val variants = vcfRecord.altVariants.copyOf()
                 if (!onlyCalled) {
-                    variants.filterNotNull().map { it.toRow() }.iterator()
+                    variants.filterNotNull()
+                        .filter {
+                            vt ->
+                            filterRanges?.let { it.value!!.hasContaining(vt.range) } ?: true
+                        }.map { it.toRow() }.iterator()
                 } else {
                     val copies = variants.map { 0 }.toTypedArray()
                     for (sampleIndex in 0 until vcfRecord.sampleCount) {
@@ -115,8 +123,12 @@ fun discoverVariants(vcfRecordsDF: Dataset<Row>, onlyCalled: Boolean = false): D
                             copies[gt.allele2 - 1]++
                         }
                     }
-                    variants.filterIndexed { i, _ -> copies[i] > 0 }.filterNotNull()
-                        .map { it.toRow() }.iterator()
+                    variants.filterIndexed { i, _ -> copies[i] > 0 }
+                        .filterNotNull()
+                        .filter {
+                            vt ->
+                            filterRanges?.let { it.value!!.hasContaining(vt.range) } ?: true
+                        }.map { it.toRow() }.iterator()
                 }
             },
             VariantRowEncoder()
