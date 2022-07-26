@@ -102,7 +102,7 @@ fun readVcfRecordsDF(
                 val (filename, callsetId) = p
                 sequence {
                     val fs = getFileSystem(filename)
-                    openMaybeGzFile(filename, fs).bufferedReader().useLines {
+                    fileReaderDetectGz(filename, fs).useLines {
                         it.forEach {
                             line ->
                             if (line.length > 0 && line.get(0) != '#') {

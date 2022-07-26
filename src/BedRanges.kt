@@ -7,10 +7,10 @@ class BedRanges : java.io.Serializable {
     private val iit: Array<IntegerIntervalTree>
     val count: Int
 
-    constructor(contigId: Map<String, Short>, bed: java.io.InputStream) {
+    constructor(contigId: Map<String, Short>, bed: java.io.Reader) {
         val ranges = Array<MutableList<Pair<Int, Int>>>(contigId.size) { mutableListOf() }
 
-        bed.bufferedReader().useLines {
+        bed.useLines {
             lines ->
             lines.forEach {
                 val tsv = it.splitToSequence('\t').take(3).toList().toTypedArray()
@@ -25,8 +25,8 @@ class BedRanges : java.io.Serializable {
         }
 
         var counter = 0
-        iit = ranges.mapIndexed {
-            rid, ridRanges ->
+        iit = ranges.map {
+            ridRanges ->
             val builder = IntegerIntervalTree.Builder()
             ridRanges
                 .sortedWith(compareBy({ it.first }, { it.second }))
@@ -54,8 +54,9 @@ class BedRanges : java.io.Serializable {
             if (it.beg < query.beg && it.end >= query.end) {
                 ans = true
                 false
+            } else {
+                true
             }
-            true
         })
         return ans
     }

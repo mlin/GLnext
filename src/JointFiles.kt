@@ -35,7 +35,7 @@ fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeade
             val fs = getFileSystem(pvcfDir)
             basenames.asSequence().map {
                 basename ->
-                openMaybeGzFile("$pvcfDir/$basename", fs).bufferedReader().useLines {
+                fileReaderDetectGz("$pvcfDir/$basename", fs).useLines {
                     val rec = parseVcfRecord(aggHeaderB.value.contigId, -1, it.first())
                     basename to rec.range
                 }
@@ -128,7 +128,7 @@ fun splitByChr(
     val ans: MutableList<Triple<Short, Int, String>> = mutableListOf()
     var rid: Short = -1
 
-    openMaybeGzFile("$pvcfDir/$partBasename", fs).bufferedReader().useLines {
+    fileReaderDetectGz("$pvcfDir/$partBasename", fs).useLines {
         var writer: OutputStreamWriter? = null
         for (line in it) {
             val rec = parseVcfRecord(aggHeader.contigId, -1, line)

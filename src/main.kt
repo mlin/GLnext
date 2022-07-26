@@ -122,7 +122,7 @@ class CLI : CliktCommand() {
             logger.info("contigs: ${aggHeader.contigId.size.pretty()}")
 
             val filterRangesB = filterBed?.let {
-                val filterRanges = BedRanges(aggHeader.contigId, openMaybeGzFile(it))
+                val filterRanges = BedRanges(aggHeader.contigId, fileReaderDetectGz(it))
                 logger.info("BED filter ranges: ${filterRanges.size}")
                 org.apache.spark.api.java.JavaSparkContext(spark.sparkContext)
                     .broadcast(filterRanges)

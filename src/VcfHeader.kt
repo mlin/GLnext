@@ -77,9 +77,9 @@ fun aggregateVcfHeaders(
     val filenamesByHeader = jsc.parallelize(filenames)
         .mapPartitions(
             FlatMapFunction<Iterator<String>, _DigestedHeader> {
-                filenames ->
+                filenamesPart ->
                 val fs = getFileSystem(exampleFilename)
-                filenames.asSequence().map {
+                filenamesPart.asSequence().map {
                     val (headerDigest, header) = readVcfHeader(it, fs)
                     _DigestedHeader(it, headerDigest, header)
                 }.iterator()
@@ -226,7 +226,7 @@ fun validateVcfHeaderLines(headerLines: List<VcfHeaderLine>):
  * is SHA-256 hex.
  */
 fun readVcfHeader(filename: String, fs: FileSystem? = null): Pair<String, String> {
-    val header = openMaybeGzFile(filename, fs).bufferedReader().useLines {
+    val header = fileReaderDetectGz(filename, fs).useLines {
         return@useLines it.takeWhile { it.length > 0 && it.get(0) == '#' }
             .asSequence()
             .joinToString(separator = "\n", postfix = "\n")

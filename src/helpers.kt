@@ -33,14 +33,18 @@ fun getFileSystem(path: String): FileSystem {
 }
 
 /**
- * Open file InputStream, gunzipping if applicable
+ * Open reader for file, gunzipping if applicable
  */
-fun openMaybeGzFile(filename: String, fs: FileSystem? = null): InputStream {
+fun fileReaderDetectGz(
+    filename: String,
+    fs: FileSystem? = null,
+    bufferSize: Int = 65536
+): Reader {
     val fs2 = if (fs != null) { fs } else { getFileSystem(filename) }
     var instream: InputStream = fs2.open(Path(filename))
     // TODO: decide based on magic bytes instead of filename
     if (filename.endsWith(".gz") || filename.endsWith(".bgz")) {
-        instream = java.util.zip.GZIPInputStream(instream)
+        instream = java.util.zip.GZIPInputStream(instream, bufferSize)
     }
-    return instream
+    return instream.reader().buffered(bufferSize)
 }
