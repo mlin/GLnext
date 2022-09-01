@@ -35,7 +35,7 @@ main() {
     # -XX:+UseLargePages \
     all_java_options="\
     -Xss16m \
-    -XX:+UseParallelGC -XX:GCTimeRatio=19 \
+    -XX:+UseParallelGC -XX:GCTimeRatio=19 -XX:+AlwaysPreTouch \
     -XX:+PrintFlagsFinal \
     $java_options"
     filter_bed_arg=""
@@ -45,7 +45,10 @@ main() {
     dx-spark-submit --log-level WARN --collect-logs \
         --conf spark.driver.defaultJavaOptions="$all_java_options" \
         --conf spark.executor.defaultJavaOptions="$all_java_options" \
+        --conf spark.executor.memory=48g \
         --conf spark.driver.maxResultSize=0 \
+        --conf spark.task.maxFailures=2 \
+        --conf spark.stage.maxConsecutiveAttempts=2 \
         --conf spark.default.parallelism=$spark_default_parallelism \
         --conf spark.sql.shuffle.partitions=$spark_default_parallelism \
         --conf spark.sql.adaptive.enabled=true \
