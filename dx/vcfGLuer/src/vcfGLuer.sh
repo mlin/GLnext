@@ -5,6 +5,9 @@ export LC_ALL=C
 main() {
     set -euxo pipefail
 
+    cat $PRE_BOOTSTRAP_LOG || echo "no PRE_BOOTSTRAP_LOG"
+    java -version
+
     dx-download-all-inputs
 
     # copy input gVCFs from dnanexus to hdfs
@@ -34,8 +37,7 @@ main() {
     # -XX:+UseG1GC -XX:MaxGCPauseMillis=500 -XX:ParallelGCThreads=8 -XX:ConcGCThreads=8 -XX:InitiatingHeapOccupancyPercent=35 \
     # -XX:+UseLargePages \
     all_java_options="\
-    -Xss16m \
-    -XX:+UseParallelGC -XX:GCTimeRatio=9 -XX:+AlwaysPreTouch \
+    -Xss16m -XX:+AlwaysPreTouch \
     -XX:+PrintFlagsFinal \
     $java_options"
     filter_bed_arg=""

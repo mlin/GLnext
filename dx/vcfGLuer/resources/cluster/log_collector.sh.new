@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+
+# Log Collector works along with clusterlog_svc.py.
+# The following describes how log collector works.
+#   - clusterlog_svc is started during bootstrapping on master node.
+#   - log_collector is started on slave node during bootstrapping. On slave nodes,
+#     log_collector will periodically get status of the job from master. If the job is complete
+#     it will start collecting logs from slave and copy it to hdfs under /clusterlogs/node<nodeid>
+#     Once its completed it will inform master that its done collecting logs.
+#   - log_collector is start on master node if log collection needs to be done. Once started
+#     it will set the status file which will initiate the log collection on slaves. log_collector
+#     on master will periodically (MAX_ITERATIONS) check the log collection status from all the slave nodes.
+#     If all slaves have collected their logs, master will copy its logs. It creates <jobid>-clusterlogs.tar.gz
+#     file and copies the file under the folder specified when starting log_collector.
+
+set -e -o pipefail
+
+. /cluster/dx-cluster.environment
+. /home/dnanexus/environment
+
+SVC_PORT=49000
+SVC_HOST=master
+STATUS_FILE=/cluster/dnax/service/status
+LOG_STATUS_URL=http://$SVC_HOST:$SVC_PORT/slaves/logstatus
+STATUS_URL=http://$SVC_HOST:$SVC_PORT/status
+MAX_ITERATIONS=100
+
+collect_logs_to_hdfs()
+{
+    if [ -z "$DX_CLUSTER_MASTER_IP" ]; then
+      NODE_LOG_FOLDER=/clusterlogs/master
+    else
+      NODE_LOG_FOLDER=/clusterlogs/node$DX_CLUSTER_NODE_ID
+    fi
+    set -x
+     # Make cluster logs folder in hdfs
+    $HADOOP_HOME/bin/hdfs dfs -mkdir -p $NODE_LOG_FOLDER/hadoop/
+    $HADOOP_HOME/bin/hdfs dfs -mkdir -p $NODE_LOG_FOLDER/spark/
+
+    # Copy the cluster environment file
+    $HADOOP_HOME/bin/hdfs dfs -copyFromLocal -f /cluster/dx-cluster.environment $NODE_LOG_FOLDER/
+    touch $BOOTSTRAP_LOG
+    $HADOOP_HOME/bin/hdfs dfs -copyFromLocal -f $BOOTSTRAP_LOG $NODE_LOG_FOLDER/
+    # Copy the dnanexus logs
+    error_file=/home/dnanexus/dx_stderr
+    if [ -e "$error_file" ]; then
+        echo "Copying $error_file"
+        $HADOOP_HOME/bin/hdfs dfs -copyFromLocal -f ${error_file} $NODE_LOG_FOLDER/
+    fi
+    out_file=/home/dnanexus/dx_stdout
+    if [ -e "$out_file" ]; then
+        echo "Copying $out_file"
+        $HADOOP_HOME/bin/hdfs dfs -copyFromLocal -f ${out_file} $NODE_LOG_FOLDER/
+    fi
+
+    find $SPARK_WORK_DIR -type f -not \( -name 'stderr' -or -name 'stdout' -or -name 'hs_err_pid' \) -delete
+
+    # Copy the logs
+    $HADOOP_HOME/bin/hdfs dfs -copyFromLocal -f $SPARK_LOG_DIR $NODE_LOG_FOLDER/spark/
+    $HADOOP_HOME/bin/hdfs dfs -copyFromLocal -f $SPARK_WORK_DIR $NODE_LOG_FOLDER/spark/
+    $HADOOP_HOME/bin/hdfs dfs -copyFromLocal -f $HADOOP_LOG_DIR $NODE_LOG_FOLDER/hadoop/
+    set +x
+}
+
+collect_master()
+{
+    # Create the output directory
+    mkdir -p $1
+
+    touch $STATUS_FILE
+
+    # Set the status file
+    echo "Log collection initiated"
+    echo 1 > $STATUS_FILE
+
+    # Get the number of slave nodes
+    instance_count="$(jq .clusterSpec.initialInstanceCount --raw-output $HOME/dnanexus-job.json)"
+    no_of_slaves=$((instance_count-1))
+
+    log_count=0
+    iterations=0
+    while [ $log_count -lt $no_of_slaves ]  && [ $iterations -lt $MAX_ITERATIONS ]
+    do
+        log_count=$(curl --silent --url $LOG_STATUS_URL)
+        echo "[LOG-COLLECTOR]: Collected logs from ($log_count/$no_of_slaves) slave nodes."
+        if [ $log_count -lt $no_of_slaves ];then
+            sleep 2
+        fi
+        iterations=$(($iterations+1))
+    done
+
+    echo "All slave logs collected to hdfs, now copying master logs to hdfs"
+    collect_logs_to_hdfs
+
+    echo "Copy all logs to output folder and create $DX_JOB_ID-clusterlogs.tar.gz"
+    rm -rf /tmp/clusterlogs
+    /cluster/hadoop/bin/hdfs dfs -copyToLocal /clusterlogs/ /tmp/
+    # copy event logs
+    /cluster/hadoop/bin/hdfs dfs -copyToLocal /eventlogs /tmp/clusterlogs/
+    tar -czvf /tmp/$DX_JOB_ID-clusterlogs.tar.gz /tmp/clusterlogs
+    mv /tmp/$DX_JOB_ID-clusterlogs.tar.gz $1/
+
+}
+
+collect_slave()
+{
+    connection=1
+    status=0
+    while [ $status -eq 0 ]
+    do
+        echo "Log collection not initiated."
+        echo "Trying to connect to master"
+        sleep 2
+        connection=$(nc -w 2 -v master $SVC_PORT; echo $?;)
+
+        if [ $connection -eq 0 ]; then
+            echo "Connected to master"
+            status=$(curl --silent --url $STATUS_URL)
+        fi
+    done
+
+    echo "Log collection initiated, collecting the logs..."
+    collect_logs_to_hdfs
+
+    echo "Done collecting logs, update master"
+    curl --request POST --url $LOG_STATUS_URL --data '{"node_id": '$DX_CLUSTER_NODE_ID', "status": "DONE"}'
+}
+
+if [ -z "$DX_CLUSTER_MASTER_IP" ]; then
+ if [ "$#" -lt 1 ]; then
+    echo "[LOG-COLLECTOR]: Missing output log folder"
+    exit 1;
+ fi
+ if [ "$#" -eq 2 ]; then
+    MAX_ITERATIONS=$2
+ fi
+ collect_master $1
+else
+ collect_slave
+fi
