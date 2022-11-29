@@ -23,7 +23,7 @@ SVC_HOST=master
 STATUS_FILE=/cluster/dnax/service/status
 LOG_STATUS_URL=http://$SVC_HOST:$SVC_PORT/slaves/logstatus
 STATUS_URL=http://$SVC_HOST:$SVC_PORT/status
-MAX_ITERATIONS=100
+MAX_ITERATIONS=200
 
 collect_logs_to_hdfs()
 {
@@ -70,7 +70,7 @@ collect_master()
     touch $STATUS_FILE
 
     # Set the status file
-    echo "Log collection initiated"
+    echo "Log collection initiated, MAX_ITERATIONS=$MAX_ITERATIONS"
     echo 1 > $STATUS_FILE
 
     # Get the number of slave nodes

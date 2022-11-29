@@ -37,7 +37,7 @@ main() {
     # -XX:+UseG1GC -XX:MaxGCPauseMillis=500 -XX:ParallelGCThreads=8 -XX:ConcGCThreads=8 -XX:InitiatingHeapOccupancyPercent=35 \
     # -XX:+UseLargePages \
     all_java_options="\
-    -Xss16m -XX:+AlwaysPreTouch \
+    -Xss16m -XX:+AlwaysPreTouch -XX:InitiatingHeapOccupancyPercent=35 \
     -XX:+PrintFlagsFinal \
     $java_options"
     filter_bed_arg=""
@@ -47,8 +47,8 @@ main() {
     dx-spark-submit --log-level WARN --collect-logs \
         --conf spark.driver.defaultJavaOptions="$all_java_options" \
         --conf spark.executor.defaultJavaOptions="$all_java_options" \
-        --conf spark.executor.memory=60g \
-        --conf spark.memory.storageFraction=0.4 \
+        --conf spark.executor.memory=72g \
+        --conf spark.memory.storageFraction=0.3333 \
         --conf spark.driver.maxResultSize=0 \
         --conf spark.task.maxFailures=3 \
         --conf spark.stage.maxConsecutiveAttempts=2 \
