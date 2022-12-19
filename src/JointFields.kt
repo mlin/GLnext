@@ -58,8 +58,11 @@ class DP_FormatField(hdr: AggVcfHeader, spec: JointFormatField) :
         // TODO: option to round down to power of two (if variantRecord == null)
         var minDP = Int.MAX_VALUE
         val records = (
-            if (variantRecord != null) listOf(variantRecord)
-            else (data.otherVariantRecords + data.referenceBands)
+            if (variantRecord != null) {
+                listOf(variantRecord)
+            } else {
+                (data.otherVariantRecords + data.referenceBands)
+            }
             )
         var dpRanges: MutableList<GRange> = mutableListOf()
         records.forEach {

@@ -13,7 +13,11 @@ data class GRange(val rid: Short, val beg: Int, val end: Int) :
         require(end >= beg)
     }
     override fun compareTo(other: GRange) = compareValuesBy(
-        this, other, { it.rid }, { it.beg }, { it.end }
+        this,
+        other,
+        { it.rid },
+        { it.beg },
+        { it.end }
     )
     fun overlaps(other: GRange): Boolean =
         (rid == other.rid && beg <= other.end && end >= other.beg)

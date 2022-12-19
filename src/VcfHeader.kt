@@ -26,7 +26,12 @@ data class VcfHeaderLine(
 ) :
     Serializable, Comparable<VcfHeaderLine> {
     override fun compareTo(other: VcfHeaderLine) = compareValuesBy(
-        this, other, { it.kind }, { it.ord }, { it.id }, { it.lineText }
+        this,
+        other,
+        { it.kind },
+        { it.ord },
+        { it.id },
+        { it.lineText }
     )
 }
 typealias VcfHeaderLineIndex = Map<Pair<VcfHeaderLineKind, String>, VcfHeaderLine>
@@ -77,7 +82,7 @@ fun aggregateVcfHeaders(
     val filenamesByHeader = jsc.parallelize(filenames)
         .mapPartitions(
             FlatMapFunction<Iterator<String>, _DigestedHeader> {
-                filenamesPart ->
+                    filenamesPart ->
                 val fs = getFileSystem(exampleFilename)
                 filenamesPart.asSequence().map {
                     val (headerDigest, header) = readVcfHeader(it, fs)
@@ -88,7 +93,7 @@ fun aggregateVcfHeaders(
         .groupBy(Function1<_DigestedHeader, String> { it.headerDigest })
         .mapValues(
             Function1<Iterable<_DigestedHeader>, _FilenamesWithSameHeader> {
-                dhs ->
+                    dhs ->
                 var header: String = ""
                 val callsetFilenames = dhs.map {
                     header = it.header
@@ -102,7 +107,7 @@ fun aggregateVcfHeaders(
         // assign callsetIds as indexes into an array of header digests (arbitrary order)
         val digestToCallsetId = jsc.broadcast(
             filenamesByHeader.keys().collect().sorted().mapIndexed {
-                callsetId, digest ->
+                    callsetId, digest ->
                 digest to callsetId
             }.toMap()
         )
@@ -128,7 +133,7 @@ fun aggregateVcfHeaders(
             }
         ).collect().sortedBy { it.callsetId }
         val filenameToCallsetId = callsetsDetailsPre.flatMapIndexed {
-            i, it ->
+                i, it ->
             check(i == it.callsetId)
             it.filenames.map { fn -> fn to i }
         }.toMap()
@@ -151,7 +156,7 @@ fun aggregateVcfHeaders(
         // finalize CallsetsDetails by mapping callset sample names into the aggregated order
         val callsetsDetails = callsetsDetailsPre.map {
             val callsetSampleIndexes = it.samples.map {
-                sample ->
+                    sample ->
                 if (sampleCallset.get(sample)!! == it.callsetId) sampleIndex.get(sample)!! else -1
             }.toIntArray()
             CallsetDetails(it.filenames, callsetSampleIndexes)
@@ -179,7 +184,12 @@ fun aggregateVcfHeaders(
         val contigId = contigs.mapIndexed { ord, id -> id to ord.toShort() }.toMap()
 
         return AggVcfHeader(
-            headerLinesMap, contigs, contigId, samples, filenameToCallsetId, callsetsDetails
+            headerLinesMap,
+            contigs,
+            contigId,
+            samples,
+            filenameToCallsetId,
+            callsetsDetails
         )
     } finally {
         filenamesByHeader.unpersist()

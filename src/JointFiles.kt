@@ -31,10 +31,10 @@ fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeade
     val aggHeaderB = jsc.broadcast(aggHeader)
     val partsAndFirstRange = jsc.parallelize(partBasenames, parallelism).mapPartitions(
         FlatMapFunction<Iterator<String>, Pair<String, GRange>> {
-            basenames ->
+                basenames ->
             val fs = getFileSystem(pvcfDir)
             basenames.asSequence().map {
-                basename ->
+                    basename ->
                 fileReaderDetectGz("$pvcfDir/$basename", fs).useLines {
                     val rec = parseVcfRecord(aggHeaderB.value.contigId, -1, it.first())
                     basename to rec.range
@@ -52,7 +52,7 @@ fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeade
     // -1 for parts potentially spanning multiple chromosomes.
     val classifiedParts: List<Triple<Short, Int, String>> = partsAndFirstRange
         .toList().mapIndexed {
-            i, (basename, firstRange) ->
+                i, (basename, firstRange) ->
             val oneChrom = (
                 i + 1 < partsAndFirstRange.size &&
                     partsAndFirstRange[i + 1].second.rid == firstRange.rid
@@ -84,7 +84,7 @@ fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeade
     val revisedParts = (classifiedParts.filter { it.first >= 0 } + splitParts)
         .sortedWith(compareBy({ it.first }, { it.second })).toTypedArray()
     val rangeParts = revisedParts.mapIndexed {
-        i, (rid, firstPos, basename) ->
+            i, (rid, firstPos, basename) ->
         val lastPos = if (i + 1 < revisedParts.size && revisedParts[i + 1].first == rid) {
             revisedParts[i + 1].second
         } else {
@@ -100,7 +100,7 @@ fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeade
         FlatMapFunction<Iterator<Pair<Int, Triple<Short, Pair<Int, Int>, String>>>, String> {
             val fs = getFileSystem(pvcfDir)
             it.asSequence().map {
-                (i, t) ->
+                    (i, t) ->
                 val (rid, pos, basename) = t
                 val (posBeg, posEnd) = pos
                 val chrom = aggHeaderB.value.contigs[rid.toInt()]

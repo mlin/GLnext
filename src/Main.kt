@@ -1,4 +1,5 @@
 @file:JvmName("vcfGLuer")
+
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.arguments.multiple
@@ -24,18 +25,18 @@ data class MainConfig(
 
 class CLI : CliktCommand() {
     val inputFiles: List<String> by
-    argument(help = "Input VCF filenames (or manifest(s) with --manifest)")
-        .multiple(required = true)
+        argument(help = "Input VCF filenames (or manifest(s) with --manifest)")
+            .multiple(required = true)
     val pvcfDir: String by
-    argument(help = "Output directory for pVCF parts (mustn't already exist)")
+        argument(help = "Output directory for pVCF parts (mustn't already exist)")
     val manifest by
-    option(help = "Input files are manifest(s) containing one VCF filename per line")
-        .flag(default = false)
+        option(help = "Input files are manifest(s) containing one VCF filename per line")
+            .flag(default = false)
     val config: String by option(help = "Configuration preset name").default("DeepVariant")
     val filterBed: String? by
-    option(help = "only call variants within a region from this BED file")
+        option(help = "only call variants within a region from this BED file")
     val deleteInputVcfs by
-    option(help = "Delete input VCF files after loading them (DANGER!)").flag(default = false)
+        option(help = "Delete input VCF files after loading them (DANGER!)").flag(default = false)
 
     // TODO: take a BED file of target regions, use to filter variants
     // https://www.javadoc.io/doc/com.github.samtools/htsjdk/2.24.1/htsjdk/samtools/util/IntervalTree.html
@@ -112,7 +113,7 @@ class CLI : CliktCommand() {
                 ("INFO" to VcfHeaderLineKind.INFO),
                 ("FORMAT" to VcfHeaderLineKind.FORMAT)
             ).forEach {
-                (kindName, kind) ->
+                    (kindName, kind) ->
                 val fields = aggHeader.headerLines
                     .filter { it.value.kind == kind }
                     .map { it.value.id }.sorted()
@@ -121,11 +122,11 @@ class CLI : CliktCommand() {
             }
             logger.info("contigs: ${aggHeader.contigId.size.pretty()}")
 
+            val jsc = org.apache.spark.api.java.JavaSparkContext(spark.sparkContext)
             val filterRangesB = filterBed?.let {
                 val filterRanges = BedRanges(aggHeader.contigId, fileReaderDetectGz(it))
                 logger.info("BED filter ranges: ${filterRanges.size}")
-                org.apache.spark.api.java.JavaSparkContext(spark.sparkContext)
-                    .broadcast(filterRanges)
+                jsc.broadcast(filterRanges)
             }
 
             // accumulators
@@ -135,34 +136,26 @@ class CLI : CliktCommand() {
             val pvcfRecordCount = spark.sparkContext.longAccumulator("pVCF records")
             val pvcfRecordBytes = spark.sparkContext.longAccumulator("pVCF bytes")
 
-            // load all VCF records
-            var vcfRecordsDF = readVcfRecordsDF(
-                spark, aggHeader, filterRangesB,
-                compressEachRecord = cfg.spark.compressTempRecords,
-                deleteInputVcfs = deleteInputVcfs,
+            // load all VCF records (in contiguous batches per chromosome per callset)
+            var contigVcfRecordsDF = readAllVcfByContig(
+                spark,
+                aggHeader,
+                filterRangesB,
+                andDelete = deleteInputVcfs,
                 recordCount = vcfRecordCount,
                 recordBytes = vcfRecordBytes,
-                unfilteredRecordCount = allRecordCount,
-            )
-            // in general vcfRecordsDF # partitions now = # files; repartition if # files is way
-            // below defaultParallelism
-            // this is costly, but heuristically needed to prevent OOM when we explode vcfRecordsDF
-            // against overlapping variants
-            if (aggHeader.filenameCallsetId.size * 3 < defaultParallelism * 2) {
-                logger.info(
-                    "shuffle vcfRecordsDF from ${aggHeader.filenameCallsetId.size}" +
-                        " to $defaultParallelism partitions =("
-                )
-                vcfRecordsDF = vcfRecordsDF.repartition(defaultParallelism)
-            }
-            vcfRecordsDF = vcfRecordsDF.cache()
-
-            // discover variants
-            val variantsDF = discoverVariants(
-                vcfRecordsDF, filterRangesB,
-                onlyCalled = cfg.discovery.minCopies > 0
+                unfilteredRecordCount = allRecordCount
             ).cache()
-            val variantCount = variantsDF.count()
+
+            // discover & collect all variants
+            val variants = collectAllVariants(
+                aggHeader,
+                contigVcfRecordsDF,
+                filterRangesB,
+                onlyCalled = cfg.discovery.minCopies > 0
+            )
+            var variantCount = 0
+            variants.forEach { variantCount += it.size }
             filterRangesB?.let {
                 it.unpersist()
                 logger.info("unfiltered VCF records: ${allRecordCount.sum().pretty()}")
@@ -178,7 +171,7 @@ class CLI : CliktCommand() {
             )
             val (pvcfHeader, pvcfLines) = jointCall(
                 logger, cfg.joint, spark, aggHeader,
-                variantsDF, vcfRecordsDF, pvcfHeaderMetaLines,
+                variants, contigVcfRecordsDF, pvcfHeaderMetaLines,
                 pvcfRecordCount, pvcfRecordBytes
             )
 
@@ -188,7 +181,7 @@ class CLI : CliktCommand() {
             // vcfRecordsDF.unpersist()
 
             logger.info("pVCF bytes: ${pvcfRecordBytes.sum().pretty()}")
-            check(pvcfRecordCount.sum() == variantCount) // checks Spark query plan
+            check(pvcfRecordCount.sum() == variantCount.toLong())
 
             // reorganize part files
             reorgJointFiles(spark, pvcfDir, aggHeader)

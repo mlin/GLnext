@@ -29,8 +29,8 @@
         </dependency>
         <dependency> <!-- Kotlin Spark API dependency -->
             <groupId>org.jetbrains.kotlinx.spark</groupId>
-            <artifactId>kotlin-spark-api-3.2</artifactId>
-            <version>1.1.0</version>
+            <artifactId>kotlin-spark-api_3.2.0_2.12</artifactId>
+            <version>1.2.2</version>
         </dependency>
         <dependency> <!-- Spark dependency -->
             <groupId>org.apache.spark</groupId>
@@ -112,7 +112,7 @@
                 <version>${kotlin.version}</version>
                 <configuration>
                     <sourceDirs>src</sourceDirs>
-                    <jvmTarget>1.8</jvmTarget>
+                    <jvmTarget>11</jvmTarget>
                     <myIncremental>true</myIncremental>
                 </configuration>
                 <executions>
@@ -169,7 +169,7 @@
                     <dependency>
                         <groupId>com.pinterest</groupId>
                         <artifactId>ktlint</artifactId>
-                        <version>0.42.1</version>
+                        <version>0.48.0</version>
                     </dependency>
                     <!-- additional 3rd party ruleset(s) can be specified here -->
                 </dependencies>

@@ -87,7 +87,7 @@ fun readVcfRecordsDF(
     deleteInputVcfs: Boolean = false,
     recordCount: LongAccumulator? = null,
     recordBytes: LongAccumulator? = null,
-    unfilteredRecordCount: LongAccumulator? = null,
+    unfilteredRecordCount: LongAccumulator? = null
 ): Dataset<Row> {
     val jsc = JavaSparkContext(spark.sparkContext)
 
@@ -98,19 +98,19 @@ fun readVcfRecordsDF(
     return spark.createDataFrame(
         filenamesWithCallsetIds.flatMap(
             FlatMapFunction<Pair<String, Int>, Row> {
-                p ->
+                    p ->
                 val (filename, callsetId) = p
                 sequence {
                     val fs = getFileSystem(filename)
                     fileReaderDetectGz(filename, fs).useLines {
                         it.forEach {
-                            line ->
+                                line ->
                             if (line.length > 0 && line.get(0) != '#') {
                                 val rec = parseVcfRecord(contigId, callsetId, line)
                                 unfilteredRecordCount?.add(1L)
                                 if (filterRanges?.let {
-                                    it.value!!.hasOverlapping(rec.range)
-                                } ?: true
+                                        it.value!!.hasOverlapping(rec.range)
+                                    } ?: true
                                 ) {
                                     recordCount?.let { it.add(1L) }
                                     recordBytes?.let { it.add(line.length + 1L) }
@@ -134,6 +134,7 @@ fun readVcfRecordsDF(
  */
 class VcfRecordUnpacked(val record: VcfRecord) {
     val tsv: Array<String>
+
     // normalized Variant for each ALT allele, or null for symbolic ALT alleles
     // (Index 0 in the array is GT allele "1")
     val altVariants: Array<Variant?>
@@ -152,7 +153,7 @@ class VcfRecordUnpacked(val record: VcfRecord) {
 
         val ref = tsv[VcfColumn.REF.ordinal]
         altVariants = tsv[VcfColumn.ALT.ordinal].split(',').map {
-            alt ->
+                alt ->
             if (alt == "." || alt == "*" || alt.startsWith('<')) {
                 null
             } else {
@@ -224,7 +225,7 @@ class VcfRecordUnpacked(val record: VcfRecord) {
 
     fun getAltIndex(variant: Variant): Int {
         return altVariants.mapIndexed {
-            idx, vt ->
+                idx, vt ->
             if (vt == variant) (idx + 1) else null
         }.firstNotNullOfOrNull { it } ?: -1
     }

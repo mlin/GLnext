@@ -11,7 +11,7 @@ class BedRanges : java.io.Serializable {
         val ranges = Array<MutableList<Pair<Int, Int>>>(contigId.size) { mutableListOf() }
 
         bed.useLines {
-            lines ->
+                lines ->
             lines.forEach {
                 val tsv = it.splitToSequence('\t').take(3).toList().toTypedArray()
                 check(tsv.size == 3, { "[BED] invalid line: $it" })
@@ -26,7 +26,7 @@ class BedRanges : java.io.Serializable {
 
         var counter = 0
         iit = ranges.map {
-            ridRanges ->
+                ridRanges ->
             val builder = IntegerIntervalTree.Builder()
             ridRanges
                 .sortedWith(compareBy({ it.first }, { it.second }))
