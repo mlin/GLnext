@@ -50,20 +50,22 @@ fun jointCall(
     // broadcast supporting data for joint calling; using JavaSparkContext to sidestep
     // kotlin-spark-api overrides
     val jsc = JavaSparkContext(spark.sparkContext)
-    val variantsB = jsc.broadcast(variants)
     val aggHeaderB = jsc.broadcast(aggHeader)
     val fieldsGenB = jsc.broadcast(JointFieldsGenerator(cfg, aggHeader))
+    val variantsB = jsc.broadcast(variants)
 
-    // make big DataFrame of genotype calls: (variantId, sampleId, pvcfEntry)
+    // make big DataFrame of genotype entries: (variantId, sampleId, pvcfEntry)
     val entriesDF = contigVcfRecordsDF.flatMap(
         FlatMapFunction<Row, Row> {
-            contigVcfRecordCalls(
+            generateContigVcfRecordsCalls(
                 cfg,
                 aggHeaderB.value,
-                variantsB.value,
                 fieldsGenB.value,
+                variantsB.value,
                 ContigVcfRecords(it)
-            ).iterator()
+            )
+                .map { RowFactory.create(it.first, it.second, it.third) }
+                .iterator()
         },
         RowEncoder.apply(
             StructType()
@@ -73,47 +75,46 @@ fun jointCall(
         )
     )
 
-    // group genotypes by variantId and generate pVCF text lines (Snappy-compressed)
-    val pvcfRowSchema = StructType()
-        .add("variantId", DataTypes.LongType, false)
-        .add("snappyLine", DataTypes.BinaryType, false)
-    val pvcfRows = entriesDF
+    // group the genotype entries by variantId and generate pVCF text lines (Snappy-compressed)
+    val pvcfLinesDF = entriesDF
         .groupByKey(MapFunction<Row, Long> { it.getAs<Long>(0) }, Encoders.LONG())
         .mapGroups(
             MapGroupsFunction<Long, Row, Row> {
                     variantId, variantEntries ->
-                // compute any INFO aggregates
-                // lay out the entries into TSV
                 pvcfRecordCount?.let { it.add(1L) }
-                val rid = variantId shr 48
-                val variantIndex = variantId - (rid shl 48)
-                assembleJointLine(
-                    cfg,
-                    aggHeaderB.value,
-                    fieldsGenB.value,
+                RowFactory.create(
                     variantId,
-                    variantsB.value[rid.toInt()][variantIndex.toInt()],
-                    variantEntries
+                    generateJointLine(
+                        cfg,
+                        aggHeaderB.value,
+                        fieldsGenB.value,
+                        variantsB.value,
+                        variantId,
+                        variantEntries
+                    )
                 )
             },
-            RowEncoder.apply(pvcfRowSchema)
+            RowEncoder.apply(
+                StructType()
+                    .add("variantId", DataTypes.LongType, false)
+                    .add("snappyLine", DataTypes.BinaryType, false)
+            )
         ).cache() // cache() before sorting: https://stackoverflow.com/a/56310076
     // Perform a count() to force pvcfRows, ensuring it registers as an SQL query in the history
     // server before next dropping to RDD. This provides useful diagnostic info that would
     // otherwise go missing. The log message also provides a progress marker.
-    val pvcfRowCount = pvcfRows.count()
-    logger.info("sorting & writing $pvcfRowCount pVCF lines...")
+    val pvcfLineCount = pvcfLinesDF.count()
+    logger.info("sorting & writing $pvcfLineCount pVCF lines...")
 
-    // sort pVCF rows by Variant and return the decompressed text of each line
+    // sort pVCF rows by variantId and return the decompressed text of each line
     val pvcfHeader = jointVcfHeader(cfg, aggHeader, pvcfHeaderMetaLines, fieldsGenB.value)
-    return pvcfHeader to pvcfRows
+    return pvcfHeader to pvcfLinesDF
         .toJavaRDD()
         .sortBy(
             Function<Row, Long> { it.getAs<Long>(0) },
             true,
-            // Coalesce to fewer partitions now that the data size has been greatly reduced,
-            // compared to what we dealt with in the big join. Thus output a smaller number of
-            // reasonably-sized pVCF part files.
+            // Coalesce to fewer partitions now that the data size has been reduced, to output a
+            // smaller number of reasonably-sized pVCF part files.
             // This is why we've dropped down to RDD -- Dataset.orderBy() doesn't provide direct
             // control of the output partitioning.
             jsc.defaultParallelism().toDouble().pow(2.0 / 3.0).toInt()
@@ -127,14 +128,14 @@ fun jointCall(
         )
 }
 
-fun contigVcfRecordCalls(
+fun generateContigVcfRecordsCalls(
     cfg: JointConfig,
     aggHeader: AggVcfHeader,
-    variants: Array<Array<Variant>>,
     fieldsGen: JointFieldsGenerator,
+    variants: Array<Array<Variant>>,
     it: ContigVcfRecords
-): Sequence<Row> {
-    // extract & index the records
+): Sequence<Triple<Long, Int, String>> {
+    // extract the individual records & index them for interval query
     val callsetId = it.callsetId
     val records = it.records(aggHeader.contigId).toList().toTypedArray()
     val rid = records[0].range.rid
@@ -150,7 +151,11 @@ fun contigVcfRecordCalls(
     return sequence {
         variants[rid.toInt()].forEachIndexed {
                 variantIndex, variant ->
-            // get overlapping records
+            // variant ID for grouping & sorting: rid in the high 2 bytes + index in variants[rid]
+            // (each variants[rid] is coordinate-sorted)
+            val variantId = (rid.toLong() shl 48) + variantIndex.toLong()
+
+            // get the callet VCF records overlapping the variant
             val ctx = VcfRecordsContext(
                 aggHeader,
                 variant,
@@ -158,60 +163,61 @@ fun contigVcfRecordCalls(
                     records[it.id]
                 }
             )
+
+            // generate genotype entries
             aggHeader.callsetsDetails[callsetId].callsetSamples.forEachIndexed {
                     sampleIndex, sampleId ->
-                val entry = generateGenotypeAndFormatFields(cfg, fieldsGen, ctx, sampleIndex)
-                val variantId = (rid.toLong() shl 48) + variantIndex.toLong()
-                yield(RowFactory.create(variantId, sampleId, entry))
+                yield(
+                    Triple(
+                        variantId,
+                        sampleId,
+                        generateGenotypeAndFormatFields(cfg, fieldsGen, ctx, sampleIndex)
+                    )
+                )
             }
         }
     }
 }
 
-fun assembleJointLine(
+fun generateJointLine(
     cfg: JointConfig,
     aggHeader: AggVcfHeader,
     fieldsGen: JointFieldsGenerator,
+    variants: Array<Array<Variant>>,
     variantId: Long,
-    variant: Variant,
     entries: Iterator<Row>
-): Row {
-    // prepare output TSV
-    val recordTsv = initializeOutputTsv(cfg, aggHeader, variant)
+): ByteArray {
+    // unpack variantId and look up the variant
+    val rid = variantId shr 48
+    val variantIndex = variantId - (rid shl 48)
+    val variant = variants[rid.toInt()][variantIndex.toInt()]
 
-    // fill entries into recordTsv
+    // prepare output TSV (array)
+    val lineTsv = Array<String>(VcfColumn.FIRST_SAMPLE.ordinal + aggHeader.samples.size) { "." }
+    lineTsv[VcfColumn.CHROM.ordinal] = aggHeader.contigs[variant.range.rid.toInt()] // CHROM
+    lineTsv[VcfColumn.POS.ordinal] = variant.range.beg.toString() // POS
+    // ID
+    lineTsv[VcfColumn.REF.ordinal] = variant.ref // REF
+    lineTsv[VcfColumn.ALT.ordinal] = variant.alt // ALT
+    // QUAL
+    lineTsv[VcfColumn.FILTER.ordinal] = "PASS" // FILTER
+    // INFO
+    lineTsv[VcfColumn.FORMAT.ordinal] =
+        (listOf("GT") + cfg.formatFields.map { it.name })
+            .joinToString(":") // FORMAT
+
+    // fill entries into lineTsv
     entries.forEach {
         check(it.getAs<Long>("variantId") == variantId)
         val sampleId = it.getAs<Int>("sampleId")
-        recordTsv[VcfColumn.FIRST_SAMPLE.ordinal + sampleId] = it.getAs<String>("entry")
+        lineTsv[VcfColumn.FIRST_SAMPLE.ordinal + sampleId] = it.getAs<String>("entry")
     }
 
     // TODO: compute INFO fields
-    // recordTsv[VcfColumn.INFO.ordinal] = fieldsGen.generateInfoFields()
+    // lineTsv[VcfColumn.INFO.ordinal] = fieldsGen.generateInfoFields()
 
     // generate compressed line for pVCF sorting
-    val snappyLine = Snappy.compress(recordTsv.joinToString("\t").toByteArray())
-    return RowFactory.create(variantId, snappyLine)
-}
-
-fun initializeOutputTsv(
-    cfg: JointConfig,
-    aggHeader: AggVcfHeader,
-    variant: Variant
-): Array<String> {
-    val recordTsv = Array<String>(VcfColumn.FIRST_SAMPLE.ordinal + aggHeader.samples.size) { "." }
-    recordTsv[VcfColumn.CHROM.ordinal] = aggHeader.contigs[variant.range.rid.toInt()] // CHROM
-    recordTsv[VcfColumn.POS.ordinal] = variant.range.beg.toString() // POS
-    // ID
-    recordTsv[VcfColumn.REF.ordinal] = variant.ref // REF
-    recordTsv[VcfColumn.ALT.ordinal] = variant.alt // ALT
-    // QUAL
-    recordTsv[VcfColumn.FILTER.ordinal] = "PASS" // FILTER
-    // INFO
-    recordTsv[VcfColumn.FORMAT.ordinal] =
-        (listOf("GT") + cfg.formatFields.map { it.name })
-            .joinToString(":") // FORMAT
-    return recordTsv
+    return Snappy.compress(lineTsv.joinToString("\t").toByteArray())
 }
 
 fun generateGenotypeAndFormatFields(
@@ -318,7 +324,6 @@ fun genotypeOverlapSentinel(mode: GT_OverlapMode): Int? = when (mode) {
  * Callset records assorted into reference bands, records containing the desired variant,
  * and other variants
  */
-
 class VcfRecordsContext(
     val aggHeader: AggVcfHeader,
     val variant: Variant,

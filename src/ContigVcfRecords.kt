@@ -46,7 +46,7 @@ fun ContigVcfRecordsStructType(): StructType {
 /**
  * Read a complete VCF file to generate a sequence of ContigVcfRecords grouped by CHROM
  */
-fun readOneVcfByContig(
+fun readContigVcfRecords(
     contigId: Map<String, Short>,
     callsetId: Int,
     filename: String,
@@ -101,7 +101,7 @@ fun readOneVcfByContig(
 /**
  * Read many VCF files (+ aggregated header) into a DataFrame of ContigVcfRecords rows
  */
-fun readAllVcfByContig(
+fun readAllContigVcfRecords(
     spark: SparkSession,
     aggHeader: AggVcfHeader,
     filterRanges: org.apache.spark.broadcast.Broadcast<BedRanges>?,
@@ -121,7 +121,7 @@ fun readAllVcfByContig(
             FlatMapFunction<Pair<String, Int>, Row> {
                     p ->
                 val (filename, callsetId) = p
-                readOneVcfByContig(
+                readContigVcfRecords(
                     contigId,
                     callsetId,
                     filename,

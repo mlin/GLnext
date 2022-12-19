@@ -120,7 +120,7 @@ fun discoverVariants(
 }
 
 /**
- * Harvest all distinct Variants from ContigVcfRecords DataFrame
+ * Harvest all distinct Variants from ContigVcfRecords DataFrame.
  * onlyCalled: only include variants with at least one copy called in a sample GT
  */
 fun discoverAllVariants(
@@ -147,7 +147,7 @@ fun discoverAllVariants(
 }
 
 /**
- * Discover all variants & collect them into a coordinate-sorted array for each contig.
+ * Discover all variants & collect them into a range-sorted array for each contig (rid).
  * TODO: contig-by-contig serialization if the variants grow too large for broadcast
  */
 fun collectAllVariants(

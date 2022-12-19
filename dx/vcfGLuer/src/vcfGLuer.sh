@@ -26,18 +26,8 @@ main() {
     #   https://aws.amazon.com/blogs/big-data/best-practices-for-successfully-managing-memory-for-apache-spark-applications-on-amazon-emr/
     #   https://www.oracle.com/technical-resources/articles/java/g1gc.html
     #   https://databricks.com/blog/2015/05/28/tuning-java-garbage-collection-for-spark-applications.html
-    # dxspark JVM 8 notes:
-    #   G1GC and UseLargePages both seem to get into trouble with the heap sizes typical on larger
-    #   I3 instances (>64G). G1GC tends to hit JVM OutOfMemory exceptions, while UseLargePages can
-    #   trigger kernel oom-killer (fragmentation?). These recommended features should be more
-    #   mature in newer JVM versions, which we'll hopefully get to try.
-    #   ParallelGC (the default on Java 8) seems solid albeit "only" up to 12-16 vCPUs.
-    #
-    # -XX:+UseParallelGC -XX:GCTimeRatio=19 \
-    # -XX:+UseG1GC -XX:MaxGCPauseMillis=500 -XX:ParallelGCThreads=8 -XX:ConcGCThreads=8 -XX:InitiatingHeapOccupancyPercent=35 \
-    # -XX:+UseLargePages \
     all_java_options="\
-    -Xss16m -XX:+AlwaysPreTouch -XX:InitiatingHeapOccupancyPercent=35 \
+    -Xss16m -XX:+AlwaysPreTouch -XX:+UseLargePages -XX:InitiatingHeapOccupancyPercent=35 \
     -XX:+PrintFlagsFinal \
     $java_options"
     filter_bed_arg=""
@@ -48,7 +38,6 @@ main() {
         --conf spark.driver.defaultJavaOptions="$all_java_options" \
         --conf spark.executor.defaultJavaOptions="$all_java_options" \
         --conf spark.executor.memory=72g \
-        --conf spark.memory.storageFraction=0.3333 \
         --conf spark.driver.maxResultSize=0 \
         --conf spark.task.maxFailures=3 \
         --conf spark.stage.maxConsecutiveAttempts=2 \

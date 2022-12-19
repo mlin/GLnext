@@ -38,9 +38,6 @@ class CLI : CliktCommand() {
     val deleteInputVcfs by
         option(help = "Delete input VCF files after loading them (DANGER!)").flag(default = false)
 
-    // TODO: take a BED file of target regions, use to filter variants
-    // https://www.javadoc.io/doc/com.github.samtools/htsjdk/2.24.1/htsjdk/samtools/util/IntervalTree.html
-
     override fun run() {
         val cfg = ConfigLoader.Builder()
             .addFileExtensionMapping("toml", com.sksamuel.hoplite.toml.TomlParser())
@@ -122,11 +119,11 @@ class CLI : CliktCommand() {
             }
             logger.info("contigs: ${aggHeader.contigId.size.pretty()}")
 
-            val jsc = org.apache.spark.api.java.JavaSparkContext(spark.sparkContext)
             val filterRangesB = filterBed?.let {
                 val filterRanges = BedRanges(aggHeader.contigId, fileReaderDetectGz(it))
                 logger.info("BED filter ranges: ${filterRanges.size}")
-                jsc.broadcast(filterRanges)
+                org.apache.spark.api.java.JavaSparkContext(spark.sparkContext)
+                    .broadcast(filterRanges)
             }
 
             // accumulators
@@ -136,8 +133,8 @@ class CLI : CliktCommand() {
             val pvcfRecordCount = spark.sparkContext.longAccumulator("pVCF records")
             val pvcfRecordBytes = spark.sparkContext.longAccumulator("pVCF bytes")
 
-            // load all VCF records (in contiguous batches per chromosome per callset)
-            var contigVcfRecordsDF = readAllVcfByContig(
+            // read all input VCF files (into a contiguous chunk per chromosome per callset)
+            var contigVcfRecordsDF = readAllContigVcfRecords(
                 spark,
                 aggHeader,
                 filterRangesB,
