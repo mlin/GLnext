@@ -1,3 +1,5 @@
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import kotlin.math.max
 import org.apache.hadoop.fs.Path
 import org.apache.spark.api.java.JavaSparkContext
@@ -7,7 +9,8 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.types.*
 import org.apache.spark.util.LongAccumulator
 import org.jetbrains.kotlinx.spark.api.*
-import org.xerial.snappy.Snappy
+import org.xerial.snappy.SnappyInputStream
+import org.xerial.snappy.SnappyOutputStream
 
 /**
  * Batch of contiguous VCF records: ID of the source callset, bounding GRange, and text lines
@@ -28,10 +31,16 @@ data class ContigVcfRecords(val callsetId: Int, val range: GRange, val snappyLin
         return RowFactory.create(callsetId, range.rid, range.beg, range.end, snappyLines)
     }
     fun records(contigId: Map<String, Short>): Sequence<VcfRecord> {
-        // TODO: streaming approach
-        return String(Snappy.uncompress(snappyLines))
-            .splitToSequence("\n")
-            .map { parseVcfRecord(contigId, callsetId, it) }
+        return sequence {
+            SnappyInputStream(ByteArrayInputStream(snappyLines))
+                .reader().buffered().use { reader ->
+                    var line = reader.readLine()
+                    while (line != null) {
+                        yield(parseVcfRecord(contigId, callsetId, line))
+                        line = reader.readLine()
+                    }
+                }
+        }
     }
 }
 
@@ -86,16 +95,20 @@ fun readContigVcfRecords(
     }
     return sequence {
         effRanges.streamingJoin(recordStream.iterator(), { it.first }).forEach { (rangeId, lines) ->
-            val concatLines = lines.map { (_, line) ->
-                recordCount?.let { it.add(1L) }
-                recordBytes?.let { it.add(line.length + 1L) }
-                line
-            }.joinToString("\n")
+            val bos = ByteArrayOutputStream()
+            SnappyOutputStream(bos, 262144).writer().use { snappy ->
+                lines.forEach { (_, line) ->
+                    recordCount?.let { it.add(1L) }
+                    recordBytes?.let { it.add(line.length + 1L) }
+                    snappy.write(line)
+                    snappy.write(10)
+                }
+            }
             yield(
                 ContigVcfRecords(
                     callsetId,
                     effRanges.item(rangeId),
-                    Snappy.compress(concatLines.toByteArray())
+                    bos.toByteArray()
                 )
             )
         }

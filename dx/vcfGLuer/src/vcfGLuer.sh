@@ -27,7 +27,7 @@ main() {
     #   https://www.oracle.com/technical-resources/articles/java/g1gc.html
     #   https://databricks.com/blog/2015/05/28/tuning-java-garbage-collection-for-spark-applications.html
     all_java_options="\
-    -Xss16m -XX:+AlwaysPreTouch -XX:+UseLargePages -XX:InitiatingHeapOccupancyPercent=35 \
+    -Xss16m -XX:+AlwaysPreTouch -XX:+UseLargePages -XX:InitiatingHeapOccupancyPercent=35 -XX:MaxGCPauseMillis=1000 \
     -XX:+PrintFlagsFinal \
     $java_options"
     filter_bed_arg=""
@@ -37,7 +37,7 @@ main() {
     dx-spark-submit --log-level WARN --collect-logs \
         --conf spark.driver.defaultJavaOptions="$all_java_options" \
         --conf spark.executor.defaultJavaOptions="$all_java_options" \
-        --conf spark.executor.memory=72g \
+        --conf spark.executor.memory=80g \
         --conf spark.driver.maxResultSize=0 \
         --conf spark.task.maxFailures=3 \
         --conf spark.stage.maxConsecutiveAttempts=2 \
