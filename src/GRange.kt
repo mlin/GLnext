@@ -1,6 +1,3 @@
-import org.apache.spark.sql.*
-import org.apache.spark.sql.types.*
-
 /**
  * Genomic range with reference sequence id (rid), one-based begin position, and inclusive end
  * position (matching the convention in the VCF text format).

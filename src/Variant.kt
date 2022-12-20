@@ -85,7 +85,7 @@ fun Variant.normalize(): Variant {
  */
 fun discoverVariants(
     it: VcfRecord,
-    filterRanges: org.apache.spark.broadcast.Broadcast<BedRanges>?,
+    filterRanges: org.apache.spark.broadcast.Broadcast<GRangeIndex<GRange>>?,
     onlyCalled: Boolean = false
 ): List<Variant> {
     val vcfRecord = VcfRecordUnpacked(it)
@@ -126,7 +126,7 @@ fun discoverVariants(
 fun discoverAllVariants(
     aggHeader: AggVcfHeader,
     contigVcfRecordsDF: Dataset<Row>,
-    filterRanges: org.apache.spark.broadcast.Broadcast<BedRanges>?,
+    filterRanges: org.apache.spark.broadcast.Broadcast<GRangeIndex<GRange>>?,
     onlyCalled: Boolean = false
 ): Dataset<Row> {
     val contigId = aggHeader.contigId
@@ -147,22 +147,20 @@ fun discoverAllVariants(
 }
 
 /**
- * Discover all variants & collect them into a range-sorted array for each contig (rid).
- * TODO: contig-by-contig serialization if the variants grow too large for broadcast
+ * Discover all variants & collect them into a local GRangeIndex.
  */
 fun collectAllVariants(
     aggHeader: AggVcfHeader,
     contigVcfRecordsDF: Dataset<Row>,
-    filterRanges: org.apache.spark.broadcast.Broadcast<BedRanges>?,
+    filterRanges: org.apache.spark.broadcast.Broadcast<GRangeIndex<GRange>>?,
     onlyCalled: Boolean = false
-): Array<Array<Variant>> {
-    val ans: Array<MutableList<Variant>> = Array(aggHeader.contigs.size) { mutableListOf() }
-    discoverAllVariants(aggHeader, contigVcfRecordsDF, filterRanges, onlyCalled)
-        .orderBy("rid", "beg", "end", "ref", "alt")
-        .toLocalIterator()
-        .forEach {
-            val vt = Variant(it)
-            ans[vt.range.rid.toInt()].add(vt)
-        }
-    return ans.map { it.toTypedArray() }.toTypedArray()
+): GRangeIndex<Variant> {
+    return GRangeIndex<Variant>(
+        discoverAllVariants(aggHeader, contigVcfRecordsDF, filterRanges, onlyCalled)
+            .orderBy("rid", "beg", "end", "ref", "alt")
+            .toLocalIterator()
+            .map { Variant(it) },
+        { it.range },
+        alreadySorted = true
+    )
 }

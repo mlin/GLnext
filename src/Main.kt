@@ -15,7 +15,7 @@ import org.apache.log4j.LogManager
 import org.apache.spark.sql.*
 import org.jetbrains.kotlinx.spark.api.*
 
-data class SparkConfig(val compressTempRecords: Boolean, val compressTempFiles: Boolean)
+data class SparkConfig(val compressTempFiles: Boolean)
 data class DiscoveryConfig(val allowDuplicateSamples: Boolean, val minCopies: Int)
 data class MainConfig(
     val spark: SparkConfig,
@@ -120,7 +120,15 @@ class CLI : CliktCommand() {
             logger.info("contigs: ${aggHeader.contigId.size.pretty()}")
 
             val filterRangesB = filterBed?.let {
-                val filterRanges = BedRanges(aggHeader.contigId, fileReaderDetectGz(it))
+                val filterRanges = indexBED(aggHeader.contigId, fileReaderDetectGz(it))
+                filterRanges.all().forEach { id ->
+                    require(
+                        !filterRanges.overlapping(
+                            filterRanges.item(id)
+                        ).filter { it != id }.any(),
+                        { "BED ranges must be non-overlapping" }
+                    )
+                }
                 logger.info("BED filter ranges: ${filterRanges.size}")
                 org.apache.spark.api.java.JavaSparkContext(spark.sparkContext)
                     .broadcast(filterRanges)
@@ -128,6 +136,7 @@ class CLI : CliktCommand() {
 
             // accumulators
             val allRecordCount = spark.sparkContext.longAccumulator("unfiltered VCF records")
+            val vcfRecordBatchCount = spark.sparkContext.longAccumulator("VCF record batches")
             val vcfRecordCount = spark.sparkContext.longAccumulator("input VCF records")
             val vcfRecordBytes = spark.sparkContext.longAccumulator("input VCF bytes)")
             val pvcfRecordCount = spark.sparkContext.longAccumulator("pVCF records")
@@ -139,9 +148,10 @@ class CLI : CliktCommand() {
                 aggHeader,
                 filterRangesB,
                 andDelete = deleteInputVcfs,
+                unfilteredRecordCount = allRecordCount,
+                recordBatchCount = vcfRecordBatchCount,
                 recordCount = vcfRecordCount,
-                recordBytes = vcfRecordBytes,
-                unfilteredRecordCount = allRecordCount
+                recordBytes = vcfRecordBytes
             ).cache()
 
             // discover & collect all variants
@@ -151,15 +161,14 @@ class CLI : CliktCommand() {
                 filterRangesB,
                 onlyCalled = cfg.discovery.minCopies > 0
             )
-            var variantCount = 0
-            variants.forEach { variantCount += it.size }
             filterRangesB?.let {
                 it.unpersist()
                 logger.info("unfiltered VCF records: ${allRecordCount.sum().pretty()}")
             }
             logger.info("input VCF records: ${vcfRecordCount.sum().pretty()}")
             logger.info("input VCF bytes: ${vcfRecordBytes.sum().pretty()}")
-            logger.info("joint variants: $variantCount")
+            logger.info("contiguous VCF record batches: ${vcfRecordBatchCount.sum().pretty()}")
+            logger.info("joint variants: ${variants.size.pretty()}")
 
             // perform joint-calling
             val pvcfHeaderMetaLines = listOf(
@@ -178,7 +187,7 @@ class CLI : CliktCommand() {
             // vcfRecordsDF.unpersist()
 
             logger.info("pVCF bytes: ${pvcfRecordBytes.sum().pretty()}")
-            check(pvcfRecordCount.sum() == variantCount.toLong())
+            check(pvcfRecordCount.sum() == variants.size.toLong())
 
             // reorganize part files
             reorgJointFiles(spark, pvcfDir, aggHeader)

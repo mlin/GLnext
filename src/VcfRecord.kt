@@ -1,12 +1,7 @@
 
-import kotlin.math.max
-import org.apache.hadoop.fs.Path
-import org.apache.spark.api.java.JavaSparkContext
 import org.apache.spark.api.java.function.*
 import org.apache.spark.sql.*
-import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.types.*
-import org.apache.spark.util.LongAccumulator
 import org.jetbrains.kotlinx.spark.api.*
 import org.xerial.snappy.Snappy
 
@@ -73,59 +68,6 @@ fun parseVcfRecordInfo(info: String): Map<String, String> {
             check(kv.size == 1 || kv.size == 2)
             kv[0] to (if (kv.size > 1) kv[1] else "")
         }.toTypedArray()
-    )
-}
-
-/**
- * From multiple VCF files (with aggregated header), construct DataFrame of VcfRecord Rows
- */
-fun readVcfRecordsDF(
-    spark: SparkSession,
-    aggHeader: AggVcfHeader,
-    filterRanges: org.apache.spark.broadcast.Broadcast<BedRanges>?,
-    compressEachRecord: Boolean = false,
-    deleteInputVcfs: Boolean = false,
-    recordCount: LongAccumulator? = null,
-    recordBytes: LongAccumulator? = null,
-    unfilteredRecordCount: LongAccumulator? = null
-): Dataset<Row> {
-    val jsc = JavaSparkContext(spark.sparkContext)
-
-    val filenamesWithCallsetIds = jsc.parallelize(aggHeader.filenameCallsetId.toList())
-        .repartition(max(jsc.defaultParallelism(), 4 * aggHeader.filenameCallsetId.size))
-    val contigId = aggHeader.contigId
-    // flatMap each filename+callsetId onto all the records in the file
-    return spark.createDataFrame(
-        filenamesWithCallsetIds.flatMap(
-            FlatMapFunction<Pair<String, Int>, Row> {
-                    p ->
-                val (filename, callsetId) = p
-                sequence {
-                    val fs = getFileSystem(filename)
-                    fileReaderDetectGz(filename, fs).useLines {
-                        it.forEach {
-                                line ->
-                            if (line.length > 0 && line.get(0) != '#') {
-                                val rec = parseVcfRecord(contigId, callsetId, line)
-                                unfilteredRecordCount?.add(1L)
-                                if (filterRanges?.let {
-                                        it.value!!.hasOverlapping(rec.range)
-                                    } ?: true
-                                ) {
-                                    recordCount?.let { it.add(1L) }
-                                    recordBytes?.let { it.add(line.length + 1L) }
-                                    yield(rec.toRow(compressEachRecord))
-                                }
-                            }
-                        }
-                    }
-                    if (deleteInputVcfs) {
-                        fs.delete(Path(filename), false)
-                    }
-                }.iterator()
-            }
-        ),
-        VcfRecordStructType(compressEachRecord)
     )
 }
 

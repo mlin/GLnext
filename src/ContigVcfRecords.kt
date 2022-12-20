@@ -7,11 +7,12 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.types.*
 import org.apache.spark.util.LongAccumulator
 import org.jetbrains.kotlinx.spark.api.*
+import org.xerial.snappy.Snappy
 
 /**
  * Batch of contiguous VCF records: ID of the source callset, bounding GRange, and text lines
  */
-data class ContigVcfRecords(val callsetId: Int, val range: GRange, val lines: String) :
+data class ContigVcfRecords(val callsetId: Int, val range: GRange, val snappyLines: ByteArray) :
     java.io.Serializable {
     constructor(row: Row) :
         this(
@@ -21,13 +22,16 @@ data class ContigVcfRecords(val callsetId: Int, val range: GRange, val lines: St
                 row.getAs<Int>("beg"),
                 row.getAs<Int>("end")
             ),
-            row.getAs<String>("lines")
+            row.getAs<ByteArray>("snappyLines")
         )
     fun toRow(): Row {
-        return RowFactory.create(callsetId, range.rid, range.beg, range.end, lines)
+        return RowFactory.create(callsetId, range.rid, range.beg, range.end, snappyLines)
     }
     fun records(contigId: Map<String, Short>): Sequence<VcfRecord> {
-        return lines.splitToSequence("\n").map { parseVcfRecord(contigId, callsetId, it) }
+        // TODO: streaming approach
+        return String(Snappy.uncompress(snappyLines))
+            .splitToSequence("\n")
+            .map { parseVcfRecord(contigId, callsetId, it) }
     }
 }
 
@@ -40,60 +44,60 @@ fun ContigVcfRecordsStructType(): StructType {
         .add("rid", DataTypes.ShortType, false)
         .add("beg", DataTypes.IntegerType, false)
         .add("end", DataTypes.IntegerType, false)
-        .add("lines", DataTypes.StringType, false)
+        .add("snappyLines", DataTypes.BinaryType, false)
 }
 
 /**
- * Read a complete VCF file to generate a sequence of ContigVcfRecords grouped by CHROM
+ * Read a complete VCF file to generate a sequence of ContigVcfRecords for each range in ranges.
+ * If ranges is omitted, then one ContigVcfRecords per CHROM.
  */
 fun readContigVcfRecords(
     contigId: Map<String, Short>,
     callsetId: Int,
     filename: String,
-    filterRanges: org.apache.spark.broadcast.Broadcast<BedRanges>?,
+    ranges: GRangeIndex<GRange>?,
     andDelete: Boolean = false,
+    unfilteredRecordCount: LongAccumulator? = null,
     recordCount: LongAccumulator? = null,
-    recordBytes: LongAccumulator? = null,
-    unfilteredRecordCount: LongAccumulator? = null
+    recordBytes: LongAccumulator? = null
 ): Sequence<ContigVcfRecords> {
-    return sequence {
-        var rid: Short = -1
-        var ridLines: MutableList<String> = mutableListOf()
-        fun compileRidLines(): ContigVcfRecords {
-            check(rid >= 0 && !ridLines.isEmpty())
-            val range = GRange(rid, 1, 999999999) // TODO: real beg/end positions
-            return ContigVcfRecords(callsetId, range, ridLines.joinToString("\n"))
-        }
+    val effRanges = ranges ?: GRangeIndex<GRange>(
+        contigId.values.map {
+            GRange(it, 1, Int.MAX_VALUE)
+        }.iterator(),
+        { it }
+    )
+    val recordStream = sequence {
         val fs = getFileSystem(filename)
         fileReaderDetectGz(filename, fs).useLines {
-            it.forEach {
-                    line ->
+            it.forEach { line ->
                 if (line.length > 0 && line.get(0) != '#') {
                     val tsv = line.splitToSequence('\t').take(VcfColumn.INFO.ordinal + 1)
                         .toList().toTypedArray()
                     val lineRange = parseVcfRecordRange(contigId, tsv)
-                    if (lineRange.rid != rid && !ridLines.isEmpty()) {
-                        yield(compileRidLines())
-                        ridLines = mutableListOf()
-                    }
-                    rid = lineRange.rid
                     unfilteredRecordCount?.add(1L)
-                    if (filterRanges?.let {
-                            it.value!!.hasOverlapping(lineRange)
-                        } ?: true
-                    ) {
-                        ridLines.add(line)
-                        recordCount?.let { it.add(1L) }
-                        recordBytes?.let { it.add(line.length + 1L) }
-                    }
+                    yield(lineRange to line)
                 }
             }
         }
-        if (!ridLines.isEmpty()) {
-            yield(compileRidLines())
-        }
         if (andDelete) {
             fs.delete(Path(filename), false)
+        }
+    }
+    return sequence {
+        effRanges.streamingJoin(recordStream.iterator(), { it.first }).forEach { (rangeId, lines) ->
+            val concatLines = lines.map { (_, line) ->
+                recordCount?.let { it.add(1L) }
+                recordBytes?.let { it.add(line.length + 1L) }
+                line
+            }.joinToString("\n")
+            yield(
+                ContigVcfRecords(
+                    callsetId,
+                    effRanges.item(rangeId),
+                    Snappy.compress(concatLines.toByteArray())
+                )
+            )
         }
     }
 }
@@ -104,11 +108,12 @@ fun readContigVcfRecords(
 fun readAllContigVcfRecords(
     spark: SparkSession,
     aggHeader: AggVcfHeader,
-    filterRanges: org.apache.spark.broadcast.Broadcast<BedRanges>?,
+    ranges: org.apache.spark.broadcast.Broadcast<GRangeIndex<GRange>>?,
     andDelete: Boolean = false,
+    unfilteredRecordCount: LongAccumulator? = null,
+    recordBatchCount: LongAccumulator? = null,
     recordCount: LongAccumulator? = null,
-    recordBytes: LongAccumulator? = null,
-    unfilteredRecordCount: LongAccumulator? = null
+    recordBytes: LongAccumulator? = null
 ): Dataset<Row> {
     val jsc = JavaSparkContext(spark.sparkContext)
 
@@ -125,13 +130,15 @@ fun readAllContigVcfRecords(
                     contigId,
                     callsetId,
                     filename,
-                    filterRanges = filterRanges,
+                    ranges = ranges?.value,
                     andDelete = andDelete,
+                    unfilteredRecordCount = unfilteredRecordCount,
                     recordCount = recordCount,
-                    recordBytes = recordBytes,
-                    unfilteredRecordCount = unfilteredRecordCount
-                )
-                    .map { it.toRow() }.iterator()
+                    recordBytes = recordBytes
+                ).map {
+                    recordBatchCount?.let { it.add(1L) }
+                    it.toRow()
+                }.iterator()
             }
         ),
         ContigVcfRecordsStructType()
