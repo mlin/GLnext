@@ -37,7 +37,8 @@ main() {
     dx-spark-submit --log-level WARN --collect-logs \
         --conf spark.driver.defaultJavaOptions="$all_java_options" \
         --conf spark.executor.defaultJavaOptions="$all_java_options" \
-        --conf spark.executor.memory=80g \
+        --conf spark.memoryfraction=0.3 \
+        --conf spark.executor.memory=75g \
         --conf spark.driver.maxResultSize=0 \
         --conf spark.task.maxFailures=3 \
         --conf spark.stage.maxConsecutiveAttempts=2 \
