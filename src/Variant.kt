@@ -120,24 +120,32 @@ fun discoverVariants(
 }
 
 /**
- * Harvest all distinct Variants from ContigVcfRecords DataFrame.
+ * Harvest all distinct Variants from VcfRecordDbs
  * onlyCalled: only include variants with at least one copy called in a sample GT
  */
 fun discoverAllVariants(
     aggHeader: AggVcfHeader,
-    contigVcfRecordsDF: Dataset<Row>,
+    vcfRecordDbsDF: Dataset<Row>,
     filterRanges: org.apache.spark.broadcast.Broadcast<GRangeIndex<GRange>>?,
     onlyCalled: Boolean = false
 ): Dataset<Row> {
     val contigId = aggHeader.contigId
-    return contigVcfRecordsDF
+    return vcfRecordDbsDF
         .flatMap(
-            FlatMapFunction<Row, Row> {
-                    row ->
+            FlatMapFunction<Row, Row> { row ->
+                val callsetId = row.getAs<Int>("callsetId")
                 sequence {
-                    ContigVcfRecords(row).records(contigId).forEach {
-                        discoverVariants(it, filterRanges, onlyCalled).forEach {
-                            yield(it.toRow())
+                    openVcfRecordDb(row.getAs<String>("dbFilename")).use { dbc ->
+                        dbc.createStatement().use { stmt ->
+                            val rs = stmt.executeQuery("SELECT line from VcfRecord")
+                            while (rs.next()) {
+                                val line = rs.getString("line")
+                                val rec = parseVcfRecord(contigId, callsetId, line)
+                                yieldAll(
+                                    discoverVariants(rec, filterRanges, onlyCalled)
+                                        .map { it.toRow() }
+                                )
+                            }
                         }
                     }
                 }.iterator()
@@ -151,12 +159,12 @@ fun discoverAllVariants(
  */
 fun collectAllVariants(
     aggHeader: AggVcfHeader,
-    contigVcfRecordsDF: Dataset<Row>,
+    vcfRecordDbsDF: Dataset<Row>,
     filterRanges: org.apache.spark.broadcast.Broadcast<GRangeIndex<GRange>>?,
     onlyCalled: Boolean = false
 ): GRangeIndex<Variant> {
     return GRangeIndex<Variant>(
-        discoverAllVariants(aggHeader, contigVcfRecordsDF, filterRanges, onlyCalled)
+        discoverAllVariants(aggHeader, vcfRecordDbsDF, filterRanges, onlyCalled)
             .orderBy("rid", "beg", "end", "ref", "alt")
             .toLocalIterator()
             .map { Variant(it) },

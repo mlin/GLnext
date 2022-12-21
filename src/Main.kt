@@ -119,6 +119,7 @@ class CLI : CliktCommand() {
             }
             logger.info("contigs: ${aggHeader.contigId.size.pretty()}")
 
+            val jsc = org.apache.spark.api.java.JavaSparkContext(spark.sparkContext)
             val filterRangesB = filterBed?.let {
                 val filterRanges = indexBED(aggHeader.contigId, fileReaderDetectGz(it))
                 filterRanges.all().forEach { id ->
@@ -130,26 +131,22 @@ class CLI : CliktCommand() {
                     )
                 }
                 logger.info("BED filter ranges: ${filterRanges.size}")
-                org.apache.spark.api.java.JavaSparkContext(spark.sparkContext)
-                    .broadcast(filterRanges)
+                jsc.broadcast(filterRanges)
             }
 
             // accumulators
             val allRecordCount = spark.sparkContext.longAccumulator("unfiltered VCF records")
-            val vcfRecordBatchCount = spark.sparkContext.longAccumulator("VCF record batches")
             val vcfRecordCount = spark.sparkContext.longAccumulator("input VCF records")
             val vcfRecordBytes = spark.sparkContext.longAccumulator("input VCF bytes)")
             val pvcfRecordCount = spark.sparkContext.longAccumulator("pVCF records")
             val pvcfRecordBytes = spark.sparkContext.longAccumulator("pVCF bytes")
 
-            // read all input VCF files (into a contiguous chunk per chromosome per callset)
-            var contigVcfRecordsDF = readAllContigVcfRecords(
+            val dbs = loadAllVcfRecordDbs(
                 spark,
                 aggHeader,
                 filterRangesB,
                 andDelete = deleteInputVcfs,
                 unfilteredRecordCount = allRecordCount,
-                recordBatchCount = vcfRecordBatchCount,
                 recordCount = vcfRecordCount,
                 recordBytes = vcfRecordBytes
             ).cache()
@@ -157,7 +154,7 @@ class CLI : CliktCommand() {
             // discover & collect all variants
             val variants = collectAllVariants(
                 aggHeader,
-                contigVcfRecordsDF,
+                dbs,
                 filterRangesB,
                 onlyCalled = cfg.discovery.minCopies > 0
             )
@@ -167,8 +164,20 @@ class CLI : CliktCommand() {
             }
             logger.info("input VCF records: ${vcfRecordCount.sum().pretty()}")
             logger.info("input VCF bytes: ${vcfRecordBytes.sum().pretty()}")
-            logger.info("contiguous VCF record batches: ${vcfRecordBatchCount.sum().pretty()}")
             logger.info("joint variants: ${variants.size.pretty()}")
+            /*
+            require(false)
+
+            // read all input VCF files (into a contiguous chunk per chromosome per callset)
+            var contigVcfRecordsDF = readAllContigVcfRecords(
+                spark,
+                aggHeader,
+                filterRangesB,
+                andDelete = deleteInputVcfs,
+                unfilteredRecordCount = allRecordCount,
+                recordCount = vcfRecordCount,
+                recordBytes = vcfRecordBytes
+            ).cache()
 
             // perform joint-calling
             val pvcfHeaderMetaLines = listOf(
@@ -194,6 +203,7 @@ class CLI : CliktCommand() {
 
             // write output VCF header & BGZF EOF marker
             writeHeaderAndEOF(pvcfHeader, pvcfDir)
+            */
         }
     }
 }
