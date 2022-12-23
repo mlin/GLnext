@@ -12,6 +12,7 @@ import java.util.Properties
 import org.apache.hadoop.fs.Path
 import org.apache.log4j.Level
 import org.apache.log4j.LogManager
+import org.apache.spark.api.java.function.ForeachPartitionFunction
 import org.apache.spark.sql.*
 import org.jetbrains.kotlinx.spark.api.*
 
@@ -141,7 +142,7 @@ class CLI : CliktCommand() {
             val pvcfRecordCount = spark.sparkContext.longAccumulator("pVCF records")
             val pvcfRecordBytes = spark.sparkContext.longAccumulator("pVCF bytes")
 
-            val dbs = loadAllVcfRecordDbs(
+            val dbsDF = loadAllVcfRecordDbs(
                 spark,
                 aggHeader,
                 filterRangesB,
@@ -151,10 +152,10 @@ class CLI : CliktCommand() {
                 recordBytes = vcfRecordBytes
             ).cache()
 
-            // discover & collect all variants
-            val variants = collectAllVariants(
+            // discover & collect all variants into a database file local to the driver
+            val (variantCount, variantsDbFilename) = collectAllVariantsDb(
                 aggHeader,
-                dbs,
+                dbsDF,
                 filterRangesB,
                 onlyCalled = cfg.discovery.minCopies > 0
             )
@@ -164,20 +165,36 @@ class CLI : CliktCommand() {
             }
             logger.info("input VCF records: ${vcfRecordCount.sum().pretty()}")
             logger.info("input VCF bytes: ${vcfRecordBytes.sum().pretty()}")
-            logger.info("joint variants: ${variants.size.pretty()}")
-            /*
-            require(false)
+            logger.info("joint variants: ${variantCount.pretty()}")
+            val variantsDbFile = File(variantsDbFilename)
+            logger.info("variants DB compressed: ${variantsDbFile.length().pretty()} bytes")
+            require(
+                variantsDbFile.length() <= Int.MAX_VALUE.toLong(),
+                { "compressed variants database is larger than 2GB!" }
+            )
 
-            // read all input VCF files (into a contiguous chunk per chromosome per callset)
-            var contigVcfRecordsDF = readAllContigVcfRecords(
-                spark,
-                aggHeader,
-                filterRangesB,
-                andDelete = deleteInputVcfs,
-                unfilteredRecordCount = allRecordCount,
-                recordCount = vcfRecordCount,
-                recordBytes = vcfRecordBytes
-            ).cache()
+            // broadcast the variants database to the same temp filename on each executor
+            // TODO: send through HDFS since compressed database could be larger than 2GB!
+            val variantsDbB = jsc.broadcast(variantsDbFile.readBytes())
+            val variantsDbCopies = spark.sparkContext.longAccumulator("variants database copies")
+            dbsDF.foreachPartition(
+                ForeachPartitionFunction<Row> {
+                    val localDb = File(variantsDbFilename)
+                    if (!localDb.isFile()) {
+                        val temp = File.createTempFile("broadcast.", "", localDb.getParentFile()!!)
+                        temp.writeBytes(variantsDbB.value)
+                        if (!localDb.isFile()) {
+                            temp.renameTo(localDb)
+                            variantsDbCopies.add(1L)
+                        } else {
+                            temp.delete()
+                        }
+                    }
+                    check(localDb.length() == variantsDbB.value.size.toLong())
+                }
+            )
+            variantsDbB.unpersist(true)
+            logger.info("variants DB broadcast: ${variantsDbCopies.sum().pretty()} copies")
 
             // perform joint-calling
             val pvcfHeaderMetaLines = listOf(
@@ -186,7 +203,7 @@ class CLI : CliktCommand() {
             )
             val (pvcfHeader, pvcfLines) = jointCall(
                 logger, cfg.joint, spark, aggHeader,
-                variants, contigVcfRecordsDF, pvcfHeaderMetaLines,
+                variantsDbFilename, dbsDF, pvcfHeaderMetaLines,
                 pvcfRecordCount, pvcfRecordBytes
             )
 
@@ -196,14 +213,13 @@ class CLI : CliktCommand() {
             // vcfRecordsDF.unpersist()
 
             logger.info("pVCF bytes: ${pvcfRecordBytes.sum().pretty()}")
-            check(pvcfRecordCount.sum() == variants.size.toLong())
+            check(pvcfRecordCount.sum() == variantCount.toLong())
 
             // reorganize part files
             reorgJointFiles(spark, pvcfDir, aggHeader)
 
             // write output VCF header & BGZF EOF marker
             writeHeaderAndEOF(pvcfHeader, pvcfDir)
-            */
         }
     }
 }

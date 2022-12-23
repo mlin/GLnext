@@ -1,4 +1,6 @@
+import java.io.File
 import kotlin.math.min
+import net.mlin.genomicsqlite.GenomicSQLite
 import org.apache.spark.api.java.function.FlatMapFunction
 import org.apache.spark.sql.*
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
@@ -20,6 +22,16 @@ data class Variant(val range: GRange, val ref: String, val alt: String) :
             ),
             row.getAs<String>("ref"),
             row.getAs<String>("alt")
+        )
+    constructor(rs: java.sql.ResultSet) :
+        this(
+            GRange(
+                rs.getShort("rid"),
+                rs.getInt("beg") + 1,
+                rs.getInt("end")
+            ),
+            rs.getString("ref"),
+            rs.getString("alt")
         )
     override fun compareTo(other: Variant) = compareValuesBy(
         this,
@@ -134,20 +146,15 @@ fun discoverAllVariants(
         .flatMap(
             FlatMapFunction<Row, Row> { row ->
                 val callsetId = row.getAs<Int>("callsetId")
+                val dbFilename = row.getAs<String>("dbFilename")
                 sequence {
-                    openVcfRecordDb(row.getAs<String>("dbFilename")).use { dbc ->
-                        dbc.createStatement().use { stmt ->
-                            val rs = stmt.executeQuery("SELECT line from VcfRecord")
-                            while (rs.next()) {
-                                val line = rs.getString("line")
-                                val rec = parseVcfRecord(contigId, callsetId, line)
-                                yieldAll(
-                                    discoverVariants(rec, filterRanges, onlyCalled)
-                                        .map { it.toRow() }
-                                )
-                            }
+                    scanVcfRecordDb(contigId, callsetId, dbFilename)
+                        .forEach { rec ->
+                            yieldAll(
+                                discoverVariants(rec, filterRanges, onlyCalled)
+                                    .map { it.toRow() }
+                            )
                         }
-                    }
                 }.iterator()
             },
             VariantRowEncoder()
@@ -171,4 +178,66 @@ fun collectAllVariants(
         { it.range },
         alreadySorted = true
     )
+}
+
+/**
+ * Discover all variants & collect them into a database file local to the driver.
+ */
+fun collectAllVariantsDb(
+    aggHeader: AggVcfHeader,
+    vcfRecordDbsDF: Dataset<Row>,
+    filterRanges: org.apache.spark.broadcast.Broadcast<GRangeIndex<GRange>>?,
+    onlyCalled: Boolean = false
+): Pair<Int, String> {
+    val tempFile = File.createTempFile("Variant.", ".genomicsqlite")
+    val tempFilename = tempFile.absolutePath
+    tempFile.delete()
+
+    var variantId = 0
+
+    createGenomicSQLiteForBulkLoad(tempFilename, threads = 8).use { dbc ->
+        dbc.createStatement().use {
+            it.executeUpdate(
+                """
+                CREATE TABLE Variant(
+                    variantId INTEGER PRIMARY KEY,
+                    rid INTEGER NOT NULL,
+                    beg INTEGER NOT NULL,
+                    end INTEGER NOT NULL,
+                    ref TEXT NOT NULL,
+                    alt TEXT NOT NULL
+                )
+            """
+            )
+        }
+        dbc.prepareStatement("INSERT INTO Variant VALUES(?,?,?,?,?,?)").use { insert ->
+            discoverAllVariants(aggHeader, vcfRecordDbsDF, filterRanges, onlyCalled)
+                .orderBy("rid", "beg", "end", "ref", "alt")
+                .toLocalIterator()
+                .forEach { row ->
+                    insert.setInt(1, variantId)
+                    insert.setInt(2, row.getAs<Int>("rid"))
+                    insert.setInt(3, row.getAs<Int>("beg") - 1)
+                    insert.setInt(4, row.getAs<Int>("end"))
+                    insert.setString(5, row.getAs<String>("ref"))
+                    insert.setString(6, row.getAs<String>("alt"))
+                    insert.executeUpdate()
+                    variantId += 1
+                }
+        }
+        dbc.createStatement().use {
+            it.executeUpdate(
+                GenomicSQLite.createGenomicRangeIndexSQL(
+                    dbc,
+                    "Variant",
+                    "rid",
+                    "beg",
+                    "end"
+                )
+            )
+        }
+        dbc.commit()
+    }
+
+    return variantId to tempFilename
 }

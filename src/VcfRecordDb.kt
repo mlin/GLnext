@@ -22,25 +22,12 @@ fun loadVcfRecordDb(
     recordCount: LongAccumulator? = null,
     recordBytes: LongAccumulator? = null
 ): String {
-    Class.forName("net.mlin.genomicsqlite.JdbcDriver")
     val fs = getFileSystem(filename)
-    val tempFile = File.createTempFile("VcfRecordDb.", ".genomicsqlite")
+    val tempFile = File.createTempFile("VcfRecord.", ".genomicsqlite")
     val tempFilename = tempFile.absolutePath
     tempFile.delete()
 
-    val config = java.util.Properties()
-    config.setProperty(
-        "genomicsqlite.config_json",
-        """{
-            "threads": 2,
-            "zstd_level": 1,
-            "unsafe_load": true,
-            "page_cache_MiB": 256
-        }"""
-    )
-
-    DriverManager.getConnection("jdbc:genomicsqlite:" + tempFilename, config).use { dbc ->
-        dbc.setAutoCommit(false)
+    createGenomicSQLiteForBulkLoad(tempFilename).use { dbc ->
         dbc.createStatement().use {
             it.executeUpdate(
                 """
@@ -134,15 +121,20 @@ fun loadAllVcfRecordDbs(
     )
 }
 
-fun openVcfRecordDb(filename: String): Connection {
-    val props = java.util.Properties()
-    props.setProperty(
-        "genomicsqlite.config_json",
-        """{
-            "threads": 2,
-            "page_cache_MiB": 256,
-            "immutable": true
-        }"""
-    )
-    return DriverManager.getConnection("jdbc:genomicsqlite:" + filename, props)
+fun scanVcfRecordDb(
+    contigId: Map<String, Short>,
+    callsetId: Int,
+    filename: String
+): Sequence<VcfRecord> {
+    return sequence {
+        openGenomicSQLiteReadOnly(filename).use { dbc ->
+            dbc.createStatement().use { stmt ->
+                val rs = stmt.executeQuery("SELECT line from VcfRecord")
+                while (rs.next()) {
+                    val line = rs.getString("line")
+                    yield(parseVcfRecord(contigId, callsetId, line))
+                }
+            }
+        }
+    }
 }

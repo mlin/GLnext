@@ -1,4 +1,7 @@
 import java.io.*
+import java.sql.*
+import java.util.Properties
+import org.apache.commons.dbcp2.BasicDataSource
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
 
@@ -47,4 +50,101 @@ fun fileReaderDetectGz(
         instream = java.util.zip.GZIPInputStream(instream, bufferSize)
     }
     return instream.reader().buffered(bufferSize)
+}
+
+fun createGenomicSQLiteForBulkLoad(filename: String, threads: Int = 2): Connection {
+    Class.forName("net.mlin.genomicsqlite.JdbcDriver")
+
+    val config = Properties()
+    config.setProperty(
+        "genomicsqlite.config_json",
+        """{
+            "threads": $threads,
+            "zstd_level": 1,
+            "unsafe_load": true,
+            "page_cache_MiB": 256
+        }"""
+    )
+
+    val dbc = DriverManager.getConnection("jdbc:genomicsqlite:" + filename, config)
+    dbc.setAutoCommit(false)
+    return dbc
+}
+
+fun getGenomicSQLiteReadOnlyConfigJSON(threads: Int = 2): String {
+    return """{
+            "threads": $threads,
+            "page_cache_MiB": 256,
+            "immutable": true
+        }"""
+}
+
+fun openGenomicSQLiteReadOnly(filename: String, threads: Int = 2): Connection {
+    val config = Properties()
+    config.setProperty(
+        "genomicsqlite.config_json",
+        getGenomicSQLiteReadOnlyConfigJSON(threads = threads)
+    )
+    return DriverManager.getConnection("jdbc:genomicsqlite:" + filename, config)
+}
+
+class GenomicSQLiteReadOnlyPool {
+    companion object {
+        @Volatile
+        private var INSTANCE: BasicDataSource? = null
+        private var dbFilename: String? = null
+
+        @Synchronized
+        fun get(dbFilename: String): BasicDataSource {
+            if (INSTANCE == null) {
+                INSTANCE = cons(dbFilename)
+                this.dbFilename = dbFilename
+            } else {
+                require(dbFilename == this.dbFilename)
+            }
+            return INSTANCE!!
+        }
+
+        private fun cons(dbFilename: String): BasicDataSource {
+            val ans = BasicDataSource()
+            ans.setDriverClassName("net.mlin.genomicsqlite.JdbcDriver")
+            ans.setUrl("jdbc:genomicsqlite:" + dbFilename)
+            ans.addConnectionProperty(
+                "genomicsqlite.config_json",
+                getGenomicSQLiteReadOnlyConfigJSON()
+            )
+            val ncpu = Runtime.getRuntime().availableProcessors()
+            ans.setMaxIdle(ncpu)
+            ans.setMaxTotal(ncpu)
+            ans.setPoolPreparedStatements(true)
+            return ans
+        }
+    }
+}
+
+class ExitStack : AutoCloseable {
+    private var resources: ArrayDeque<AutoCloseable> = ArrayDeque()
+
+    fun <T : AutoCloseable> add(resource: T): T {
+        resources.add(resource)
+        return resource
+    }
+
+    override fun close() {
+        var firstExc: Throwable? = null
+        var resource: AutoCloseable? = resources.removeLastOrNull()
+        while (resource != null) {
+            try {
+                resource.close()
+            } catch (exc: Throwable) {
+                if (firstExc == null) {
+                    firstExc = exc
+                }
+            }
+            resource = resources.removeLastOrNull()
+        }
+        if (firstExc != null) {
+            throw firstExc
+        }
+    }
 }

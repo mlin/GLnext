@@ -1,7 +1,6 @@
 
 import java.io.Serializable
 import kotlin.math.pow
-import net.mlin.iitj.IntegerIntervalTree
 import org.apache.log4j.Logger
 import org.apache.spark.api.java.JavaRDD
 import org.apache.spark.api.java.JavaSparkContext
@@ -33,16 +32,16 @@ data class JointConfig(
 ) : Serializable
 
 /**
- * From variants & contigVcfRecordsDF, generate pVCF header and sorted RDD of the pVCF lines
- *     (variantId, sampleId, pvcfEntry)
+ * From local databases of variants & VCF records, generate pVCF header and sorted RDD of the pVCF
+ * lines
  */
 fun jointCall(
     logger: Logger,
     cfg: JointConfig,
     spark: SparkSession,
     aggHeader: AggVcfHeader,
-    variants: GRangeIndex<Variant>,
-    contigVcfRecordsDF: Dataset<Row>,
+    variantsDbFilename: String,
+    vcfRecordDbsDF: Dataset<Row>,
     pvcfHeaderMetaLines: List<String> = emptyList(),
     pvcfRecordCount: LongAccumulator? = null,
     pvcfRecordBytes: LongAccumulator? = null
@@ -52,24 +51,24 @@ fun jointCall(
     val jsc = JavaSparkContext(spark.sparkContext)
     val aggHeaderB = jsc.broadcast(aggHeader)
     val fieldsGenB = jsc.broadcast(JointFieldsGenerator(cfg, aggHeader))
-    val variantsB = jsc.broadcast(variants)
 
-    // make big DataFrame of genotype entries: (variantId, sampleId, pvcfEntry)
-    val entriesDF = contigVcfRecordsDF.flatMap(
+    // make big DataFrame of pVCF genotype entries: (variantId, sampleId, pvcfEntry)
+    val entriesDF = vcfRecordDbsDF.flatMap(
         FlatMapFunction<Row, Row> {
-            generateContigVcfRecordsCalls(
+            generateJointCalls(
                 cfg,
                 aggHeaderB.value,
                 fieldsGenB.value,
-                variantsB.value,
-                ContigVcfRecords(it)
+                variantsDbFilename,
+                it.getAs<Int>("callsetId"),
+                it.getAs<String>("dbFilename")
             )
                 .map { RowFactory.create(it.first, it.second, it.third) }
                 .iterator()
         },
         RowEncoder.apply(
             StructType()
-                .add("variantId", DataTypes.LongType, false)
+                .add("variantId", DataTypes.IntegerType, false)
                 .add("sampleId", DataTypes.IntegerType, false)
                 .add("entry", DataTypes.StringType, false)
         )
@@ -77,24 +76,34 @@ fun jointCall(
 
     // group the genotype entries by variantId and generate pVCF text lines (Snappy-compressed)
     val pvcfLinesDF = entriesDF
-        .groupByKey(MapFunction<Row, Long> { it.getAs<Long>(0) }, Encoders.LONG())
+        .groupByKey(MapFunction<Row, Int> { it.getAs<Int>(0) }, Encoders.INT())
         .mapGroups(
-            MapGroupsFunction<Long, Row, Row> { variantId, variantEntries ->
-                pvcfRecordCount?.let { it.add(1L) }
-                RowFactory.create(
-                    variantId,
-                    generateJointLine(
+            MapGroupsFunction<Int, Row, Row> { variantId, variantEntries ->
+                ExitStack().use { cleanup ->
+                    // look up this variant (using pooled resources...)
+                    val variants = cleanup.add(
+                        GenomicSQLiteReadOnlyPool.get(variantsDbFilename).getConnection()
+                    )
+                    val getVariant = cleanup.add(
+                        variants.prepareStatement("SELECT * from Variant WHERE variantId = ?")
+                    )
+                    getVariant.setInt(1, variantId)
+                    val rs = cleanup.add(getVariant.executeQuery())
+                    check(rs.next())
+                    val line = generateJointLine(
                         cfg,
                         aggHeaderB.value,
                         fieldsGenB.value,
-                        variantsB.value.item(variantId),
+                        Variant(rs),
                         variantEntries
                     )
-                )
+                    pvcfRecordCount?.let { it.add(1L) }
+                    RowFactory.create(variantId, line)
+                }
             },
             RowEncoder.apply(
                 StructType()
-                    .add("variantId", DataTypes.LongType, false)
+                    .add("variantId", DataTypes.IntegerType, false)
                     .add("snappyLine", DataTypes.BinaryType, false)
             )
         ).cache() // cache() before sorting: https://stackoverflow.com/a/56310076
@@ -109,7 +118,7 @@ fun jointCall(
     return pvcfHeader to pvcfLinesDF
         .toJavaRDD()
         .sortBy(
-            Function<Row, Long> { it.getAs<Long>(0) },
+            Function<Row, Int> { it.getAs<Int>(0) },
             true,
             // Coalesce to fewer partitions now that the data size has been reduced, to output a
             // smaller number of reasonably-sized pVCF part files.
@@ -125,53 +134,84 @@ fun jointCall(
         )
 }
 
-fun generateContigVcfRecordsCalls(
+fun generateJointCalls(
     cfg: JointConfig,
     aggHeader: AggVcfHeader,
     fieldsGen: JointFieldsGenerator,
-    variants: GRangeIndex<Variant>,
-    it: ContigVcfRecords
-): Sequence<Triple<Long, Int, String>> {
-    // extract the individual records & index them for interval query
-    val callsetId = it.callsetId
-    val records = it.records(aggHeader.contigId).toList().toTypedArray()
-    val rid = records[0].range.rid
-    val treeBuilder = IntegerIntervalTree.Builder()
-    records.forEach {
-        check(it.range.rid == rid)
-        treeBuilder.add(it.range.beg - 1, it.range.end)
-    }
-    check(treeBuilder.isSorted())
-    val recordsTree = treeBuilder.build()
+    variantsDbFilename: String,
+    callsetId: Int,
+    vcfRecordsDbFilename: String
+): Sequence<Triple<Int, Int, String>> = // [(variantId, sampleId, pvcfEntry)]
+    sequence {
+        ExitStack().use { cleanup ->
+            // open databases
+            val variants = cleanup.add(
+                GenomicSQLiteReadOnlyPool.get(variantsDbFilename).getConnection()
+            )
+            val vcfRecords = cleanup.add(openGenomicSQLiteReadOnly(vcfRecordsDbFilename))
 
-    // generate the genotype entry for each variant on the relevant contig
-    return sequence {
-        variants.containedBy(it.range).forEach { variantId ->
-            val variant = variants.item(variantId)
-
-            // get the callet VCF records overlapping the variant
-            val ctx = VcfRecordsContext(
-                aggHeader,
-                variant,
-                recordsTree.queryOverlap(variant.range.beg - 1, variant.range.end).map {
-                    records[it.id]
-                }
+            // prepare GRI query for callset VCF records
+            val gri_ceiling = vcfRecords.createStatement().use { stmt ->
+                val rs = stmt.executeQuery(
+                    "SELECT _gri_ceiling FROM genomic_range_index_levels('VcfRecord')"
+                )
+                check(rs.next())
+                rs.getInt("_gri_ceiling")
+            }
+            val inner = cleanup.add(
+                vcfRecords.prepareStatement(
+                    """
+                    SELECT line FROM VcfRecord
+                    WHERE _rowid_ in genomic_range_rowids('VcfRecord', ?1, ?2, ?3, $gri_ceiling)
+                      AND end > ?2 AND beg < ?3
+                    ORDER BY beg, end
+                """
+                )
             )
 
-            // generate genotype entries
-            aggHeader.callsetsDetails[callsetId].callsetSamples.forEachIndexed {
-                    sampleIndex, sampleId ->
-                yield(
-                    Triple(
-                        variantId,
-                        sampleId,
-                        generateGenotypeAndFormatFields(cfg, fieldsGen, ctx, sampleIndex)
+            // for each variant
+            val outer = cleanup.add(variants.createStatement())
+            val ors = cleanup.add(outer.executeQuery("SELECT * FROM Variant"))
+            while (ors.next()) {
+                val variantId = ors.getInt("variantId")
+                val variant = Variant(ors)
+
+                // get overlapping callset VCF records
+                val variantRecords: MutableList<VcfRecord> = mutableListOf()
+                inner.setShort(1, variant.range.rid)
+                inner.setInt(2, variant.range.beg - 1)
+                inner.setInt(3, variant.range.end)
+                val irs = inner.executeQuery()
+                while (irs.next()) {
+                    variantRecords.add(
+                        parseVcfRecord(
+                            aggHeader.contigId,
+                            callsetId,
+                            irs.getString("line")
+                        )
                     )
-                )
+                }
+
+                // generate genotype entries
+                val ctx = VcfRecordsContext(aggHeader, variant, variantRecords)
+                aggHeader.callsetsDetails[callsetId].callsetSamples.forEachIndexed {
+                        sampleIndex, sampleId ->
+                    yield(
+                        Triple(
+                            variantId,
+                            sampleId,
+                            generateGenotypeAndFormatFields(
+                                cfg,
+                                fieldsGen,
+                                ctx,
+                                sampleIndex
+                            )
+                        )
+                    )
+                }
             }
         }
     }
-}
 
 fun generateJointLine(
     cfg: JointConfig,
