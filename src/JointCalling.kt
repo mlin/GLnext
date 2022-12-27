@@ -151,21 +151,19 @@ fun generateJointCalls(
             val vcfRecords = cleanup.add(openGenomicSQLiteReadOnly(vcfRecordsDbFilename))
 
             // prepare GRI query for callset VCF records
-            val gri_ceiling = vcfRecords.createStatement().use { stmt ->
-                val rs = stmt.executeQuery(
-                    "SELECT _gri_ceiling FROM genomic_range_index_levels('VcfRecord')"
-                )
+            val gri_sql = vcfRecords.createStatement().use { stmt ->
+                val rs = stmt.executeQuery("SELECT genomic_range_rowids_sql('VcfRecord')")
                 check(rs.next())
-                rs.getInt("_gri_ceiling")
+                rs.getString(1)
             }
             val inner = cleanup.add(
                 vcfRecords.prepareStatement(
                     """
                     SELECT line FROM VcfRecord
-                    WHERE _rowid_ in genomic_range_rowids('VcfRecord', ?1, ?2, ?3, $gri_ceiling)
+                    WHERE _rowid_ IN $gri_sql
                       AND end > ?2 AND beg < ?3
                     ORDER BY beg, end
-                """
+                    """
                 )
             )
 

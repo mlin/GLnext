@@ -162,25 +162,6 @@ fun discoverAllVariants(
 }
 
 /**
- * Discover all variants & collect them into a local GRangeIndex.
- */
-fun collectAllVariants(
-    aggHeader: AggVcfHeader,
-    vcfRecordDbsDF: Dataset<Row>,
-    filterRanges: org.apache.spark.broadcast.Broadcast<GRangeIndex<GRange>>?,
-    onlyCalled: Boolean = false
-): GRangeIndex<Variant> {
-    return GRangeIndex<Variant>(
-        discoverAllVariants(aggHeader, vcfRecordDbsDF, filterRanges, onlyCalled)
-            .orderBy("rid", "beg", "end", "ref", "alt")
-            .toLocalIterator()
-            .map { Variant(it) },
-        { it.range },
-        alreadySorted = true
-    )
-}
-
-/**
  * Discover all variants & collect them into a database file local to the driver.
  */
 fun collectAllVariantsDb(
@@ -195,47 +176,44 @@ fun collectAllVariantsDb(
 
     var variantId = 0
 
-    createGenomicSQLiteForBulkLoad(tempFilename, threads = 8).use { dbc ->
-        dbc.createStatement().use {
-            it.executeUpdate(
-                """
-                CREATE TABLE Variant(
-                    variantId INTEGER PRIMARY KEY,
-                    rid INTEGER NOT NULL,
-                    beg INTEGER NOT NULL,
-                    end INTEGER NOT NULL,
-                    ref TEXT NOT NULL,
-                    alt TEXT NOT NULL
-                )
+    ExitStack().use { cleanup ->
+        val dbc = cleanup.add(createGenomicSQLiteForBulkLoad(tempFilename, threads = 8))
+        val adhoc = cleanup.add(dbc.createStatement())
+        adhoc.executeUpdate(
             """
+            CREATE TABLE Variant(
+                variantId INTEGER PRIMARY KEY,
+                rid INTEGER NOT NULL,
+                beg INTEGER NOT NULL,
+                end INTEGER NOT NULL,
+                ref TEXT NOT NULL,
+                alt TEXT NOT NULL
             )
-        }
-        dbc.prepareStatement("INSERT INTO Variant VALUES(?,?,?,?,?,?)").use { insert ->
-            discoverAllVariants(aggHeader, vcfRecordDbsDF, filterRanges, onlyCalled)
-                .orderBy("rid", "beg", "end", "ref", "alt")
-                .toLocalIterator()
-                .forEach { row ->
-                    insert.setInt(1, variantId)
-                    insert.setInt(2, row.getAs<Int>("rid"))
-                    insert.setInt(3, row.getAs<Int>("beg") - 1)
-                    insert.setInt(4, row.getAs<Int>("end"))
-                    insert.setString(5, row.getAs<String>("ref"))
-                    insert.setString(6, row.getAs<String>("alt"))
-                    insert.executeUpdate()
-                    variantId += 1
-                }
-        }
-        dbc.createStatement().use {
-            it.executeUpdate(
-                GenomicSQLite.createGenomicRangeIndexSQL(
-                    dbc,
-                    "Variant",
-                    "rid",
-                    "beg",
-                    "end"
-                )
+            """
+        )
+        val insert = cleanup.add(dbc.prepareStatement("INSERT INTO Variant VALUES(?,?,?,?,?,?)"))
+        discoverAllVariants(aggHeader, vcfRecordDbsDF, filterRanges, onlyCalled)
+            .orderBy("rid", "beg", "end", "ref", "alt")
+            .toLocalIterator()
+            .forEach { row ->
+                insert.setInt(1, variantId)
+                insert.setInt(2, row.getAs<Int>("rid"))
+                insert.setInt(3, row.getAs<Int>("beg") - 1)
+                insert.setInt(4, row.getAs<Int>("end"))
+                insert.setString(5, row.getAs<String>("ref"))
+                insert.setString(6, row.getAs<String>("alt"))
+                insert.executeUpdate()
+                variantId += 1
+            }
+        adhoc.executeUpdate(
+            GenomicSQLite.createGenomicRangeIndexSQL(
+                dbc,
+                "Variant",
+                "rid",
+                "beg",
+                "end"
             )
-        }
+        )
         dbc.commit()
     }
 

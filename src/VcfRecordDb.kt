@@ -27,53 +27,66 @@ fun loadVcfRecordDb(
     val tempFilename = tempFile.absolutePath
     tempFile.delete()
 
-    createGenomicSQLiteForBulkLoad(tempFilename).use { dbc ->
-        dbc.createStatement().use {
-            it.executeUpdate(
-                """
-                CREATE TABLE VcfRecord(
-                    rid INTEGER NOT NULL,
-                    beg INTEGER NOT NULL,
-                    end INTEGER NOT NULL,
-                    line TEXT NOT NULL
-                )
+    var count = 0L
+    var bytes = 0L
+    ExitStack().use { cleanup ->
+        val dbc = cleanup.add(createGenomicSQLiteForBulkLoad(tempFilename))
+        val adhoc = cleanup.add(dbc.createStatement())
+        adhoc.executeUpdate(
             """
+            CREATE TABLE VcfRecord(
+                rid INTEGER NOT NULL,
+                beg INTEGER NOT NULL,
+                end INTEGER NOT NULL,
+                line TEXT NOT NULL
             )
-        }
-        dbc.prepareStatement("INSERT INTO VcfRecord VALUES(?,?,?,?)").use { insert ->
-            fileReaderDetectGz(filename, fs).useLines {
-                it.forEach { line ->
-                    if (line.length > 0 && line.get(0) != '#') {
-                        val tsv = line.splitToSequence('\t').take(VcfColumn.INFO.ordinal + 1)
-                            .toList().toTypedArray()
-                        val lineRange = parseVcfRecordRange(contigId, tsv)
-                        unfilteredRecordCount?.add(1L)
-                        if (filterRanges?.hasOverlapping(lineRange) ?: true) {
-                            insert.setInt(1, lineRange.rid.toInt())
-                            insert.setInt(2, lineRange.beg - 1)
-                            insert.setInt(3, lineRange.end)
-                            insert.setString(4, line)
-                            insert.executeUpdate()
-                            recordCount?.let { it.add(1L) }
-                            recordBytes?.let { it.add(line.length + 1L) }
-                        }
+            """
+        )
+        val insert = cleanup.add(dbc.prepareStatement("INSERT INTO VcfRecord VALUES(?,?,?,?)"))
+        fileReaderDetectGz(filename, fs).useLines {
+            it.forEach { line ->
+                if (line.length > 0 && line.get(0) != '#') {
+                    val tsv = line.splitToSequence('\t').take(VcfColumn.INFO.ordinal + 1)
+                        .toList().toTypedArray()
+                    val lineRange = parseVcfRecordRange(contigId, tsv)
+                    unfilteredRecordCount?.add(1L)
+                    if (filterRanges?.hasOverlapping(lineRange) ?: true) {
+                        insert.setInt(1, lineRange.rid.toInt())
+                        insert.setInt(2, lineRange.beg - 1)
+                        insert.setInt(3, lineRange.end)
+                        insert.setString(4, line)
+                        insert.executeUpdate()
+                        count += 1L
+                        bytes += line.length.toLong()
                     }
                 }
             }
         }
-        dbc.createStatement().use {
-            it.executeUpdate(
-                GenomicSQLite.createGenomicRangeIndexSQL(
-                    dbc,
-                    "VcfRecord",
-                    "rid",
-                    "beg",
-                    "end"
-                )
+        adhoc.executeUpdate(
+            GenomicSQLite.createGenomicRangeIndexSQL(
+                dbc,
+                "VcfRecord",
+                "rid",
+                "beg",
+                "end"
             )
-        }
+        )
         dbc.commit()
     }
+    /*
+    // integrity check
+    openGenomicSQLiteReadOnly(tempFilename).use { dbc ->
+        dbc.createStatement().use() { stmt ->
+            val rs = stmt.executeQuery(
+                "SELECT count(*) AS count, sum(length(line)) AS bytes FROM VcfRecord"
+            )
+            check(rs.getLong("count") == count)
+            check(rs.getLong("bytes") == bytes)
+        }
+    }
+    */
+    recordCount?.let { it.add(count) }
+    recordBytes?.let { it.add(bytes + count) }
     if (andDelete) {
         fs.delete(Path(filename), false)
     }

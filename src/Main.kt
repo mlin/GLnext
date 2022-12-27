@@ -174,7 +174,7 @@ class CLI : CliktCommand() {
             )
 
             // broadcast the variants database to the same temp filename on each executor
-            // TODO: send through HDFS since compressed database could be larger than 2GB!
+            // TODO: handle compressed database larger than 2GB (multiple rounds)
             val variantsDbB = jsc.broadcast(variantsDbFile.readBytes())
             val variantsDbCopies = spark.sparkContext.longAccumulator("variants database copies")
             dbsDF.foreachPartition(
@@ -220,6 +220,8 @@ class CLI : CliktCommand() {
 
             // write output VCF header & BGZF EOF marker
             writeHeaderAndEOF(pvcfHeader, pvcfDir)
+
+            // TODO: clean up genomicsqlite files
         }
     }
 }

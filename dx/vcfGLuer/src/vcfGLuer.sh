@@ -7,6 +7,8 @@ main() {
 
     cat $PRE_BOOTSTRAP_LOG || echo "no PRE_BOOTSTRAP_LOG"
     java -version
+    # FIXME:
+    export LIBGENOMICSQLITE=/usr/lib/libgenomicsqlite.so
 
     dx-download-all-inputs
 
@@ -37,8 +39,7 @@ main() {
     dx-spark-submit --log-level WARN --collect-logs \
         --conf spark.driver.defaultJavaOptions="$all_java_options" \
         --conf spark.executor.defaultJavaOptions="$all_java_options" \
-        --conf spark.memory.fraction=0.3 \
-        --conf spark.executor.memory=75g \
+        --conf spark.executor.memory=72g \
         --conf spark.driver.maxResultSize=0 \
         --conf spark.task.maxFailures=3 \
         --conf spark.stage.maxConsecutiveAttempts=2 \
