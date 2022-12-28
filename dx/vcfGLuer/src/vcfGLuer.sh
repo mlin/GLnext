@@ -7,8 +7,6 @@ main() {
 
     cat $PRE_BOOTSTRAP_LOG || echo "no PRE_BOOTSTRAP_LOG"
     java -version
-    # FIXME:
-    export LIBGENOMICSQLITE=/usr/lib/libgenomicsqlite.so
 
     dx-download-all-inputs
 
@@ -36,13 +34,15 @@ main() {
     if [[ -n ${filter_bed:-} ]]; then
         filter_bed_arg="--filter-bed $(find ./in/filter_bed -type f)"
     fi
+    #    --conf spark.task.maxFailures=3 \
+    #    --conf spark.stage.maxConsecutiveAttempts=2 \
     dx-spark-submit --log-level WARN --collect-logs \
         --conf spark.driver.defaultJavaOptions="$all_java_options" \
         --conf spark.executor.defaultJavaOptions="$all_java_options" \
         --conf spark.executor.memory=72g \
         --conf spark.driver.maxResultSize=0 \
-        --conf spark.task.maxFailures=3 \
-        --conf spark.stage.maxConsecutiveAttempts=2 \
+        --conf spark.task.maxFailures=1 \
+        --conf spark.stage.maxConsecutiveAttempts=1 \
         --conf spark.default.parallelism=$spark_default_parallelism \
         --conf spark.sql.shuffle.partitions=$spark_default_parallelism \
         --conf spark.sql.adaptive.enabled=true \

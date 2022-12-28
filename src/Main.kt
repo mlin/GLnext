@@ -177,6 +177,7 @@ class CLI : CliktCommand() {
             // TODO: handle compressed database larger than 2GB (multiple rounds)
             val variantsDbB = jsc.broadcast(variantsDbFile.readBytes())
             val variantsDbCopies = spark.sparkContext.longAccumulator("variants database copies")
+            variantsDbCopies.add(1L)
             dbsDF.foreachPartition(
                 ForeachPartitionFunction<Row> {
                     val localDb = File(variantsDbFilename)

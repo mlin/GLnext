@@ -11,7 +11,7 @@ import org.apache.spark.util.LongAccumulator
 import org.jetbrains.kotlinx.spark.api.*
 
 /**
- * Load a VCF file into a compressed database file (only records overlapping filterRanges)
+ * Load a VCF file into a compressed database file (only the records overlapping filterRanges)
  */
 fun loadVcfRecordDb(
     contigId: Map<String, Short>,
@@ -23,7 +23,7 @@ fun loadVcfRecordDb(
     recordBytes: LongAccumulator? = null
 ): String {
     val fs = getFileSystem(filename)
-    val tempFile = File.createTempFile("VcfRecord.", ".genomicsqlite")
+    val tempFile = File.createTempFile("VcfRecord.", ".db")
     val tempFilename = tempFile.absolutePath
     tempFile.delete()
 
@@ -55,6 +55,7 @@ fun loadVcfRecordDb(
                         insert.setInt(2, lineRange.beg - 1)
                         insert.setInt(3, lineRange.end)
                         insert.setString(4, line)
+                        // TODO: could strip CHROM, POS, END from line since they're now redundant
                         insert.executeUpdate()
                         count += 1L
                         bytes += line.length.toLong()
@@ -87,15 +88,28 @@ fun loadVcfRecordDb(
     */
     recordCount?.let { it.add(count) }
     recordBytes?.let { it.add(bytes + count) }
+
+    val crc = java.util.zip.CRC32C()
+    tempFile.inputStream().use {
+        val buf = ByteArray(1048576)
+        var n = it.read(buf)
+        while (n >= 0) {
+            crc.update(buf, 0, n)
+            n = it.read(buf)
+        }
+    }
+    val storedFilename = filename + ".${crc.value}.db"
+    fs.copyFromLocalFile(Path(tempFilename), Path(storedFilename))
+
     if (andDelete) {
         fs.delete(Path(filename), false)
     }
 
-    return tempFilename
+    return storedFilename
 }
 
 /**
- * Load many VCF files into database files local to each executor node
+ * Load many VCF files into databases
  */
 fun loadAllVcfRecordDbs(
     spark: SparkSession,
@@ -140,13 +154,14 @@ fun scanVcfRecordDb(
     filename: String
 ): Sequence<VcfRecord> {
     return sequence {
-        openGenomicSQLiteReadOnly(filename).use { dbc ->
-            dbc.createStatement().use { stmt ->
-                val rs = stmt.executeQuery("SELECT line from VcfRecord")
-                while (rs.next()) {
-                    val line = rs.getString("line")
-                    yield(parseVcfRecord(contigId, callsetId, line))
-                }
+        ExitStack().use { cleanup ->
+            val localPath = cleanup.add(TempLocalFileCopy(filename)).localPath
+            val dbc = cleanup.add(openGenomicSQLiteReadOnly(localPath))
+            val stmt = cleanup.add(dbc.createStatement())
+            val rs = cleanup.add(stmt.executeQuery("SELECT line from VcfRecord"))
+            while (rs.next()) {
+                val line = rs.getString("line")
+                yield(parseVcfRecord(contigId, callsetId, line))
             }
         }
     }

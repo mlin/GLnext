@@ -148,7 +148,11 @@ fun generateJointCalls(
             val variants = cleanup.add(
                 GenomicSQLiteReadOnlyPool.get(variantsDbFilename).getConnection()
             )
-            val vcfRecords = cleanup.add(openGenomicSQLiteReadOnly(vcfRecordsDbFilename))
+            val vcfRecords = cleanup.add(
+                openGenomicSQLiteReadOnly(
+                    cleanup.add(TempLocalFileCopy(vcfRecordsDbFilename)).localPath
+                )
+            )
 
             // prepare GRI query for callset VCF records
             val gri_sql = vcfRecords.createStatement().use { stmt ->
@@ -162,7 +166,7 @@ fun generateJointCalls(
                     SELECT line FROM VcfRecord
                     WHERE _rowid_ IN $gri_sql
                       AND end > ?2 AND beg < ?3
-                    ORDER BY beg, end
+                    ORDER BY _rowid_
                     """
                 )
             )

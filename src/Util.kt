@@ -43,7 +43,7 @@ fun fileReaderDetectGz(
     fs: FileSystem? = null,
     bufferSize: Int = 65536
 ): Reader {
-    val fs2 = if (fs != null) { fs } else { getFileSystem(filename) }
+    val fs2 = fs ?: getFileSystem(filename)
     var instream: InputStream = fs2.open(Path(filename))
     // TODO: decide based on magic bytes instead of filename
     if (filename.endsWith(".gz") || filename.endsWith(".bgz")) {
@@ -53,14 +53,14 @@ fun fileReaderDetectGz(
 }
 
 fun createGenomicSQLiteForBulkLoad(filename: String, threads: Int = 2): Connection {
-    Class.forName("net.mlin.genomicsqlite.JdbcDriver")
-
     val config = Properties()
     config.setProperty(
         "genomicsqlite.config_json",
         """{
             "threads": $threads,
-            "zstd_level": 1,
+            "zstd_level": 3,
+            "inner_page_KiB": 64,
+            "outer_page_KiB": 2,
             "unsafe_load": true,
             "page_cache_MiB": 256
         }"""
@@ -80,12 +80,14 @@ fun getGenomicSQLiteReadOnlyConfigJSON(threads: Int = 2): String {
 }
 
 fun openGenomicSQLiteReadOnly(filename: String, threads: Int = 2): Connection {
-    val config = Properties()
-    config.setProperty(
+    val config = org.sqlite.SQLiteConfig()
+    config.setReadOnly(true)
+    val props = config.toProperties()
+    props.setProperty(
         "genomicsqlite.config_json",
         getGenomicSQLiteReadOnlyConfigJSON(threads = threads)
     )
-    return DriverManager.getConnection("jdbc:genomicsqlite:" + filename, config)
+    return DriverManager.getConnection("jdbc:genomicsqlite:" + filename, props)
 }
 
 class GenomicSQLiteReadOnlyPool {
@@ -123,7 +125,7 @@ class GenomicSQLiteReadOnlyPool {
 }
 
 class ExitStack : AutoCloseable {
-    private var resources: ArrayDeque<AutoCloseable> = ArrayDeque()
+    private val resources: ArrayDeque<AutoCloseable> = ArrayDeque()
 
     fun <T : AutoCloseable> add(resource: T): T {
         resources.add(resource)
@@ -146,5 +148,21 @@ class ExitStack : AutoCloseable {
         if (firstExc != null) {
             throw firstExc
         }
+    }
+}
+
+/**
+ * Create a temporary, local copy of a [HDFS] file path; on close, delete the copy.
+ */
+class TempLocalFileCopy(path: String, fs: FileSystem? = null) : AutoCloseable {
+    private val tempFile: File
+    init {
+        val fs2 = fs ?: getFileSystem(path)
+        tempFile = File.createTempFile("copy", ".tmp")
+        fs2.copyToLocalFile(Path(path), Path(tempFile.absolutePath))
+    }
+    val localPath get() = tempFile.absolutePath
+    override fun close() {
+        tempFile.delete()
     }
 }
