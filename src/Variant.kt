@@ -1,6 +1,7 @@
 import java.io.File
 import kotlin.math.min
 import net.mlin.genomicsqlite.GenomicSQLite
+import org.apache.hadoop.fs.Path
 import org.apache.spark.api.java.function.FlatMapFunction
 import org.apache.spark.sql.*
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
@@ -147,8 +148,16 @@ fun discoverAllVariants(
             FlatMapFunction<Row, Row> { row ->
                 val callsetId = row.getAs<Int>("callsetId")
                 val dbFilename = row.getAs<String>("dbFilename")
+                val dbLocalFilename = row.getAs<String>("dbLocalFilename")
                 sequence {
-                    scanVcfRecordDb(contigId, callsetId, dbFilename)
+                    // Usually this is the same executor that created the db so we can open the
+                    // existing dbLocalFilename. But if not, fetch it from HDFS where we copied it
+                    // for this contingency.
+                    if (File(dbLocalFilename).createNewFile()) {
+                        getFileSystem(dbFilename)
+                            .copyToLocalFile(Path(dbFilename), Path(dbLocalFilename))
+                    }
+                    scanVcfRecordDb(contigId, callsetId, dbLocalFilename)
                         .forEach { rec ->
                             yieldAll(
                                 discoverVariants(rec, filterRanges, onlyCalled)

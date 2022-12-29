@@ -12,6 +12,7 @@ import java.util.Properties
 import org.apache.hadoop.fs.Path
 import org.apache.log4j.Level
 import org.apache.log4j.LogManager
+import org.apache.spark.api.java.JavaSparkContext
 import org.apache.spark.api.java.function.ForeachPartitionFunction
 import org.apache.spark.sql.*
 import org.jetbrains.kotlinx.spark.api.*
@@ -120,7 +121,7 @@ class CLI : CliktCommand() {
             }
             logger.info("contigs: ${aggHeader.contigId.size.pretty()}")
 
-            val jsc = org.apache.spark.api.java.JavaSparkContext(spark.sparkContext)
+            val jsc = JavaSparkContext(spark.sparkContext)
             val filterRangesB = filterBed?.let {
                 val filterRanges = indexBED(aggHeader.contigId, fileReaderDetectGz(it))
                 filterRanges.all().forEach { id ->
@@ -168,34 +169,10 @@ class CLI : CliktCommand() {
             logger.info("joint variants: ${variantCount.pretty()}")
             val variantsDbFile = File(variantsDbFilename)
             logger.info("variants DB compressed: ${variantsDbFile.length().pretty()} bytes")
-            require(
-                variantsDbFile.length() <= Int.MAX_VALUE.toLong(),
-                { "compressed variants database is larger than 2GB!" }
-            )
 
             // broadcast the variants database to the same temp filename on each executor
-            // TODO: handle compressed database larger than 2GB (multiple rounds)
-            val variantsDbB = jsc.broadcast(variantsDbFile.readBytes())
-            val variantsDbCopies = spark.sparkContext.longAccumulator("variants database copies")
-            variantsDbCopies.add(1L)
-            dbsDF.foreachPartition(
-                ForeachPartitionFunction<Row> {
-                    val localDb = File(variantsDbFilename)
-                    if (!localDb.isFile()) {
-                        val temp = File.createTempFile("broadcast.", "", localDb.getParentFile()!!)
-                        temp.writeBytes(variantsDbB.value)
-                        if (!localDb.isFile()) {
-                            temp.renameTo(localDb)
-                            variantsDbCopies.add(1L)
-                        } else {
-                            temp.delete()
-                        }
-                    }
-                    check(localDb.length() == variantsDbB.value.size.toLong())
-                }
-            )
-            variantsDbB.unpersist(true)
-            logger.info("variants DB broadcast: ${variantsDbCopies.sum().pretty()} copies")
+            val variantsDbCopies = 1 + broadcastLargeFile(dbsDF, variantsDbFilename, 1048576)
+            logger.info("variants DB broadcast: ${variantsDbCopies.pretty()} copies")
 
             // perform joint-calling
             val pvcfHeaderMetaLines = listOf(
@@ -261,4 +238,51 @@ fun writeHeaderAndEOF(headerText: String, dir: String) {
         fs.rename(Path(dir, ".wip.zzEOF.bgz"), Path(dir, "zzEOF.bgz")),
         { "unable to finalize $dir/zzEOF.bgz" }
     )
+}
+
+/**
+ * Given a filename local to the driver, broadcast it to all executors (with at least one partition
+ * of someDataset) using the same local filename, which must not yet exist on any of them. This is
+ * more scalable than going through HDFS because it leverages Spark's TorrentBroadcast. However,
+ * large files require multiple rounds.
+ */
+fun <T> broadcastLargeFile(
+    someDataset: Dataset<T>,
+    filename: String,
+    chunkSize: Int = 1073741824
+): Int {
+    val sc = someDataset.sparkSession().sparkContext
+    val jsc = JavaSparkContext(sc)
+    var fileSize = 0L
+
+    val chunkFilenames = readFileChunks(filename, chunkSize).mapIndexed { chunkNum, chunk ->
+        val chunkFilename = filename + String.format(".chunk-%04d", chunkNum)
+        val chunkB = jsc.broadcast(chunk)
+        someDataset.foreachPartition(
+            ForeachPartitionFunction<T> {
+                val localChunk = File(chunkFilename)
+                if (localChunk.createNewFile()) {
+                    localChunk.writeBytes(chunkB.value)
+                }
+            }
+        )
+        chunkB.unpersist(true)
+        fileSize += chunk.size.toLong()
+        chunkFilename
+    }.toList()
+
+    val copies = sc.longAccumulator("broadcast copies of " + filename)
+    someDataset.foreachPartition(
+        ForeachPartitionFunction<T> {
+            val localCopy = File(filename)
+            if (localCopy.createNewFile()) {
+                concatFiles(chunkFilenames, filename, chunkSize)
+                chunkFilenames.forEach { File(it).delete() }
+                check(localCopy.length() == fileSize)
+                copies.add(1L)
+            }
+        }
+    )
+
+    return copies.sum().toInt()
 }

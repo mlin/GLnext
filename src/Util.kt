@@ -166,3 +166,63 @@ class TempLocalFileCopy(path: String, fs: FileSystem? = null) : AutoCloseable {
         tempFile.delete()
     }
 }
+
+/**
+ * Read a large file as a sequence of ByteArrays of given size (except the last one).
+ */
+fun readFileChunks(filename: String, chunkSize: Int): Sequence<ByteArray> {
+    val file = File(filename)
+    var todo = file.length()
+
+    return sequence {
+        file.inputStream().use {
+            while (todo > 0) {
+                val buf = ByteArray(chunkSize)
+                var chunk = 0
+                while (chunk.toLong() < todo && chunk < chunkSize) {
+                    var n = it.read(buf, chunk, chunkSize - chunk)
+                    check(n > 0)
+                    chunk += n
+                    check(chunk.toLong() <= todo)
+                }
+
+                if (chunk == chunkSize) {
+                    yield(buf)
+                } else {
+                    yield(buf.copyOfRange(0, chunk))
+                }
+
+                check(chunk <= todo)
+                todo -= chunk
+            }
+        }
+    }
+}
+
+fun concatFiles(src: List<String>, dest: String, chunkSize: Int) {
+    File(dest).outputStream().use { destOut ->
+        val buf = ByteArray(chunkSize)
+        src.forEach { srcFilename ->
+            val srcFile = File(srcFilename)
+            check(srcFile.isFile())
+            srcFile.inputStream().use { srcIn ->
+                var n: Int
+                while (srcIn.read(buf).also { n = it } >= 0) {
+                    destOut.write(buf, 0, n)
+                }
+            }
+        }
+    }
+}
+
+fun fileCRC32C(filename: String): Long {
+    val crc = java.util.zip.CRC32C()
+    File(filename).inputStream().use { inp ->
+        val buf = ByteArray(1048576)
+        var n: Int
+        while (inp.read(buf).also { n = it } >= 0) {
+            crc.update(buf, 0, n)
+        }
+    }
+    return crc.value
+}

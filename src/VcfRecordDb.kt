@@ -1,6 +1,7 @@
 import java.io.File
 import java.sql.*
 import net.mlin.genomicsqlite.GenomicSQLite
+import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
 import org.apache.spark.api.java.JavaSparkContext
 import org.apache.spark.api.java.function.*
@@ -20,10 +21,11 @@ fun loadVcfRecordDb(
     andDelete: Boolean = false,
     unfilteredRecordCount: LongAccumulator? = null,
     recordCount: LongAccumulator? = null,
-    recordBytes: LongAccumulator? = null
+    recordBytes: LongAccumulator? = null,
+    fs: FileSystem? = null
 ): String {
-    val fs = getFileSystem(filename)
-    val tempFile = File.createTempFile("VcfRecord.", ".db")
+    val fs2 = fs ?: getFileSystem(filename)
+    val tempFile = File.createTempFile(Path(filename).getName() + ".", ".db")
     val tempFilename = tempFile.absolutePath
     tempFile.delete()
 
@@ -43,7 +45,7 @@ fun loadVcfRecordDb(
             """
         )
         val insert = cleanup.add(dbc.prepareStatement("INSERT INTO VcfRecord VALUES(?,?,?,?)"))
-        fileReaderDetectGz(filename, fs).useLines {
+        fileReaderDetectGz(filename, fs2).useLines {
             it.forEach { line ->
                 if (line.length > 0 && line.get(0) != '#') {
                     val tsv = line.splitToSequence('\t').take(VcfColumn.INFO.ordinal + 1)
@@ -89,27 +91,15 @@ fun loadVcfRecordDb(
     recordCount?.let { it.add(count) }
     recordBytes?.let { it.add(bytes + count) }
 
-    val crc = java.util.zip.CRC32C()
-    tempFile.inputStream().use {
-        val buf = ByteArray(1048576)
-        var n = it.read(buf)
-        while (n >= 0) {
-            crc.update(buf, 0, n)
-            n = it.read(buf)
-        }
-    }
-    val storedFilename = filename + ".${crc.value}.db"
-    fs.copyFromLocalFile(Path(tempFilename), Path(storedFilename))
-
     if (andDelete) {
-        fs.delete(Path(filename), false)
+        fs2.delete(Path(filename), false)
     }
 
-    return storedFilename
+    return tempFilename
 }
 
 /**
- * Load many VCF files into databases
+ * Load many VCF files into databases (and copy them back to HDFS)
  */
 fun loadAllVcfRecordDbs(
     spark: SparkSession,
@@ -129,22 +119,28 @@ fun loadAllVcfRecordDbs(
         filenamesRDD
             .map(
                 Function<Pair<String, Int>, Row> { (filename, callsetId) ->
-                    val dbfn = loadVcfRecordDb(
+                    val fs = getFileSystem(filename)
+                    val localDb = loadVcfRecordDb(
                         contigId,
                         filename,
                         filterRanges = filterRanges?.value,
                         andDelete = andDelete,
                         unfilteredRecordCount = unfilteredRecordCount,
                         recordCount = recordCount,
-                        recordBytes = recordBytes
+                        recordBytes = recordBytes,
+                        fs = fs
                     )
-                    RowFactory.create(callsetId, filename, dbfn)
+                    // copy db file to HDFS, return both HDFS and local paths
+                    val storedPath = Path(Path(filename).getParent(), Path(localDb).getName())
+                    fs.copyFromLocalFile(Path(localDb), storedPath)
+                    RowFactory.create(callsetId, filename, storedPath.toString(), localDb)
                 }
             ),
         StructType()
             .add("callsetId", DataTypes.IntegerType, false)
             .add("vcfFilename", DataTypes.StringType, false)
             .add("dbFilename", DataTypes.StringType, false)
+            .add("dbLocalFilename", DataTypes.StringType, false)
     )
 }
 
@@ -155,8 +151,7 @@ fun scanVcfRecordDb(
 ): Sequence<VcfRecord> {
     return sequence {
         ExitStack().use { cleanup ->
-            val localPath = cleanup.add(TempLocalFileCopy(filename)).localPath
-            val dbc = cleanup.add(openGenomicSQLiteReadOnly(localPath))
+            val dbc = cleanup.add(openGenomicSQLiteReadOnly(filename))
             val stmt = cleanup.add(dbc.createStatement())
             val rs = cleanup.add(stmt.executeQuery("SELECT line from VcfRecord"))
             while (rs.next()) {

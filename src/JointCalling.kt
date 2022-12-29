@@ -1,6 +1,8 @@
 
+import java.io.File
 import java.io.Serializable
 import kotlin.math.pow
+import org.apache.hadoop.fs.Path
 import org.apache.log4j.Logger
 import org.apache.spark.api.java.JavaRDD
 import org.apache.spark.api.java.JavaSparkContext
@@ -61,7 +63,8 @@ fun jointCall(
                 fieldsGenB.value,
                 variantsDbFilename,
                 it.getAs<Int>("callsetId"),
-                it.getAs<String>("dbFilename")
+                it.getAs<String>("dbFilename"),
+                it.getAs<String>("dbLocalFilename")
             )
                 .map { RowFactory.create(it.first, it.second, it.third) }
                 .iterator()
@@ -140,7 +143,8 @@ fun generateJointCalls(
     fieldsGen: JointFieldsGenerator,
     variantsDbFilename: String,
     callsetId: Int,
-    vcfRecordsDbFilename: String
+    vcfRecordsDbFilename: String,
+    vcfRecordsDbLocalFilename: String
 ): Sequence<Triple<Int, Int, String>> = // [(variantId, sampleId, pvcfEntry)]
     sequence {
         ExitStack().use { cleanup ->
@@ -148,11 +152,15 @@ fun generateJointCalls(
             val variants = cleanup.add(
                 GenomicSQLiteReadOnlyPool.get(variantsDbFilename).getConnection()
             )
-            val vcfRecords = cleanup.add(
-                openGenomicSQLiteReadOnly(
-                    cleanup.add(TempLocalFileCopy(vcfRecordsDbFilename)).localPath
-                )
-            )
+
+            // Usually this is the same executor that created the vcf db so we can open the
+            // existing local filename. But if not, fetch it from HDFS where we copied it for this
+            // contingency.
+            if (File(vcfRecordsDbLocalFilename).createNewFile()) {
+                getFileSystem(vcfRecordsDbFilename)
+                    .copyToLocalFile(Path(vcfRecordsDbFilename), Path(vcfRecordsDbLocalFilename))
+            }
+            val vcfRecords = cleanup.add(openGenomicSQLiteReadOnly(vcfRecordsDbLocalFilename))
 
             // prepare GRI query for callset VCF records
             val gri_sql = vcfRecords.createStatement().use { stmt ->
@@ -237,19 +245,22 @@ fun generateJointLine(
             .joinToString(":") // FORMAT
 
     // fill entries into lineTsv
+    var entryCount = 0
     entries.forEach {
         val sampleId = it.getAs<Int>("sampleId")
         val entry = it.getAs<String>("entry")
         val col = VcfColumn.FIRST_SAMPLE.ordinal + sampleId
         require(
-            lineTsv[col] == "." || lineTsv[col] == entry,
+            lineTsv[col] == ".",
             {
                 "conflicting genotype entries @ ${aggHeader.samples[sampleId]}" +
                     " ${variant.str(aggHeader.contigs)}: ${lineTsv[col]} $entry"
             }
         )
         lineTsv[col] = entry
+        entryCount += 1
     }
+    check(entryCount == aggHeader.samples.size)
 
     // TODO: compute INFO fields
     // lineTsv[VcfColumn.INFO.ordinal] = fieldsGen.generateInfoFields()
