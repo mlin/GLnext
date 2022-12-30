@@ -25,7 +25,7 @@ fun loadVcfRecordDb(
     fs: FileSystem? = null
 ): String {
     val fs2 = fs ?: getFileSystem(filename)
-    val tempFile = File.createTempFile(Path(filename).getName() + ".", ".db")
+    val tempFile = File.createTempFile(Path(filename).getName() + ".", ".db")!!
     val tempFilename = tempFile.absolutePath
     tempFile.delete()
 
@@ -91,11 +91,18 @@ fun loadVcfRecordDb(
     recordCount?.let { it.add(count) }
     recordBytes?.let { it.add(bytes + count) }
 
+    val crc = fileCRC32C(tempFilename)
+    val crcFile = File(
+        tempFile.getParent(),
+        Path(filename).getName() + ".$crc.db"
+    )
+    tempFile.renameTo(crcFile)
+
     if (andDelete) {
         fs2.delete(Path(filename), false)
     }
 
-    return tempFilename
+    return crcFile.absolutePath
 }
 
 /**

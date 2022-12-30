@@ -1,7 +1,6 @@
 import java.io.File
 import kotlin.math.min
 import net.mlin.genomicsqlite.GenomicSQLite
-import org.apache.hadoop.fs.Path
 import org.apache.spark.api.java.function.FlatMapFunction
 import org.apache.spark.sql.*
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
@@ -150,13 +149,10 @@ fun discoverAllVariants(
                 val dbFilename = row.getAs<String>("dbFilename")
                 val dbLocalFilename = row.getAs<String>("dbLocalFilename")
                 sequence {
-                    // Usually this is the same executor that created the db so we can open the
-                    // existing dbLocalFilename. But if not, fetch it from HDFS where we copied it
-                    // for this contingency.
-                    if (File(dbLocalFilename).createNewFile()) {
-                        getFileSystem(dbFilename)
-                            .copyToLocalFile(Path(dbFilename), Path(dbLocalFilename))
-                    }
+                    // Usually this task will run on the same executor that created the vcf records
+                    // db, so we can open the existing local file. But if not then fetch the db
+                    // from HDFS, where we copied it for this contingency.
+                    ensureLocalCopy(dbFilename, dbLocalFilename)
                     scanVcfRecordDb(contigId, callsetId, dbLocalFilename)
                         .forEach { rec ->
                             yieldAll(

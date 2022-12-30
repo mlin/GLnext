@@ -1,8 +1,6 @@
 
-import java.io.File
 import java.io.Serializable
 import kotlin.math.pow
-import org.apache.hadoop.fs.Path
 import org.apache.log4j.Logger
 import org.apache.spark.api.java.JavaRDD
 import org.apache.spark.api.java.JavaSparkContext
@@ -57,14 +55,21 @@ fun jointCall(
     // make big DataFrame of pVCF genotype entries: (variantId, sampleId, pvcfEntry)
     val entriesDF = vcfRecordDbsDF.flatMap(
         FlatMapFunction<Row, Row> {
+            val callsetId = it.getAs<Int>("callsetId")
+            val dbFilename = it.getAs<String>("dbFilename") // possibly HDFS path
+            val dbLocalFilename = it.getAs<String>("dbLocalFilename")
+            // Usually this task will run on the same executor that created the vcf records db, so
+            // we can open the existing local file. But if not then fetch the db from HDFS, where
+            // we copied it for this contingency.
+            ensureLocalCopy(dbFilename, dbLocalFilename)
+
             generateJointCalls(
                 cfg,
                 aggHeaderB.value,
                 fieldsGenB.value,
                 variantsDbFilename,
-                it.getAs<Int>("callsetId"),
-                it.getAs<String>("dbFilename"),
-                it.getAs<String>("dbLocalFilename")
+                callsetId,
+                dbLocalFilename
             )
                 .map { RowFactory.create(it.first, it.second, it.third) }
                 .iterator()
@@ -143,8 +148,7 @@ fun generateJointCalls(
     fieldsGen: JointFieldsGenerator,
     variantsDbFilename: String,
     callsetId: Int,
-    vcfRecordsDbFilename: String,
-    vcfRecordsDbLocalFilename: String
+    vcfRecordsDbFilename: String
 ): Sequence<Triple<Int, Int, String>> = // [(variantId, sampleId, pvcfEntry)]
     sequence {
         ExitStack().use { cleanup ->
@@ -152,15 +156,7 @@ fun generateJointCalls(
             val variants = cleanup.add(
                 GenomicSQLiteReadOnlyPool.get(variantsDbFilename).getConnection()
             )
-
-            // Usually this is the same executor that created the vcf db so we can open the
-            // existing local filename. But if not, fetch it from HDFS where we copied it for this
-            // contingency.
-            if (File(vcfRecordsDbLocalFilename).createNewFile()) {
-                getFileSystem(vcfRecordsDbFilename)
-                    .copyToLocalFile(Path(vcfRecordsDbFilename), Path(vcfRecordsDbLocalFilename))
-            }
-            val vcfRecords = cleanup.add(openGenomicSQLiteReadOnly(vcfRecordsDbLocalFilename))
+            val vcfRecords = cleanup.add(openGenomicSQLiteReadOnly(vcfRecordsDbFilename))
 
             // prepare GRI query for callset VCF records
             val gri_sql = vcfRecords.createStatement().use { stmt ->

@@ -187,9 +187,6 @@ class CLI : CliktCommand() {
 
             // write pVCF records (in parts)
             pvcfLines.saveAsTextFile(pvcfDir, BGZFCodec::class.java)
-            // variantsDF.unpersist()
-            // vcfRecordsDF.unpersist()
-
             logger.info("pVCF bytes: ${pvcfRecordBytes.sum().pretty()}")
             check(pvcfRecordCount.sum() == variantCount.toLong())
 
@@ -244,7 +241,7 @@ fun writeHeaderAndEOF(headerText: String, dir: String) {
  * Given a filename local to the driver, broadcast it to all executors (with at least one partition
  * of someDataset) using the same local filename, which must not yet exist on any of them. This is
  * more scalable than going through HDFS because it leverages Spark's TorrentBroadcast. However,
- * large files require multiple rounds.
+ * large files require multiple rounds since broadcast is contrained by ByteArray max size.
  */
 fun <T> broadcastLargeFile(
     someDataset: Dataset<T>,
@@ -277,8 +274,8 @@ fun <T> broadcastLargeFile(
             val localCopy = File(filename)
             if (localCopy.createNewFile()) {
                 concatFiles(chunkFilenames, filename, chunkSize)
-                chunkFilenames.forEach { File(it).delete() }
                 check(localCopy.length() == fileSize)
+                chunkFilenames.forEach { File(it).delete() }
                 copies.add(1L)
             }
         }
