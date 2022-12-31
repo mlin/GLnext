@@ -121,19 +121,10 @@ class CLI : CliktCommand() {
             }
             logger.info("contigs: ${aggHeader.contigId.size.pretty()}")
 
-            val jsc = JavaSparkContext(spark.sparkContext)
             val filterRangesB = filterBed?.let {
-                val filterRanges = indexBED(aggHeader.contigId, fileReaderDetectGz(it))
-                filterRanges.all().forEach { id ->
-                    require(
-                        !filterRanges.overlapping(
-                            filterRanges.item(id)
-                        ).filter { it != id }.any(),
-                        { "BED ranges must be non-overlapping" }
-                    )
-                }
+                val filterRanges = BedRanges(aggHeader.contigId, fileReaderDetectGz(it))
                 logger.info("BED filter ranges: ${filterRanges.size}")
-                jsc.broadcast(filterRanges)
+                JavaSparkContext(spark.sparkContext).broadcast(filterRanges)
             }
 
             // accumulators
@@ -239,8 +230,8 @@ fun writeHeaderAndEOF(headerText: String, dir: String) {
 
 /**
  * Given a filename local to the driver, broadcast it to all executors (with at least one partition
- * of someDataset) using the same local filename, which must not yet exist on any of them. This is
- * more scalable than going through HDFS because it leverages Spark's TorrentBroadcast. However,
+ * of someDataset) saved to the same local filename, which must not yet exist on any of them. This
+ * is more scalable than going through HDFS because it leverages Spark's TorrentBroadcast. However,
  * large files require multiple rounds since broadcast is contrained by ByteArray max size.
  */
 fun <T> broadcastLargeFile(
@@ -260,10 +251,13 @@ fun <T> broadcastLargeFile(
                 val localChunk = File(chunkFilename)
                 if (localChunk.createNewFile()) {
                     localChunk.writeBytes(chunkB.value)
+                } else {
+                    // no-op: pause to smooth out the Spark task turnover rate
+                    Thread.sleep(java.util.Random().nextInt(1000).toLong())
                 }
             }
         )
-        chunkB.unpersist(true)
+        chunkB.unpersist()
         fileSize += chunk.size.toLong()
         chunkFilename
     }.toList()
@@ -277,6 +271,8 @@ fun <T> broadcastLargeFile(
                 check(localCopy.length() == fileSize)
                 chunkFilenames.forEach { File(it).delete() }
                 copies.add(1L)
+            } else {
+                Thread.sleep(java.util.Random().nextInt(1000).toLong())
             }
         }
     )

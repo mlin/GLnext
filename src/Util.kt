@@ -52,6 +52,105 @@ fun fileReaderDetectGz(
     return instream.reader().buffered(bufferSize)
 }
 
+/**
+ * Read a large file as a sequence of ByteArrays of given size (except the last one).
+ */
+fun readFileChunks(filename: String, chunkSize: Int): Sequence<ByteArray> {
+    val file = File(filename)
+    var todo = file.length()
+
+    return sequence {
+        file.inputStream().use {
+            while (todo > 0) {
+                val buf = ByteArray(chunkSize)
+                var chunk = 0
+                while (chunk.toLong() < todo && chunk < chunkSize) {
+                    var n = it.read(buf, chunk, chunkSize - chunk)
+                    check(n > 0)
+                    chunk += n
+                    check(chunk.toLong() <= todo)
+                }
+
+                if (chunk == chunkSize) {
+                    yield(buf)
+                } else {
+                    yield(buf.copyOfRange(0, chunk))
+                }
+
+                check(chunk <= todo)
+                todo -= chunk
+            }
+        }
+    }
+}
+
+fun concatFiles(src: List<String>, dest: String, chunkSize: Int) {
+    File(dest).outputStream().use { destOut ->
+        val buf = ByteArray(chunkSize)
+        src.forEach { srcFilename ->
+            val srcFile = File(srcFilename)
+            check(srcFile.isFile())
+            srcFile.inputStream().use { srcIn ->
+                var n: Int
+                while (srcIn.read(buf).also { n = it } >= 0) {
+                    destOut.write(buf, 0, n)
+                }
+            }
+        }
+    }
+}
+
+fun fileCRC32C(filename: String): Long {
+    val crc = java.util.zip.CRC32C()
+    File(filename).inputStream().use { inp ->
+        val buf = ByteArray(1048576)
+        var n: Int
+        while (inp.read(buf).also { n = it } >= 0) {
+            crc.update(buf, 0, n)
+        }
+    }
+    return crc.value
+}
+
+// A file is on HDFS, and may also be copied on the local filesystem. If not then make the copy.
+// Not inherently concurrency-safe!
+fun ensureLocalCopy(hdfsPath: String, localFilename: String) {
+    val localFile = File(localFilename)
+    if (localFile.createNewFile() || localFile.length() == 0L) {
+        val tempFile = File.createTempFile(localFile.getName() + ".", ".tmp")
+        getFileSystem(hdfsPath).copyToLocalFile(Path(hdfsPath), Path(tempFile.absolutePath))
+        tempFile.renameTo(localFile)
+    }
+}
+
+// as python contextlib.ExitStack
+class ExitStack : AutoCloseable {
+    private val resources: ArrayDeque<AutoCloseable> = ArrayDeque()
+
+    fun <T : AutoCloseable> add(resource: T): T {
+        resources.add(resource)
+        return resource
+    }
+
+    override fun close() {
+        var firstExc: Throwable? = null
+        var resource: AutoCloseable? = resources.removeLastOrNull()
+        while (resource != null) {
+            try {
+                resource.close()
+            } catch (exc: Throwable) {
+                if (firstExc == null) {
+                    firstExc = exc
+                }
+            }
+            resource = resources.removeLastOrNull()
+        }
+        if (firstExc != null) {
+            throw firstExc
+        }
+    }
+}
+
 fun createGenomicSQLiteForBulkLoad(filename: String, threads: Int = 2): Connection {
     val config = Properties()
     config.setProperty(
@@ -121,119 +220,5 @@ class GenomicSQLiteReadOnlyPool {
             ans.setPoolPreparedStatements(true)
             return ans
         }
-    }
-}
-
-class ExitStack : AutoCloseable {
-    private val resources: ArrayDeque<AutoCloseable> = ArrayDeque()
-
-    fun <T : AutoCloseable> add(resource: T): T {
-        resources.add(resource)
-        return resource
-    }
-
-    override fun close() {
-        var firstExc: Throwable? = null
-        var resource: AutoCloseable? = resources.removeLastOrNull()
-        while (resource != null) {
-            try {
-                resource.close()
-            } catch (exc: Throwable) {
-                if (firstExc == null) {
-                    firstExc = exc
-                }
-            }
-            resource = resources.removeLastOrNull()
-        }
-        if (firstExc != null) {
-            throw firstExc
-        }
-    }
-}
-
-/**
- * Create a temporary, local copy of a [HDFS] file path; on close, delete the copy.
- */
-class TempLocalFileCopy(path: String, fs: FileSystem? = null) : AutoCloseable {
-    private val tempFile: File
-    init {
-        val fs2 = fs ?: getFileSystem(path)
-        tempFile = File.createTempFile("copy", ".tmp")
-        fs2.copyToLocalFile(Path(path), Path(tempFile.absolutePath))
-    }
-    val localPath get() = tempFile.absolutePath
-    override fun close() {
-        tempFile.delete()
-    }
-}
-
-/**
- * Read a large file as a sequence of ByteArrays of given size (except the last one).
- */
-fun readFileChunks(filename: String, chunkSize: Int): Sequence<ByteArray> {
-    val file = File(filename)
-    var todo = file.length()
-
-    return sequence {
-        file.inputStream().use {
-            while (todo > 0) {
-                val buf = ByteArray(chunkSize)
-                var chunk = 0
-                while (chunk.toLong() < todo && chunk < chunkSize) {
-                    var n = it.read(buf, chunk, chunkSize - chunk)
-                    check(n > 0)
-                    chunk += n
-                    check(chunk.toLong() <= todo)
-                }
-
-                if (chunk == chunkSize) {
-                    yield(buf)
-                } else {
-                    yield(buf.copyOfRange(0, chunk))
-                }
-
-                check(chunk <= todo)
-                todo -= chunk
-            }
-        }
-    }
-}
-
-fun concatFiles(src: List<String>, dest: String, chunkSize: Int) {
-    File(dest).outputStream().use { destOut ->
-        val buf = ByteArray(chunkSize)
-        src.forEach { srcFilename ->
-            val srcFile = File(srcFilename)
-            check(srcFile.isFile())
-            srcFile.inputStream().use { srcIn ->
-                var n: Int
-                while (srcIn.read(buf).also { n = it } >= 0) {
-                    destOut.write(buf, 0, n)
-                }
-            }
-        }
-    }
-}
-
-fun fileCRC32C(filename: String): Long {
-    val crc = java.util.zip.CRC32C()
-    File(filename).inputStream().use { inp ->
-        val buf = ByteArray(1048576)
-        var n: Int
-        while (inp.read(buf).also { n = it } >= 0) {
-            crc.update(buf, 0, n)
-        }
-    }
-    return crc.value
-}
-
-// A file is on HDFS, and may also be copied on the local filesystem. If not then make the copy.
-// Not inherently concurrency-safe!
-fun ensureLocalCopy(hdfsPath: String, localFilename: String) {
-    val localFile = File(localFilename)
-    if (localFile.createNewFile() || localFile.length() == 0L) {
-        val tempFile = File.createTempFile(localFile.getName() + ".", ".tmp")
-        getFileSystem(hdfsPath).copyToLocalFile(Path(hdfsPath), Path(tempFile.absolutePath))
-        tempFile.renameTo(localFile)
     }
 }

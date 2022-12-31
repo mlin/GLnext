@@ -1,6 +1,6 @@
-
 import java.io.Serializable
 import kotlin.math.pow
+import kotlin.text.StringBuilder
 import org.apache.log4j.Logger
 import org.apache.spark.api.java.JavaRDD
 import org.apache.spark.api.java.JavaSparkContext
@@ -140,6 +140,33 @@ fun jointCall(
                 ans
             }
         )
+}
+
+/**
+ * Callset records assorted into reference bands, records containing the desired variant,
+ * and other variants
+ */
+class VcfRecordsContext(
+    val aggHeader: AggVcfHeader,
+    val variant: Variant,
+    val callsetRecords: List<VcfRecord>
+) {
+    val referenceBands: List<VcfRecordUnpacked>
+    val variantRecords: List<VcfRecordUnpacked>
+    val otherVariantRecords: List<VcfRecordUnpacked>
+
+    init {
+        // reference bands have no (non-symbolic) ALT alleles
+        var parts = callsetRecords.map {
+            check(it.range.overlaps(variant.range))
+            VcfRecordUnpacked(it)
+        }.partition { it.altVariants.filterNotNull().isEmpty() }
+        referenceBands = parts.first
+        // partition variant records based on whether they include the focal variant
+        parts = parts.second.partition { it.altVariants.contains(variant) }
+        variantRecords = parts.first
+        otherVariantRecords = parts.second
+    }
 }
 
 fun generateJointCalls(
@@ -366,28 +393,55 @@ fun genotypeOverlapSentinel(mode: GT_OverlapMode): Int? = when (mode) {
 }
 
 /**
- * Callset records assorted into reference bands, records containing the desired variant,
- * and other variants
+ * Write pVCF header
  */
-class VcfRecordsContext(
-    val aggHeader: AggVcfHeader,
-    val variant: Variant,
-    val callsetRecords: List<VcfRecord>
-) {
-    val referenceBands: List<VcfRecordUnpacked>
-    val variantRecords: List<VcfRecordUnpacked>
-    val otherVariantRecords: List<VcfRecordUnpacked>
+fun jointVcfHeader(
+    cfg: JointConfig,
+    aggHeader: AggVcfHeader,
+    pvcfHeaderMetaLines: List<String>,
+    fieldsGen: JointFieldsGenerator
+): String {
+    val ans = StringBuilder()
+    ans.appendLine("##fileformat=VCFv4.3")
 
-    init {
-        // reference bands have no (non-symbolic) ALT alleles
-        var parts = callsetRecords.map {
-            check(it.range.overlaps(variant.range))
-            VcfRecordUnpacked(it)
-        }.partition { it.altVariants.filterNotNull().isEmpty() }
-        referenceBands = parts.first
-        // partition variant records based on whether they include the focal variant
-        parts = parts.second.partition { it.altVariants.contains(variant) }
-        variantRecords = parts.first
-        otherVariantRecords = parts.second
+    pvcfHeaderMetaLines.forEach {
+        ans.append("##")
+        ans.appendLine(it)
     }
+
+    // FILTER
+    ans.appendLine("##FILTER=<ID=PASS,Description=\"All filters passed\">")
+
+    // FORMAT/INFO
+    ans.appendLine("##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">")
+    fieldsGen.fieldHeaderLines().forEach {
+        ans.append("##")
+        ans.appendLine(it)
+    }
+
+    // contig
+    aggHeader.contigs.forEach {
+        ans.appendLine("##" + aggHeader.headerLines.get(VcfHeaderLineKind.CONTIG to it)!!.lineText)
+    }
+
+    // column headers
+    ans.append(
+        listOf(
+            "#CHROM",
+            "POS",
+            "ID",
+            "REF",
+            "ALT",
+            "QUAL",
+            "FILTER",
+            "INFO",
+            "FORMAT"
+        ).joinToString("\t")
+    )
+    aggHeader.samples.forEach {
+        ans.append("\t" + it)
+    }
+    ans.appendLine("")
+
+    return ans.toString()
 }

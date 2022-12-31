@@ -17,7 +17,7 @@ import org.jetbrains.kotlinx.spark.api.*
 fun loadVcfRecordDb(
     contigId: Map<String, Short>,
     filename: String,
-    filterRanges: GRangeIndex<GRange>?,
+    filterRanges: BedRanges?,
     andDelete: Boolean = false,
     unfilteredRecordCount: LongAccumulator? = null,
     recordCount: LongAccumulator? = null,
@@ -111,7 +111,7 @@ fun loadVcfRecordDb(
 fun loadAllVcfRecordDbs(
     spark: SparkSession,
     aggHeader: AggVcfHeader,
-    filterRanges: org.apache.spark.broadcast.Broadcast<GRangeIndex<GRange>>?,
+    filterRanges: org.apache.spark.broadcast.Broadcast<BedRanges>?,
     andDelete: Boolean = false,
     unfilteredRecordCount: LongAccumulator? = null,
     recordCount: LongAccumulator? = null,
