@@ -1,6 +1,3 @@
-import org.apache.spark.sql.*
-import org.apache.spark.sql.types.*
-
 /**
  * Genomic range with reference sequence id (rid), one-based begin position, and inclusive end
  * position (matching the convention in the VCF text format).
@@ -13,7 +10,11 @@ data class GRange(val rid: Short, val beg: Int, val end: Int) :
         require(end >= beg)
     }
     override fun compareTo(other: GRange) = compareValuesBy(
-        this, other, { it.rid }, { it.beg }, { it.end }
+        this,
+        other,
+        { it.rid },
+        { it.beg },
+        { it.end }
     )
     fun overlaps(other: GRange): Boolean =
         (rid == other.rid && beg <= other.end && end >= other.beg)

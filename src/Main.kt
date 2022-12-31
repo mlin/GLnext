@@ -1,4 +1,5 @@
 @file:JvmName("vcfGLuer")
+
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.arguments.multiple
@@ -11,10 +12,12 @@ import java.util.Properties
 import org.apache.hadoop.fs.Path
 import org.apache.log4j.Level
 import org.apache.log4j.LogManager
+import org.apache.spark.api.java.JavaSparkContext
+import org.apache.spark.api.java.function.ForeachPartitionFunction
 import org.apache.spark.sql.*
 import org.jetbrains.kotlinx.spark.api.*
 
-data class SparkConfig(val compressTempRecords: Boolean, val compressTempFiles: Boolean)
+data class SparkConfig(val compressTempFiles: Boolean)
 data class DiscoveryConfig(val allowDuplicateSamples: Boolean, val minCopies: Int)
 data class MainConfig(
     val spark: SparkConfig,
@@ -24,21 +27,18 @@ data class MainConfig(
 
 class CLI : CliktCommand() {
     val inputFiles: List<String> by
-    argument(help = "Input VCF filenames (or manifest(s) with --manifest)")
-        .multiple(required = true)
+        argument(help = "Input VCF filenames (or manifest(s) with --manifest)")
+            .multiple(required = true)
     val pvcfDir: String by
-    argument(help = "Output directory for pVCF parts (mustn't already exist)")
+        argument(help = "Output directory for pVCF parts (mustn't already exist)")
     val manifest by
-    option(help = "Input files are manifest(s) containing one VCF filename per line")
-        .flag(default = false)
+        option(help = "Input files are manifest(s) containing one VCF filename per line")
+            .flag(default = false)
     val config: String by option(help = "Configuration preset name").default("DeepVariant")
     val filterBed: String? by
-    option(help = "only call variants within a region from this BED file")
+        option(help = "only call variants within a region from this BED file")
     val deleteInputVcfs by
-    option(help = "Delete input VCF files after loading them (DANGER!)").flag(default = false)
-
-    // TODO: take a BED file of target regions, use to filter variants
-    // https://www.javadoc.io/doc/com.github.samtools/htsjdk/2.24.1/htsjdk/samtools/util/IntervalTree.html
+        option(help = "Delete input VCF files after loading them (DANGER!)").flag(default = false)
 
     override fun run() {
         val cfg = ConfigLoader.Builder()
@@ -112,7 +112,7 @@ class CLI : CliktCommand() {
                 ("INFO" to VcfHeaderLineKind.INFO),
                 ("FORMAT" to VcfHeaderLineKind.FORMAT)
             ).forEach {
-                (kindName, kind) ->
+                    (kindName, kind) ->
                 val fields = aggHeader.headerLines
                     .filter { it.value.kind == kind }
                     .map { it.value.id }.sorted()
@@ -124,8 +124,7 @@ class CLI : CliktCommand() {
             val filterRangesB = filterBed?.let {
                 val filterRanges = BedRanges(aggHeader.contigId, fileReaderDetectGz(it))
                 logger.info("BED filter ranges: ${filterRanges.size}")
-                org.apache.spark.api.java.JavaSparkContext(spark.sparkContext)
-                    .broadcast(filterRanges)
+                JavaSparkContext(spark.sparkContext).broadcast(filterRanges)
             }
 
             // accumulators
@@ -135,41 +134,36 @@ class CLI : CliktCommand() {
             val pvcfRecordCount = spark.sparkContext.longAccumulator("pVCF records")
             val pvcfRecordBytes = spark.sparkContext.longAccumulator("pVCF bytes")
 
-            // load all VCF records
-            var vcfRecordsDF = readVcfRecordsDF(
-                spark, aggHeader, filterRangesB,
-                compressEachRecord = cfg.spark.compressTempRecords,
-                deleteInputVcfs = deleteInputVcfs,
-                recordCount = vcfRecordCount,
-                recordBytes = vcfRecordBytes,
+            val dbsDF = loadAllVcfRecordDbs(
+                spark,
+                aggHeader,
+                filterRangesB,
+                andDelete = deleteInputVcfs,
                 unfilteredRecordCount = allRecordCount,
-            )
-            // in general vcfRecordsDF # partitions now = # files; repartition if # files is way
-            // below defaultParallelism
-            // this is costly, but heuristically needed to prevent OOM when we explode vcfRecordsDF
-            // against overlapping variants
-            if (aggHeader.filenameCallsetId.size * 3 < defaultParallelism * 2) {
-                logger.info(
-                    "shuffle vcfRecordsDF from ${aggHeader.filenameCallsetId.size}" +
-                        " to $defaultParallelism partitions =("
-                )
-                vcfRecordsDF = vcfRecordsDF.repartition(defaultParallelism)
-            }
-            vcfRecordsDF = vcfRecordsDF.cache()
-
-            // discover variants
-            val variantsDF = discoverVariants(
-                vcfRecordsDF, filterRangesB,
-                onlyCalled = cfg.discovery.minCopies > 0
+                recordCount = vcfRecordCount,
+                recordBytes = vcfRecordBytes
             ).cache()
-            val variantCount = variantsDF.count()
+
+            // discover & collect all variants into a database file local to the driver
+            val (variantCount, variantsDbFilename) = collectAllVariantsDb(
+                aggHeader,
+                dbsDF,
+                filterRangesB,
+                onlyCalled = cfg.discovery.minCopies > 0
+            )
             filterRangesB?.let {
                 it.unpersist()
                 logger.info("unfiltered VCF records: ${allRecordCount.sum().pretty()}")
             }
             logger.info("input VCF records: ${vcfRecordCount.sum().pretty()}")
             logger.info("input VCF bytes: ${vcfRecordBytes.sum().pretty()}")
-            logger.info("joint variants: $variantCount")
+            logger.info("joint variants: ${variantCount.pretty()}")
+            val variantsDbFile = File(variantsDbFilename)
+            logger.info("variants DB compressed: ${variantsDbFile.length().pretty()} bytes")
+
+            // broadcast the variants database to the same temp filename on each executor
+            val variantsDbCopies = 1 + broadcastLargeFile(dbsDF, variantsDbFilename, 1048576)
+            logger.info("variants DB broadcast: ${variantsDbCopies.pretty()} copies")
 
             // perform joint-calling
             val pvcfHeaderMetaLines = listOf(
@@ -178,23 +172,22 @@ class CLI : CliktCommand() {
             )
             val (pvcfHeader, pvcfLines) = jointCall(
                 logger, cfg.joint, spark, aggHeader,
-                variantsDF, vcfRecordsDF, pvcfHeaderMetaLines,
+                variantsDbFilename, dbsDF, pvcfHeaderMetaLines,
                 pvcfRecordCount, pvcfRecordBytes
             )
 
             // write pVCF records (in parts)
             pvcfLines.saveAsTextFile(pvcfDir, BGZFCodec::class.java)
-            // variantsDF.unpersist()
-            // vcfRecordsDF.unpersist()
-
             logger.info("pVCF bytes: ${pvcfRecordBytes.sum().pretty()}")
-            check(pvcfRecordCount.sum() == variantCount) // checks Spark query plan
+            check(pvcfRecordCount.sum() == variantCount.toLong())
 
             // reorganize part files
             reorgJointFiles(spark, pvcfDir, aggHeader)
 
             // write output VCF header & BGZF EOF marker
             writeHeaderAndEOF(pvcfHeader, pvcfDir)
+
+            // TODO: clean up db files
         }
     }
 }
@@ -233,4 +226,56 @@ fun writeHeaderAndEOF(headerText: String, dir: String) {
         fs.rename(Path(dir, ".wip.zzEOF.bgz"), Path(dir, "zzEOF.bgz")),
         { "unable to finalize $dir/zzEOF.bgz" }
     )
+}
+
+/**
+ * Given a filename local to the driver, broadcast it to all executors (with at least one partition
+ * of someDataset) saved to the same local filename, which must not yet exist on any of them. This
+ * is more scalable than going through HDFS because it leverages Spark's TorrentBroadcast. However,
+ * large files require multiple rounds since broadcast is contrained by ByteArray max size.
+ */
+fun <T> broadcastLargeFile(
+    someDataset: Dataset<T>,
+    filename: String,
+    chunkSize: Int = 1073741824
+): Int {
+    val sc = someDataset.sparkSession().sparkContext
+    val jsc = JavaSparkContext(sc)
+    var fileSize = 0L
+
+    val chunkFilenames = readFileChunks(filename, chunkSize).mapIndexed { chunkNum, chunk ->
+        val chunkFilename = filename + String.format(".chunk-%04d", chunkNum)
+        val chunkB = jsc.broadcast(chunk)
+        someDataset.foreachPartition(
+            ForeachPartitionFunction<T> {
+                val localChunk = File(chunkFilename)
+                if (localChunk.createNewFile()) {
+                    localChunk.writeBytes(chunkB.value)
+                } else {
+                    // no-op: pause to smooth out the Spark task turnover rate
+                    Thread.sleep(java.util.Random().nextInt(1000).toLong())
+                }
+            }
+        )
+        chunkB.unpersist()
+        fileSize += chunk.size.toLong()
+        chunkFilename
+    }.toList()
+
+    val copies = sc.longAccumulator("broadcast copies of " + filename)
+    someDataset.foreachPartition(
+        ForeachPartitionFunction<T> {
+            val localCopy = File(filename)
+            if (localCopy.createNewFile()) {
+                concatFiles(chunkFilenames, filename, chunkSize)
+                check(localCopy.length() == fileSize)
+                chunkFilenames.forEach { File(it).delete() }
+                copies.add(1L)
+            } else {
+                Thread.sleep(java.util.Random().nextInt(1000).toLong())
+            }
+        }
+    )
+
+    return copies.sum().toInt()
 }

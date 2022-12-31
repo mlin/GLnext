@@ -1,6 +1,5 @@
 import java.io.OutputStreamWriter
 import kotlin.math.log10
-import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
 import org.apache.log4j.LogManager
 import org.apache.spark.api.java.JavaSparkContext
@@ -13,7 +12,6 @@ import org.jetbrains.kotlinx.spark.api.*
 // (ii) the genomic ranges covered by the remaining parts.
 // For parts (ii): rename them so that filename indicates the genomic range
 // For parts (i): split them by CHROM, naming each subpart according to the same schema
-
 fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeader) {
     val logger = LogManager.getLogger("vcfGLuer")
     val jsc = JavaSparkContext(spark.sparkContext)
@@ -31,12 +29,12 @@ fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeade
     val aggHeaderB = jsc.broadcast(aggHeader)
     val partsAndFirstRange = jsc.parallelize(partBasenames, parallelism).mapPartitions(
         FlatMapFunction<Iterator<String>, Pair<String, GRange>> {
-            basenames ->
+                basenames ->
             val fs = getFileSystem(pvcfDir)
             basenames.asSequence().map {
-                basename ->
+                    basename ->
                 fileReaderDetectGz("$pvcfDir/$basename", fs).useLines {
-                    val rec = parseVcfRecord(aggHeaderB.value.contigId, -1, it.first())
+                    val rec = parseVcfRecord(aggHeaderB.value.contigId, it.first())
                     basename to rec.range
                 }
             }.iterator()
@@ -52,7 +50,7 @@ fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeade
     // -1 for parts potentially spanning multiple chromosomes.
     val classifiedParts: List<Triple<Short, Int, String>> = partsAndFirstRange
         .toList().mapIndexed {
-            i, (basename, firstRange) ->
+                i, (basename, firstRange) ->
             val oneChrom = (
                 i + 1 < partsAndFirstRange.size &&
                     partsAndFirstRange[i + 1].second.rid == firstRange.rid
@@ -84,7 +82,7 @@ fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeade
     val revisedParts = (classifiedParts.filter { it.first >= 0 } + splitParts)
         .sortedWith(compareBy({ it.first }, { it.second })).toTypedArray()
     val rangeParts = revisedParts.mapIndexed {
-        i, (rid, firstPos, basename) ->
+            i, (rid, firstPos, basename) ->
         val lastPos = if (i + 1 < revisedParts.size && revisedParts[i + 1].first == rid) {
             revisedParts[i + 1].second
         } else {
@@ -100,7 +98,7 @@ fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeade
         FlatMapFunction<Iterator<Pair<Int, Triple<Short, Pair<Int, Int>, String>>>, String> {
             val fs = getFileSystem(pvcfDir)
             it.asSequence().map {
-                (i, t) ->
+                    (i, t) ->
                 val (rid, pos, basename) = t
                 val (posBeg, posEnd) = pos
                 val chrom = aggHeaderB.value.contigs[rid.toInt()]
@@ -131,7 +129,7 @@ fun splitByChr(
     fileReaderDetectGz("$pvcfDir/$partBasename", fs).useLines {
         var writer: OutputStreamWriter? = null
         for (line in it) {
-            val rec = parseVcfRecord(aggHeader.contigId, -1, line)
+            val rec = parseVcfRecord(aggHeader.contigId, line)
             if (rec.range.rid != rid) {
                 if (writer != null) {
                     writer.close()
@@ -161,16 +159,4 @@ fun splitByChr(
     check(fs.delete(Path(pvcfDir, partBasename), false), { "unable to delete $partBasename" })
 
     return ans
-}
-
-fun FileSystem.listSequence(
-    path: String,
-    recursive: Boolean
-): Sequence<org.apache.hadoop.fs.LocatedFileStatus> {
-    val it = getFileSystem(path).listFiles(Path(path), recursive)
-    return sequence {
-        while (it.hasNext()) {
-            yield(it.next())
-        }
-    }
 }

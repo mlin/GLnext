@@ -1,11 +1,10 @@
+
 import kotlin.math.min
-import org.apache.spark.api.java.function.FlatMapFunction
 import org.apache.spark.sql.*
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.types.*
 import org.jetbrains.kotlinx.spark.api.*
-import org.xerial.snappy.Snappy
 
 /**
  * Elementary variant
@@ -22,8 +21,22 @@ data class Variant(val range: GRange, val ref: String, val alt: String) :
             row.getAs<String>("ref"),
             row.getAs<String>("alt")
         )
+    constructor(rs: java.sql.ResultSet) :
+        this(
+            GRange(
+                rs.getShort("rid"),
+                rs.getInt("beg") + 1,
+                rs.getInt("end")
+            ),
+            rs.getString("ref"),
+            rs.getString("alt")
+        )
     override fun compareTo(other: Variant) = compareValuesBy(
-        this, other, { it.range }, { it.ref }, { it.alt }
+        this,
+        other,
+        { it.range },
+        { it.ref },
+        { it.alt }
     )
     fun str(contigs: Array<String>): String {
         val contigName = contigs[range.rid.toInt()]
@@ -77,61 +90,41 @@ fun Variant.normalize(): Variant {
 }
 
 /**
- * Harvest all distinct Variants from VcfRecord DataFrame
+ * Harvest variants from a VCF text line
  * onlyCalled: only include variants with at least one copy called in a sample GT
  */
 fun discoverVariants(
-    vcfRecordsDF: Dataset<Row>,
+    it: VcfRecord,
     filterRanges: org.apache.spark.broadcast.Broadcast<BedRanges>?,
     onlyCalled: Boolean = false
-): Dataset<Row> {
-    val vcfRecordsCompressed = vcfRecordsDF.columns().contains("snappyLine")
-    return vcfRecordsDF
-        .flatMap(
-            FlatMapFunction<Row, Row> {
-                row ->
-                val range = GRange(
-                    row.getAs<Short>("rid"),
-                    row.getAs<Int>("beg"),
-                    row.getAs<Int>("end")
-                )
-                val vcfRecord = VcfRecordUnpacked(
-                    VcfRecord(
-                        row.getAs<Int>("callsetId"), range,
-                        if (vcfRecordsCompressed) {
-                            String(Snappy.uncompress(row.getAs<ByteArray>("snappyLine")))
-                        } else {
-                            row.getAs<String>("line")
-                        }
-                    )
-                )
-                val variants = vcfRecord.altVariants.copyOf()
-                if (!onlyCalled) {
-                    variants.filterNotNull()
-                        .filter {
-                            vt ->
-                            filterRanges?.let { it.value!!.hasContaining(vt.range) } ?: true
-                        }.map { it.toRow() }.iterator()
-                } else {
-                    val copies = variants.map { 0 }.toTypedArray()
-                    for (sampleIndex in 0 until vcfRecord.sampleCount) {
-                        val gt = vcfRecord.getDiploidGenotype(sampleIndex)
-                        if (gt.allele1 != null && gt.allele1 > 0) {
-                            copies[gt.allele1 - 1]++
-                        }
-                        if (gt.allele2 != null && gt.allele2 > 0) {
-                            copies[gt.allele2 - 1]++
-                        }
-                    }
-                    variants.filterIndexed { i, _ -> copies[i] > 0 }
-                        .filterNotNull()
-                        .filter {
-                            vt ->
-                            filterRanges?.let { it.value!!.hasContaining(vt.range) } ?: true
-                        }.map { it.toRow() }.iterator()
-                }
-            },
-            VariantRowEncoder()
-        ).distinct() // TODO: accumulate instead of distinct() to collect summary stats
-        .selectExpr("*", "monotonically_increasing_id() as vid")
+): List<Variant> {
+    val vcfRecord = VcfRecordUnpacked(it)
+    val variants = vcfRecord.altVariants.copyOf()
+    if (!onlyCalled) {
+        return variants.filterNotNull()
+            .filter {
+                    vt ->
+                filterRanges?.let {
+                    it.value!!.hasContaining(vt.range)
+                } ?: true
+            }
+    }
+    val copies = variants.map { 0 }.toTypedArray()
+    for (sampleIndex in 0 until vcfRecord.sampleCount) {
+        val gt = vcfRecord.getDiploidGenotype(sampleIndex)
+        if (gt.allele1 != null && gt.allele1 > 0) {
+            copies[gt.allele1 - 1]++
+        }
+        if (gt.allele2 != null && gt.allele2 > 0) {
+            copies[gt.allele2 - 1]++
+        }
+    }
+    return variants.filterIndexed { i, _ -> copies[i] > 0 }
+        .filterNotNull()
+        .filter {
+                vt ->
+            filterRanges?.let {
+                it.value!!.hasContaining(vt.range)
+            } ?: true
+        }
 }
