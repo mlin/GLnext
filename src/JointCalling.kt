@@ -194,7 +194,7 @@ fun generateJointCalls(
             val inner = cleanup.add(
                 vcfRecords.prepareStatement(
                     """
-                    SELECT line FROM VcfRecord
+                    SELECT rid, beg, end, line FROM VcfRecord
                     WHERE _rowid_ IN $gri_sql
                       AND end > ?2 AND beg < ?3
                     ORDER BY _rowid_
@@ -217,10 +217,9 @@ fun generateJointCalls(
                 val irs = inner.executeQuery()
                 while (irs.next()) {
                     variantRecords.add(
-                        parseVcfRecord(
-                            aggHeader.contigId,
-                            callsetId,
-                            irs.getString("line")
+                        VcfRecord(
+                            GRange(irs.getShort(1), irs.getInt(2) + 1, irs.getInt(3)),
+                            irs.getString(4)
                         )
                     )
                 }

@@ -1,53 +1,28 @@
-
 import org.apache.spark.api.java.function.*
 import org.apache.spark.sql.*
 import org.apache.spark.sql.types.*
 import org.jetbrains.kotlinx.spark.api.*
-import org.xerial.snappy.Snappy
 
 enum class VcfColumn {
     CHROM, POS, ID, REF, ALT, QUAL, FILTER, INFO, FORMAT, FIRST_SAMPLE
 }
 
 /**
- * Raw VCF record: ID of the source callset, extracted GRange, and original line
+ * Raw VCF record with the extracted GRange
  */
-data class VcfRecord(val callsetId: Int, val range: GRange, val line: String) {
-    fun toRow(compress: Boolean = false): Row {
-        if (compress) {
-            val snappyLine = Snappy.compress(line.toByteArray())
-            return RowFactory.create(callsetId, range.rid, range.beg, range.end, snappyLine)
-        } else {
-            return RowFactory.create(callsetId, range.rid, range.beg, range.end, line)
-        }
-    }
-}
-
-/**
- * StructType for VcfRecord.toRow()
- */
-fun VcfRecordStructType(compress: Boolean = false): StructType {
-    var ty = StructType()
-        .add("callsetId", DataTypes.IntegerType, false)
-        .add("rid", DataTypes.ShortType, false)
-        .add("beg", DataTypes.IntegerType, false)
-        .add("end", DataTypes.IntegerType, false)
-    if (compress) {
-        ty = ty.add("snappyLine", DataTypes.BinaryType, false)
-    } else {
-        ty = ty.add("line", DataTypes.StringType, false)
-    }
-    return ty
-}
+data class VcfRecord(val range: GRange, val line: String)
 
 /**
  * Parse VCF text line into VcfRecord
  */
-fun parseVcfRecord(contigId: Map<String, Short>, callsetId: Int, line: String): VcfRecord {
+fun parseVcfRecord(contigId: Map<String, Short>, line: String): VcfRecord {
     val tsv = line.splitToSequence('\t').take(VcfColumn.INFO.ordinal + 1).toList().toTypedArray()
-    return VcfRecord(callsetId, parseVcfRecordRange(contigId, tsv), line)
+    return VcfRecord(parseVcfRecordRange(contigId, tsv), line)
 }
 
+/**
+ * Extract the GRange from VCF tab-separated values
+ */
 fun parseVcfRecordRange(contigId: Map<String, Short>, tsv: Array<String>): GRange {
     val rid = contigId.getOrDefault(tsv[VcfColumn.CHROM.ordinal], -1)
     require(rid >= 0, { "unknown CHROM ${tsv[0]}" })
@@ -61,6 +36,9 @@ fun parseVcfRecordRange(contigId: Map<String, Short>, tsv: Array<String>): GRang
     return GRange(rid, beg, endRef)
 }
 
+/**
+ * Parse the INFO fields of a VCF record
+ */
 fun parseVcfRecordInfo(info: String): Map<String, String> {
     return hashMapOf(
         *info.split(';').map {
@@ -173,6 +151,9 @@ class VcfRecordUnpacked(val record: VcfRecord) {
     }
 }
 
+/**
+ * GT field in a diploid VCF
+ */
 data class DiploidGenotype(val allele1: Int?, val allele2: Int?, val phased: Boolean) {
     fun validate(altAlleleCount: Int): DiploidGenotype {
         require(

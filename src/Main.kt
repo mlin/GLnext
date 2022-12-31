@@ -187,7 +187,7 @@ class CLI : CliktCommand() {
             // write output VCF header & BGZF EOF marker
             writeHeaderAndEOF(pvcfHeader, pvcfDir)
 
-            // TODO: clean up genomicsqlite files
+            // TODO: clean up db files
         }
     }
 }

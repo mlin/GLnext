@@ -151,19 +151,21 @@ fun loadAllVcfRecordDbs(
     )
 }
 
+/**
+ * Scan all the VcfRecords in the db
+ */
 fun scanVcfRecordDb(
     contigId: Map<String, Short>,
-    callsetId: Int,
-    filename: String
+    dbFilename: String
 ): Sequence<VcfRecord> {
     return sequence {
         ExitStack().use { cleanup ->
-            val dbc = cleanup.add(openGenomicSQLiteReadOnly(filename))
+            val dbc = cleanup.add(openGenomicSQLiteReadOnly(dbFilename))
             val stmt = cleanup.add(dbc.createStatement())
             val rs = cleanup.add(stmt.executeQuery("SELECT line from VcfRecord"))
             while (rs.next()) {
                 val line = rs.getString("line")
-                yield(parseVcfRecord(contigId, callsetId, line))
+                yield(parseVcfRecord(contigId, line))
             }
         }
     }

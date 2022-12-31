@@ -1,3 +1,4 @@
+// Helpers for generating all the pVCF QC fields (AD, PL, etc.)
 import java.io.Serializable
 import kotlin.math.min
 

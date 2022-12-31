@@ -23,6 +23,9 @@ fun Serializable.serializeToByteArray(): ByteArray {
     }
 }
 
+/**
+ * Get the Hadoop FileSystem object for path (either hdfs: or a local filename)
+ */
 fun getFileSystem(path: String): FileSystem {
     val normPath = if (path.startsWith("hdfs:") || path.startsWith("file://")) {
         path
@@ -33,6 +36,21 @@ fun getFileSystem(path: String): FileSystem {
         java.net.URI(normPath),
         org.apache.spark.deploy.SparkHadoopUtil.get().conf()
     )
+}
+
+/**
+ * Recursively list a [HDFS] directory, as a Sequence
+ */
+fun FileSystem.listSequence(
+    path: String,
+    recursive: Boolean
+): Sequence<org.apache.hadoop.fs.LocatedFileStatus> {
+    val it = getFileSystem(path).listFiles(Path(path), recursive)
+    return sequence {
+        while (it.hasNext()) {
+            yield(it.next())
+        }
+    }
 }
 
 /**
@@ -84,7 +102,10 @@ fun readFileChunks(filename: String, chunkSize: Int): Sequence<ByteArray> {
     }
 }
 
-fun concatFiles(src: List<String>, dest: String, chunkSize: Int) {
+/**
+ * Concatenate several local files into dest
+ */
+fun concatFiles(src: List<String>, dest: String, chunkSize: Int = 1048576) {
     File(dest).outputStream().use { destOut ->
         val buf = ByteArray(chunkSize)
         src.forEach { srcFilename ->
@@ -100,6 +121,9 @@ fun concatFiles(src: List<String>, dest: String, chunkSize: Int) {
     }
 }
 
+/**
+ * Compute CRC32C checksum of the file
+ */
 fun fileCRC32C(filename: String): Long {
     val crc = java.util.zip.CRC32C()
     File(filename).inputStream().use { inp ->
@@ -112,8 +136,10 @@ fun fileCRC32C(filename: String): Long {
     return crc.value
 }
 
-// A file is on HDFS, and may also be copied on the local filesystem. If not then make the copy.
-// Not inherently concurrency-safe!
+/**
+ * A file is on HDFS, and may also be copied on the local filesystem. If not then create the copy.
+ * Not inherently concurrency-safe!
+ */
 fun ensureLocalCopy(hdfsPath: String, localFilename: String) {
     val localFile = File(localFilename)
     if (localFile.createNewFile() || localFile.length() == 0L) {
@@ -123,7 +149,9 @@ fun ensureLocalCopy(hdfsPath: String, localFilename: String) {
     }
 }
 
-// as python contextlib.ExitStack
+/**
+ * As python contextlib.ExitStack
+ */
 class ExitStack : AutoCloseable {
     private val resources: ArrayDeque<AutoCloseable> = ArrayDeque()
 
@@ -151,6 +179,9 @@ class ExitStack : AutoCloseable {
     }
 }
 
+/**
+ * Create new GenomicSQLite database file, configured for bulk loading
+ */
 fun createGenomicSQLiteForBulkLoad(filename: String, threads: Int = 2): Connection {
     val config = Properties()
     config.setProperty(
@@ -170,6 +201,9 @@ fun createGenomicSQLiteForBulkLoad(filename: String, threads: Int = 2): Connecti
     return dbc
 }
 
+/**
+ * Formulate configuration JSON for read-only GenomicSQLite database connection
+ */
 fun getGenomicSQLiteReadOnlyConfigJSON(threads: Int = 2): String {
     return """{
             "threads": $threads,
@@ -178,6 +212,9 @@ fun getGenomicSQLiteReadOnlyConfigJSON(threads: Int = 2): String {
         }"""
 }
 
+/**
+ * Open existing GenomicSQLite database file for read-only ops
+ */
 fun openGenomicSQLiteReadOnly(filename: String, threads: Int = 2): Connection {
     val config = org.sqlite.SQLiteConfig()
     config.setReadOnly(true)
@@ -189,6 +226,9 @@ fun openGenomicSQLiteReadOnly(filename: String, threads: Int = 2): Connection {
     return DriverManager.getConnection("jdbc:genomicsqlite:" + filename, props)
 }
 
+/**
+ * Pool of read-only connections to one GenomicSQLite database file
+ */
 class GenomicSQLiteReadOnlyPool {
     companion object {
         @Volatile

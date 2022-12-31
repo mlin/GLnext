@@ -19,7 +19,6 @@ fun discoverAllVariants(
     return vcfRecordDbsDF
         .flatMap(
             FlatMapFunction<Row, Row> { row ->
-                val callsetId = row.getAs<Int>("callsetId")
                 val dbFilename = row.getAs<String>("dbFilename")
                 val dbLocalFilename = row.getAs<String>("dbLocalFilename")
                 sequence {
@@ -27,7 +26,7 @@ fun discoverAllVariants(
                     // db, so we can open the existing local file. But if not then fetch the db
                     // from HDFS, where we copied it for this contingency.
                     ensureLocalCopy(dbFilename, dbLocalFilename)
-                    scanVcfRecordDb(contigId, callsetId, dbLocalFilename)
+                    scanVcfRecordDb(contigId, dbLocalFilename)
                         .forEach { rec ->
                             yieldAll(
                                 discoverVariants(rec, filterRanges, onlyCalled)
