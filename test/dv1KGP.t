@@ -46,7 +46,6 @@ export _JAVA_OPTIONS="$_JAVA_OPTIONS -Dspark.default.parallelism=$(nproc) -Dspar
 
 time "${SPARK_HOME}/bin/spark-submit" \
     --master 'local[*]' --driver-memory 8G \
-    --name vcfGLuer --class vcfGLuer \
     $SOURCE_DIR/target/vcfGLuer-*.jar $@ --manifest "$MANIFEST" dv1KGP.out
 
 ls -l dv1KGP.out
