@@ -1,3 +1,4 @@
+package net.mlin.vcfGLuer.datamodel
 import net.mlin.iitj.IntegerIntervalTree
 
 /**

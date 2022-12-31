@@ -1,7 +1,4 @@
-import org.apache.spark.api.java.function.*
-import org.apache.spark.sql.*
-import org.apache.spark.sql.types.*
-import org.jetbrains.kotlinx.spark.api.*
+package net.mlin.vcfGLuer.datamodel
 
 enum class VcfColumn {
     CHROM, POS, ID, REF, ALT, QUAL, FILTER, INFO, FORMAT, FIRST_SAMPLE

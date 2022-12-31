@@ -1,13 +1,18 @@
+package net.mlin.vcfGLuer.database
 import java.io.File
-import java.sql.*
 import net.mlin.genomicsqlite.GenomicSQLite
+import net.mlin.vcfGLuer.datamodel.*
+import net.mlin.vcfGLuer.util.*
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
 import org.apache.spark.api.java.JavaSparkContext
-import org.apache.spark.api.java.function.*
-import org.apache.spark.sql.*
+import org.apache.spark.api.java.function.Function
+import org.apache.spark.sql.Dataset
+import org.apache.spark.sql.Row
+import org.apache.spark.sql.RowFactory
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.types.*
+import org.apache.spark.sql.types.DataTypes
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.LongAccumulator
 import org.jetbrains.kotlinx.spark.api.*
 

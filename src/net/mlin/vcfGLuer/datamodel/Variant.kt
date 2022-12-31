@@ -1,10 +1,11 @@
-
+package net.mlin.vcfGLuer.datamodel
 import kotlin.math.min
-import org.apache.spark.sql.*
+import org.apache.spark.sql.Row
+import org.apache.spark.sql.RowFactory
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.encoders.RowEncoder
-import org.apache.spark.sql.types.*
-import org.jetbrains.kotlinx.spark.api.*
+import org.apache.spark.sql.types.DataTypes
+import org.apache.spark.sql.types.StructType
 
 /**
  * Elementary variant

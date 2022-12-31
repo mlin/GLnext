@@ -1,9 +1,12 @@
+package net.mlin.vcfGLuer.database
 import java.io.File
 import net.mlin.genomicsqlite.GenomicSQLite
+import net.mlin.vcfGLuer.datamodel.*
+import net.mlin.vcfGLuer.util.*
 import org.apache.spark.api.java.function.FlatMapFunction
-import org.apache.spark.sql.*
-import org.apache.spark.sql.types.*
-import org.jetbrains.kotlinx.spark.api.*
+import org.apache.spark.broadcast.Broadcast
+import org.apache.spark.sql.Dataset
+import org.apache.spark.sql.Row
 
 /**
  * Harvest all distinct Variants from VcfRecordDbs
@@ -12,7 +15,7 @@ import org.jetbrains.kotlinx.spark.api.*
 fun discoverAllVariants(
     aggHeader: AggVcfHeader,
     vcfRecordDbsDF: Dataset<Row>,
-    filterRanges: org.apache.spark.broadcast.Broadcast<BedRanges>?,
+    filterRanges: Broadcast<BedRanges>?,
     onlyCalled: Boolean = false
 ): Dataset<Row> {
     val contigId = aggHeader.contigId
@@ -45,7 +48,7 @@ fun discoverAllVariants(
 fun collectAllVariantsDb(
     aggHeader: AggVcfHeader,
     vcfRecordDbsDF: Dataset<Row>,
-    filterRanges: org.apache.spark.broadcast.Broadcast<BedRanges>?,
+    filterRanges: Broadcast<BedRanges>?,
     onlyCalled: Boolean = false
 ): Pair<Int, String> {
     val tempFile = File.createTempFile("Variant.", ".db")

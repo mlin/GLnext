@@ -5,13 +5,13 @@
  * file per chromosome). The assumption is that files with identical headers (including the sample
  * identifier(s) on the #CHROM line) comprise one callset.
  */
+package net.mlin.vcfGLuer.datamodel
 import java.io.Serializable
+import net.mlin.vcfGLuer.util.*
 import org.apache.hadoop.fs.FileSystem
-import org.apache.log4j.LogManager
 import org.apache.spark.api.java.JavaSparkContext
-import org.apache.spark.api.java.function.*
-import org.apache.spark.api.java.function.Function as Function1
-import org.apache.spark.sql.*
+import org.apache.spark.api.java.function.FlatMapFunction
+import org.apache.spark.api.java.function.Function
 import org.jetbrains.kotlinx.spark.api.*
 
 /**
@@ -90,9 +90,9 @@ fun aggregateVcfHeaders(
                 }.iterator()
             }
         )
-        .groupBy(Function1<_DigestedHeader, String> { it.headerDigest })
+        .groupBy(Function<_DigestedHeader, String> { it.headerDigest })
         .mapValues(
-            Function1<Iterable<_DigestedHeader>, _FilenamesWithSameHeader> {
+            Function<Iterable<_DigestedHeader>, _FilenamesWithSameHeader> {
                     dhs ->
                 var header: String = ""
                 val callsetFilenames = dhs.map {
@@ -119,7 +119,7 @@ fun aggregateVcfHeaders(
             val samples: List<String>
         ) : Serializable
         val callsetsDetailsPre = filenamesByHeader.map(
-            Function1<scala.Tuple2<String, _FilenamesWithSameHeader>, _CallsetDetailsPre> {
+            Function<scala.Tuple2<String, _FilenamesWithSameHeader>, _CallsetDetailsPre> {
                 val callsetId = digestToCallsetId.value.get(it._1)!!
                 // read samples from last line of header
                 val lastHeaderLine = it._2.header.trimEnd('\n').splitToSequence("\n").last()
@@ -175,7 +175,7 @@ fun aggregateVcfHeaders(
         headerLines = headerLines.distinct()
         val headerLinesSize2 = headerLines.size
         if (headerLinesSize1 != headerLinesSize2) {
-            LogManager.getLogger("vcfGLuer").warn(
+            org.apache.log4j.LogManager.getLogger("vcfGLuer").warn(
                 "Deduplicated VcfHeaderLineKind left by Spark distinct()" +
                     " ($headerLinesSize1 > $headerLinesSize2)"
             )

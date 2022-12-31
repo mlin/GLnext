@@ -1,9 +1,12 @@
+package net.mlin.vcfGLuer.joint
 import java.io.OutputStreamWriter
 import kotlin.math.log10
+import net.mlin.vcfGLuer.datamodel.*
+import net.mlin.vcfGLuer.util.*
 import org.apache.hadoop.fs.Path
 import org.apache.log4j.LogManager
 import org.apache.spark.api.java.JavaSparkContext
-import org.apache.spark.api.java.function.*
+import org.apache.spark.api.java.function.FlatMapFunction
 import org.apache.spark.sql.SparkSession
 import org.jetbrains.kotlinx.spark.api.*
 

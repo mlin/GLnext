@@ -1,3 +1,4 @@
+package net.mlin.vcfGLuer.util
 import htsjdk.samtools.util.BlockCompressedOutputStream
 import java.io.File
 import java.io.OutputStream

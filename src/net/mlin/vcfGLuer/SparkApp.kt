@@ -1,5 +1,6 @@
-@file:JvmName("vcfGLuer")
+@file:JvmName("SparkApp")
 
+package net.mlin.vcfGLuer
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.arguments.multiple
@@ -9,12 +10,16 @@ import com.github.ajalt.clikt.parameters.options.option
 import com.sksamuel.hoplite.*
 import java.io.File
 import java.util.Properties
+import net.mlin.vcfGLuer.database.*
+import net.mlin.vcfGLuer.datamodel.*
+import net.mlin.vcfGLuer.joint.*
+import net.mlin.vcfGLuer.util.*
 import org.apache.hadoop.fs.Path
 import org.apache.log4j.Level
 import org.apache.log4j.LogManager
 import org.apache.spark.api.java.JavaSparkContext
 import org.apache.spark.api.java.function.ForeachPartitionFunction
-import org.apache.spark.sql.*
+import org.apache.spark.sql.Dataset
 import org.jetbrains.kotlinx.spark.api.*
 
 data class SparkConfig(val compressTempFiles: Boolean)
@@ -24,6 +29,10 @@ data class MainConfig(
     val discovery: DiscoveryConfig,
     val joint: JointConfig
 )
+
+fun main(args: Array<String>) {
+    CLI().main(args)
+}
 
 class CLI : CliktCommand() {
     val inputFiles: List<String> by
@@ -121,6 +130,7 @@ class CLI : CliktCommand() {
             }
             logger.info("contigs: ${aggHeader.contigId.size.pretty()}")
 
+            // load filter ranges BED, if any
             val filterRangesB = filterBed?.let {
                 val filterRanges = BedRanges(aggHeader.contigId, fileReaderDetectGz(it))
                 logger.info("BED filter ranges: ${filterRanges.size}")
@@ -134,6 +144,7 @@ class CLI : CliktCommand() {
             val pvcfRecordCount = spark.sparkContext.longAccumulator("pVCF records")
             val pvcfRecordBytes = spark.sparkContext.longAccumulator("pVCF bytes")
 
+            // load all the input gVCF files into GenomicSQLite database files
             val dbsDF = loadAllVcfRecordDbs(
                 spark,
                 aggHeader,
@@ -144,25 +155,26 @@ class CLI : CliktCommand() {
                 recordBytes = vcfRecordBytes
             ).cache()
 
-            // discover & collect all variants into a database file local to the driver
+            // discover all variants & collect them to a database file local to the driver
             val (variantCount, variantsDbFilename) = collectAllVariantsDb(
                 aggHeader,
                 dbsDF,
                 filterRangesB,
                 onlyCalled = cfg.discovery.minCopies > 0
             )
+
+            // report accumulators
             filterRangesB?.let {
-                it.unpersist()
                 logger.info("unfiltered VCF records: ${allRecordCount.sum().pretty()}")
             }
             logger.info("input VCF records: ${vcfRecordCount.sum().pretty()}")
             logger.info("input VCF bytes: ${vcfRecordBytes.sum().pretty()}")
             logger.info("joint variants: ${variantCount.pretty()}")
-            val variantsDbFile = File(variantsDbFilename)
-            logger.info("variants DB compressed: ${variantsDbFile.length().pretty()} bytes")
+            val variantsDbFileSize = File(variantsDbFilename).length()
+            logger.info("variants DB compressed: ${variantsDbFileSize.pretty()} bytes")
 
             // broadcast the variants database to the same temp filename on each executor
-            val variantsDbCopies = 1 + broadcastLargeFile(dbsDF, variantsDbFilename, 1048576)
+            val variantsDbCopies = 1 + broadcastLargeFile(dbsDF, variantsDbFilename)
             logger.info("variants DB broadcast: ${variantsDbCopies.pretty()} copies")
 
             // perform joint-calling
@@ -176,7 +188,7 @@ class CLI : CliktCommand() {
                 pvcfRecordCount, pvcfRecordBytes
             )
 
-            // write pVCF records (in parts)
+            // write pVCF lines (in BGZF parts)
             pvcfLines.saveAsTextFile(pvcfDir, BGZFCodec::class.java)
             logger.info("pVCF bytes: ${pvcfRecordBytes.sum().pretty()}")
             check(pvcfRecordCount.sum() == variantCount.toLong())
@@ -191,13 +203,6 @@ class CLI : CliktCommand() {
         }
     }
 }
-
-fun main(args: Array<String>) {
-    CLI().main(args)
-}
-
-fun Int.pretty(): String = java.text.NumberFormat.getIntegerInstance().format(this)
-fun Long.pretty(): String = java.text.NumberFormat.getIntegerInstance().format(this)
 
 fun getProjectVersion(): String {
     val props = Properties()
@@ -251,9 +256,6 @@ fun <T> broadcastLargeFile(
                 val localChunk = File(chunkFilename)
                 if (localChunk.createNewFile()) {
                     localChunk.writeBytes(chunkB.value)
-                } else {
-                    // no-op: pause to smooth out the Spark task turnover rate
-                    Thread.sleep(java.util.Random().nextInt(1000).toLong())
                 }
             }
         )
@@ -271,8 +273,6 @@ fun <T> broadcastLargeFile(
                 check(localCopy.length() == fileSize)
                 chunkFilenames.forEach { File(it).delete() }
                 copies.add(1L)
-            } else {
-                Thread.sleep(java.util.Random().nextInt(1000).toLong())
             }
         }
     )

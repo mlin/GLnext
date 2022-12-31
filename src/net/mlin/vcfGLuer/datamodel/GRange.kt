@@ -1,3 +1,5 @@
+package net.mlin.vcfGLuer.datamodel
+
 /**
  * Genomic range with reference sequence id (rid), one-based begin position, and inclusive end
  * position (matching the convention in the VCF text format).

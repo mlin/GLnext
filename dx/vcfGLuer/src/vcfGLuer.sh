@@ -27,7 +27,7 @@ main() {
     #   https://www.oracle.com/technical-resources/articles/java/g1gc.html
     #   https://databricks.com/blog/2015/05/28/tuning-java-garbage-collection-for-spark-applications.html
     all_java_options="\
-    -Xss16m -XX:+AlwaysPreTouch -XX:+UseLargePages -XX:InitiatingHeapOccupancyPercent=35 -XX:MaxGCPauseMillis=1000 \
+    -Xss16m -XX:InitiatingHeapOccupancyPercent=35 -XX:MaxGCPauseMillis=1000 \
     -XX:+PrintFlagsFinal \
     $java_options"
     filter_bed_arg=""
@@ -47,7 +47,7 @@ main() {
         --conf spark.sql.adaptive.coalescePartitions.enabled=true \
         --conf spark.sql.adaptive.coalescePartitions.initialPartitionNum=$spark_default_parallelism \
         --conf spark.sql.adaptive.coalescePartitions.parallelismFirst=false \
-        --name vcfGLuer --class vcfGLuer vcfGLuer-*.jar \
+        --name vcfGLuer vcfGLuer-*.jar \
         --manifest --config $config $filter_bed_arg \
         vcfGLuer_in.hdfs.manifest hdfs:///vcfGLuer/out \
         || true

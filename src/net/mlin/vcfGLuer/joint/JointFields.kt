@@ -1,6 +1,8 @@
 // Helpers for generating all the pVCF QC fields (AD, PL, etc.)
+package net.mlin.vcfGLuer.joint
 import java.io.Serializable
 import kotlin.math.min
+import net.mlin.vcfGLuer.datamodel.*
 
 data class JointFormatField(val name: String, val header: String?, val impl: String?) :
     Serializable
