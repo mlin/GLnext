@@ -120,13 +120,16 @@ fun fileCRC32C(filename: String): Long {
 
 /**
  * A file is on HDFS, and may also be copied on the local filesystem. If not then create the copy.
- * Not inherently concurrency-safe!
  */
-fun ensureLocalCopy(hdfsPath: String, localFilename: String) {
+fun ensureLocalCopy(hdfsPath: Path, localFilename: String) {
     val localFile = File(localFilename)
-    if (localFile.createNewFile() || localFile.length() == 0L) {
+    if (!localFile.isFile()) {
         val tempFile = File.createTempFile(localFile.getName() + ".", ".tmp")
-        getFileSystem(hdfsPath).copyToLocalFile(Path(hdfsPath), Path(tempFile.absolutePath))
-        tempFile.renameTo(localFile)
+        getFileSystem(hdfsPath.toString()).copyToLocalFile(hdfsPath, Path(tempFile.absolutePath))
+        if (!localFile.isFile()) {
+            tempFile.renameTo(localFile)
+        } else {
+            tempFile.delete()
+        }
     }
 }

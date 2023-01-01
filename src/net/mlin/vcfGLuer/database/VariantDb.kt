@@ -3,6 +3,7 @@ import java.io.File
 import net.mlin.genomicsqlite.GenomicSQLite
 import net.mlin.vcfGLuer.datamodel.*
 import net.mlin.vcfGLuer.util.*
+import org.apache.hadoop.fs.Path
 import org.apache.spark.api.java.function.FlatMapFunction
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.Dataset
@@ -22,13 +23,13 @@ fun discoverAllVariants(
     return vcfRecordDbsDF
         .flatMap(
             FlatMapFunction<Row, Row> { row ->
-                val dbFilename = row.getAs<String>("dbFilename")
+                val dbPath = Path(row.getAs<String>("dbPath"))
                 val dbLocalFilename = row.getAs<String>("dbLocalFilename")
                 sequence {
                     // Usually this task will run on the same executor that created the vcf records
                     // db, so we can open the existing local file. But if not then fetch the db
                     // from HDFS, where we copied it for this contingency.
-                    ensureLocalCopy(dbFilename, dbLocalFilename)
+                    ensureLocalCopy(dbPath, dbLocalFilename)
                     scanVcfRecordDb(contigId, dbLocalFilename)
                         .forEach { rec ->
                             yieldAll(

@@ -5,6 +5,7 @@ import kotlin.text.StringBuilder
 import net.mlin.vcfGLuer.database.*
 import net.mlin.vcfGLuer.datamodel.*
 import net.mlin.vcfGLuer.util.*
+import org.apache.hadoop.fs.Path
 import org.apache.log4j.Logger
 import org.apache.spark.api.java.JavaRDD
 import org.apache.spark.api.java.JavaSparkContext
@@ -62,12 +63,12 @@ fun jointCall(
     val entriesDF = vcfRecordDbsDF.flatMap(
         FlatMapFunction<Row, Row> {
             val callsetId = it.getAs<Int>("callsetId")
-            val dbFilename = it.getAs<String>("dbFilename") // possibly HDFS path
+            val dbPath = Path(it.getAs<String>("dbPath"))
             val dbLocalFilename = it.getAs<String>("dbLocalFilename")
             // Usually this task will run on the same executor that created the vcf records db, so
             // we can open the existing local file. But if not then fetch the db from HDFS, where
             // we copied it for this contingency.
-            ensureLocalCopy(dbFilename, dbLocalFilename)
+            ensureLocalCopy(dbPath, dbLocalFilename)
 
             generateJointCalls(
                 cfg,

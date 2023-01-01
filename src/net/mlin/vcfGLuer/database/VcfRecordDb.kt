@@ -151,7 +151,7 @@ fun loadAllVcfRecordDbs(
         StructType()
             .add("callsetId", DataTypes.IntegerType, false)
             .add("vcfFilename", DataTypes.StringType, false)
-            .add("dbFilename", DataTypes.StringType, false)
+            .add("dbPath", DataTypes.StringType, false)
             .add("dbLocalFilename", DataTypes.StringType, false)
     )
 }

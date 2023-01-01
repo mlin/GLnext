@@ -41,6 +41,11 @@ main() {
         --conf spark.driver.maxResultSize=0 \
         --conf spark.task.maxFailures=3 \
         --conf spark.stage.maxConsecutiveAttempts=2 \
+        --conf spark.speculation=true \
+        --conf spark.speculation.interval=1s \
+        --conf spark.speculation.multiplier=4 \
+        --conf spark.speculation.quantile=0.9 \
+        --conf spark.speculation.minTaskRuntime=1s \
         --conf spark.default.parallelism=$spark_default_parallelism \
         --conf spark.sql.shuffle.partitions=$spark_default_parallelism \
         --conf spark.sql.adaptive.enabled=true \
