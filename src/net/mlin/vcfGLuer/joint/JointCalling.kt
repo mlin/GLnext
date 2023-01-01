@@ -122,7 +122,7 @@ fun jointCall(
                     .add("snappyLine", DataTypes.BinaryType, false)
             )
         ).cache() // cache() before sorting: https://stackoverflow.com/a/56310076
-    // Perform a count() to force pvcfRows, ensuring it registers as an SQL query in the history
+    // Perform a count() to force pvcfLinesDF, ensuring it registers as an SQL query in the history
     // server before next dropping to RDD. This provides useful diagnostic info that would
     // otherwise go missing. The log message also provides a progress marker.
     val pvcfLineCount = pvcfLinesDF.count()
@@ -192,7 +192,10 @@ fun generateJointCalls(
             )
             val vcfRecords = cleanup.add(openGenomicSQLiteReadOnly(vcfRecordsDbFilename))
 
-            // prepare GRI query for callset VCF records
+            // Prepare GRI query for callset VCF records. Begin (read) transaction as we'll be
+            // executing many SELECT statements in a loop.
+            vcfRecords.setTransactionIsolation(java.sql.Connection.TRANSACTION_SERIALIZABLE)
+            vcfRecords.setAutoCommit(false)
             val gri_sql = vcfRecords.createStatement().use { stmt ->
                 val rs = stmt.executeQuery("SELECT genomic_range_rowids_sql('VcfRecord')")
                 check(rs.next())

@@ -43,8 +43,8 @@ main() {
         --conf spark.stage.maxConsecutiveAttempts=2 \
         --conf spark.speculation=true \
         --conf spark.speculation.interval=1m \
-        --conf spark.speculation.multiplier=4 \
-        --conf spark.speculation.quantile=0.95 \
+        --conf spark.speculation.multiplier=8 \
+        --conf spark.speculation.quantile=0.98 \
         --conf spark.speculation.minTaskRuntime=30m \
         --conf spark.default.parallelism=$spark_default_parallelism \
         --conf spark.sql.shuffle.partitions=$spark_default_parallelism \

@@ -103,6 +103,12 @@ class CLI : CliktCommand() {
                     spark.sparkContext.statusTracker().getExecutorInfos().size.toString()
             )
             logger.info("Locale: ${java.util.Locale.getDefault()}")
+            java.sql.DriverManager.getConnection("jdbc:genomicsqlite::memory:").use {
+                val sqliteVersion = (it as org.sqlite.SQLiteConnection).libversion()
+                logger.info("SQLite v$sqliteVersion")
+                val genomicsqliteVersion = net.mlin.genomicsqlite.GenomicSQLite.version(it)
+                logger.info("GenomicSQLite $genomicsqliteVersion")
+            }
             logger.info("vcfGLuer v${getProjectVersion()}")
             logger.info(cfg.toString())
             logger.info("input VCF files: ${effInputFiles.size.pretty()}")
@@ -237,7 +243,7 @@ fun writeHeaderAndEOF(headerText: String, dir: String) {
  * Given a filename local to the driver, broadcast it to all executors (with at least one partition
  * of someDataset) saved to the same local filename, which must not yet exist on any of them. This
  * is more scalable than going through HDFS because it leverages Spark's TorrentBroadcast. However,
- * large files require multiple rounds since broadcast is contrained by ByteArray max size.
+ * large files require multiple rounds since broadcast is constrained by ByteArray max size.
  */
 fun <T> broadcastLargeFile(
     someDataset: Dataset<T>,
