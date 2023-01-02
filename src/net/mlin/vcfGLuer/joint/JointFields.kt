@@ -2,7 +2,7 @@
 package net.mlin.vcfGLuer.joint
 import java.io.Serializable
 import kotlin.math.min
-import net.mlin.vcfGLuer.datamodel.*
+import net.mlin.vcfGLuer.data.*
 
 data class JointFormatField(val name: String, val header: String?, val impl: String?) :
     Serializable
@@ -26,7 +26,7 @@ abstract class JointFormatFieldImpl(val hdr: AggVcfHeader, val spec: JointFormat
         return spec.header ?: defaultHeaderLine()
     }
     abstract fun generate(
-        data: VcfRecordsContext,
+        data: GenotypingContext,
         sampleIndex: Int,
         gt: DiploidGenotype,
         variantRecord: VcfRecordUnpacked?
@@ -39,7 +39,7 @@ abstract class JointFormatFieldImpl(val hdr: AggVcfHeader, val spec: JointFormat
 class CopiedFormatField(hdr: AggVcfHeader, spec: JointFormatField) :
     JointFormatFieldImpl(hdr, spec) {
     override fun generate(
-        data: VcfRecordsContext,
+        data: GenotypingContext,
         sampleIndex: Int,
         gt: DiploidGenotype,
         variantRecord: VcfRecordUnpacked?
@@ -51,7 +51,7 @@ class CopiedFormatField(hdr: AggVcfHeader, spec: JointFormatField) :
 class DP_FormatField(hdr: AggVcfHeader, spec: JointFormatField) :
     JointFormatFieldImpl(hdr, spec) {
     override fun generate(
-        data: VcfRecordsContext,
+        data: GenotypingContext,
         sampleIndex: Int,
         gt: DiploidGenotype,
         variantRecord: VcfRecordUnpacked?
@@ -90,7 +90,7 @@ class DP_FormatField(hdr: AggVcfHeader, spec: JointFormatField) :
 
 class AD_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFieldImpl(hdr, spec) {
     override fun generate(
-        data: VcfRecordsContext,
+        data: GenotypingContext,
         sampleIndex: Int,
         gt: DiploidGenotype,
         variantRecord: VcfRecordUnpacked?
@@ -113,7 +113,7 @@ class AD_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFie
 
 class PL_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFieldImpl(hdr, spec) {
     override fun generate(
-        data: VcfRecordsContext,
+        data: GenotypingContext,
         sampleIndex: Int,
         gt: DiploidGenotype,
         variantRecord: VcfRecordUnpacked?
@@ -146,7 +146,7 @@ class OL_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFie
             "Description=\"Copy number of other overlapping ALT alleles\">"
     }
     override fun generate(
-        data: VcfRecordsContext,
+        data: GenotypingContext,
         sampleIndex: Int,
         gt: DiploidGenotype,
         variantRecord: VcfRecordUnpacked?
@@ -188,7 +188,7 @@ class JointFieldsGenerator(val cfg: JointConfig, aggHeader: AggVcfHeader) : Seri
      * generate the FORMAT fields for one sample (and update any INFO field accumulators)
      */
     fun generateFormatFields(
-        data: VcfRecordsContext,
+        data: GenotypingContext,
         sampleIndex: Int,
         gt: DiploidGenotype,
         variantRecord: VcfRecordUnpacked?

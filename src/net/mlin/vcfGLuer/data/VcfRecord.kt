@@ -1,4 +1,5 @@
-package net.mlin.vcfGLuer.datamodel
+package net.mlin.vcfGLuer.data
+import net.mlin.vcfGLuer.util.fileReaderDetectGz
 
 enum class VcfColumn {
     CHROM, POS, ID, REF, ALT, QUAL, FILTER, INFO, FORMAT, FIRST_SAMPLE
@@ -44,6 +45,21 @@ fun parseVcfRecordInfo(info: String): Map<String, String> {
             kv[0] to (if (kv.size > 1) kv[1] else "")
         }.toTypedArray()
     )
+}
+
+/**
+ * Scan records in VCF file
+ */
+fun scanVcfRecords(contigId: Map<String, Short>, vcfFilename: String): Sequence<VcfRecord> {
+    return sequence {
+        fileReaderDetectGz(vcfFilename).useLines { lines ->
+            lines.forEach {
+                if (it.isNotEmpty() && it[0] != '#') {
+                    yield(parseVcfRecord(contigId, it))
+                }
+            }
+        }
+    }
 }
 
 /**

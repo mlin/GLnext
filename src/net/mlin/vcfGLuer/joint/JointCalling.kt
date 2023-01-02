@@ -2,10 +2,8 @@ package net.mlin.vcfGLuer.joint
 import java.io.Serializable
 import kotlin.math.pow
 import kotlin.text.StringBuilder
-import net.mlin.vcfGLuer.database.*
-import net.mlin.vcfGLuer.datamodel.*
+import net.mlin.vcfGLuer.data.*
 import net.mlin.vcfGLuer.util.*
-import org.apache.hadoop.fs.Path
 import org.apache.log4j.Logger
 import org.apache.spark.api.java.JavaRDD
 import org.apache.spark.api.java.JavaSparkContext
@@ -48,7 +46,7 @@ fun jointCall(
     spark: SparkSession,
     aggHeader: AggVcfHeader,
     variantsDbFilename: String,
-    vcfRecordDbsDF: Dataset<Row>,
+    vcfFilenamesDF: Dataset<Row>,
     pvcfHeaderMetaLines: List<String> = emptyList(),
     pvcfRecordCount: LongAccumulator? = null,
     pvcfRecordBytes: LongAccumulator? = null
@@ -60,23 +58,15 @@ fun jointCall(
     val fieldsGenB = jsc.broadcast(JointFieldsGenerator(cfg, aggHeader))
 
     // make big DataFrame of pVCF genotype entries: (variantId, sampleId, pvcfEntry)
-    val entriesDF = vcfRecordDbsDF.flatMap(
+    val entriesDF = vcfFilenamesDF.flatMap(
         FlatMapFunction<Row, Row> {
-            val callsetId = it.getAs<Int>("callsetId")
-            val dbPath = Path(it.getAs<String>("dbPath"))
-            val dbLocalFilename = it.getAs<String>("dbLocalFilename")
-            // Usually this task will run on the same executor that created the vcf records db, so
-            // we can open the existing local file. But if not then fetch the db from HDFS, where
-            // we copied it for this contingency.
-            ensureLocalCopy(dbPath, dbLocalFilename)
-
             generateJointCalls(
                 cfg,
                 aggHeaderB.value,
                 fieldsGenB.value,
                 variantsDbFilename,
-                callsetId,
-                dbLocalFilename
+                it.getAs<Int>("callsetId"),
+                it.getAs<String>("vcfFilename")
             )
                 .map { RowFactory.create(it.first, it.second, it.third) }
                 .iterator()
@@ -149,12 +139,55 @@ fun jointCall(
         )
 }
 
+fun generateJointCalls(
+    cfg: JointConfig,
+    aggHeader: AggVcfHeader,
+    fieldsGen: JointFieldsGenerator,
+    variantsDbFilename: String,
+    callsetId: Int,
+    vcfFilename: String
+): Sequence<Triple<Int, Int, String>> = // [(variantId, sampleId, pvcfEntry)]
+    sequence {
+        val variants = sequence {
+            ExitStack().use { cleanup ->
+                val variants = cleanup.add(
+                    GenomicSQLiteReadOnlyPool.get(variantsDbFilename).getConnection()
+                )
+                val rs = cleanup.add(variants.createStatement()).executeQuery(
+                    "SELECT * FROM Variant ORDER BY variantId"
+                )
+                while (rs.next()) {
+                    val variantId = rs.getInt("variantId")
+                    val variant = Variant(rs)
+                    yield(variantId to variant)
+                }
+            }
+        }
+        val records = scanVcfRecords(aggHeader.contigId, vcfFilename)
+        generateGenotypingContexts(variants, records).forEach { ctx ->
+            aggHeader.callsetsDetails[callsetId].callsetSamples
+                .forEachIndexed { sampleIndex, sampleId ->
+                    yield(
+                        Triple(
+                            ctx.variantId,
+                            sampleId,
+                            generateGenotypeAndFormatFields(
+                                cfg,
+                                fieldsGen,
+                                ctx,
+                                sampleIndex
+                            )
+                        )
+                    )
+                }
+        }
+    }
+
 /**
- * Callset records assorted into reference bands, records containing the desired variant,
- * and other variants
+ * Callset records assorted into reference bands, records containing the focal variant, and others
  */
-class VcfRecordsContext(
-    val aggHeader: AggVcfHeader,
+class GenotypingContext(
+    val variantId: Int,
     val variant: Variant,
     val callsetRecords: List<VcfRecord>
 ) {
@@ -176,84 +209,73 @@ class VcfRecordsContext(
     }
 }
 
-fun generateJointCalls(
-    cfg: JointConfig,
-    aggHeader: AggVcfHeader,
-    fieldsGen: JointFieldsGenerator,
-    variantsDbFilename: String,
-    callsetId: Int,
-    vcfRecordsDbFilename: String
-): Sequence<Triple<Int, Int, String>> = // [(variantId, sampleId, pvcfEntry)]
-    sequence {
-        ExitStack().use { cleanup ->
-            // open databases
-            val variants = cleanup.add(
-                GenomicSQLiteReadOnlyPool.get(variantsDbFilename).getConnection()
-            )
-            val vcfRecords = cleanup.add(openGenomicSQLiteReadOnly(vcfRecordsDbFilename))
+/**
+ * Given variant & VCF record sequences (both range-sorted), produce the VariantCallingContext for
+ * each variant with the overlapping VCF records (if any).
+ *
+ * The streaming algorithm assumes that the variants aren't too large and the VCF records aren't
+ * too overlapping. These assumptions match up with small-variant gVCF inputs, of course.
+ */
+fun generateGenotypingContexts(
+    variants: Sequence<Pair<Int, Variant>>,
+    records: Sequence<VcfRecord>
+): Sequence<GenotypingContext> {
+    // buffer of records whose ranges neither strictly precede (<<) nor strictly follow (>>) the
+    // last-processed variant
+    val workingSet: MutableList<VcfRecord> = mutableListOf()
+    // an upcoming record that's >> the last-processed variant
+    var record: VcfRecord? = null
+    // remaining records
+    val recordsIter = records.iterator()
 
-            // Prepare GRI query for callset VCF records. Begin (read) transaction as we'll be
-            // executing many SELECT statements in a loop.
-            vcfRecords.setTransactionIsolation(java.sql.Connection.TRANSACTION_SERIALIZABLE)
-            vcfRecords.setAutoCommit(false)
-            val gri_sql = vcfRecords.createStatement().use { stmt ->
-                val rs = stmt.executeQuery("SELECT genomic_range_rowids_sql('VcfRecord')")
-                check(rs.next())
-                rs.getString(1)
-            }
-            val inner = cleanup.add(
-                vcfRecords.prepareStatement(
-                    """
-                    SELECT rid, beg, end, line FROM VcfRecord
-                    WHERE _rowid_ IN $gri_sql
-                      AND end > ?2 AND beg < ?3
-                    ORDER BY _rowid_
-                    """
-                )
-            )
+    // for verifying sort order
+    var lastVariantRange: GRange? = null
+    var lastRecordRange: GRange? = null
 
-            // for each variant
-            val outer = cleanup.add(variants.createStatement())
-            val ors = cleanup.add(outer.executeQuery("SELECT * FROM Variant"))
-            while (ors.next()) {
-                val variantId = ors.getInt("variantId")
-                val variant = Variant(ors)
+    return variants.mapNotNull { (variantId, variant) ->
+        val vr = variant.range
+        lastVariantRange?.let { require(it <= vr) }
+        lastVariantRange = vr
 
-                // get overlapping callset VCF records
-                val variantRecords: MutableList<VcfRecord> = mutableListOf()
-                inner.setShort(1, variant.range.rid)
-                inner.setInt(2, variant.range.beg - 1)
-                inner.setInt(3, variant.range.end)
-                val irs = inner.executeQuery()
-                while (irs.next()) {
-                    variantRecords.add(
-                        VcfRecord(
-                            GRange(irs.getShort(1), irs.getInt(2) + 1, irs.getInt(3)),
-                            irs.getString(4)
-                        )
-                    )
-                }
-
-                // generate genotype entries
-                val ctx = VcfRecordsContext(aggHeader, variant, variantRecords)
-                aggHeader.callsetsDetails[callsetId].callsetSamples.forEachIndexed {
-                        sampleIndex, sampleId ->
-                    yield(
-                        Triple(
-                            variantId,
-                            sampleId,
-                            generateGenotypeAndFormatFields(
-                                cfg,
-                                fieldsGen,
-                                ctx,
-                                sampleIndex
-                            )
-                        )
-                    )
-                }
-            }
+        // prune working set of records << variant
+        workingSet.removeAll {
+            it.range.rid < vr.rid || (it.range.rid == vr.rid && it.range.end < vr.beg)
         }
+
+        // consume records while not >> variant, adding to working set if not << variant
+        if (record == null && recordsIter.hasNext()) {
+            record = recordsIter.next()
+        }
+        while (record != null) {
+            val rr = record!!.range
+            lastRecordRange?.let {
+                // VCF records are (rid,beg)-sorted but not necessarily (rid,beg,end)-sorted.
+                // That's okay because we'll decide whether to continue based on beg, not end.
+                require(it.rid < rr.rid || (it.rid == rr.rid && it.beg <= rr.beg))
+            }
+            lastRecordRange = rr
+
+            if (rr.rid > vr.rid || (rr.rid == vr.rid && rr.beg > vr.end)) {
+                // record >> variant; save for potential relevance to NEXT variant
+                break
+            } else if (rr.rid == vr.rid && rr.end >= vr.beg) {
+                // record neither << nor >> variant; add to working set
+                workingSet.add(record!!)
+            } // else discard record << variant
+            record = if (recordsIter.hasNext()) recordsIter.next() else null
+        }
+
+        // Working set may still hold records that overlapped a prior (lengthy) variant, but not
+        // the focal one; they're to be excluded from the focal GenotypingContext but retained in
+        // the working set for the next iteration.
+        //
+        //   prior variant   |-----------------------------------|
+        //   focal variant                  |------|
+        // retained record                                     |----|
+        val hits = workingSet.filter { it.range.overlaps(variant.range) }
+        if (hits.isNotEmpty()) { GenotypingContext(variantId, variant, hits) } else { null }
     }
+}
 
 fun generateJointLine(
     cfg: JointConfig,
@@ -304,7 +326,7 @@ fun generateJointLine(
 fun generateGenotypeAndFormatFields(
     cfg: JointConfig,
     fieldsGen: JointFieldsGenerator,
-    data: VcfRecordsContext,
+    data: GenotypingContext,
     sampleIndex: Int
 ): String {
     if (data.variantRecords.isEmpty()) {
@@ -357,7 +379,7 @@ fun generateGenotypeAndFormatFields(
 fun generateRefGenotypeAndFormatFields(
     cfg: JointConfig,
     fieldsGen: JointFieldsGenerator,
-    data: VcfRecordsContext,
+    data: GenotypingContext,
     sampleIndex: Int
 ): String {
     check(data.variantRecords.isEmpty())

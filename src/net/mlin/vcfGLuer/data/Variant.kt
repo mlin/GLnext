@@ -1,4 +1,4 @@
-package net.mlin.vcfGLuer.datamodel
+package net.mlin.vcfGLuer.data
 import kotlin.math.min
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.RowFactory
@@ -88,44 +88,4 @@ fun Variant.normalize(): Variant {
             normRef.length == normRange.end - normRange.beg + 1
     )
     return Variant(normRange, normRef, normAlt)
-}
-
-/**
- * Harvest variants from a VCF text line
- * onlyCalled: only include variants with at least one copy called in a sample GT
- */
-fun discoverVariants(
-    it: VcfRecord,
-    filterRanges: org.apache.spark.broadcast.Broadcast<BedRanges>?,
-    onlyCalled: Boolean = false
-): List<Variant> {
-    val vcfRecord = VcfRecordUnpacked(it)
-    val variants = vcfRecord.altVariants.copyOf()
-    if (!onlyCalled) {
-        return variants.filterNotNull()
-            .filter {
-                    vt ->
-                filterRanges?.let {
-                    it.value!!.hasContaining(vt.range)
-                } ?: true
-            }
-    }
-    val copies = variants.map { 0 }.toTypedArray()
-    for (sampleIndex in 0 until vcfRecord.sampleCount) {
-        val gt = vcfRecord.getDiploidGenotype(sampleIndex)
-        if (gt.allele1 != null && gt.allele1 > 0) {
-            copies[gt.allele1 - 1]++
-        }
-        if (gt.allele2 != null && gt.allele2 > 0) {
-            copies[gt.allele2 - 1]++
-        }
-    }
-    return variants.filterIndexed { i, _ -> copies[i] > 0 }
-        .filterNotNull()
-        .filter {
-                vt ->
-            filterRanges?.let {
-                it.value!!.hasContaining(vt.range)
-            } ?: true
-        }
 }
