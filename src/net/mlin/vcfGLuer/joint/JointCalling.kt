@@ -265,9 +265,9 @@ fun generateGenotypingContexts(
             record = if (recordsIter.hasNext()) recordsIter.next() else null
         }
 
-        // Working set may still harbor records that overlapped a prior (lengthy) variant, but not
-        // the current focal one; they're to be excluded from the focal GenotypingContext but
-        // retained in the working set.
+        // Working set may still hold records that overlapped a prior (lengthy) variant, but not
+        // the focal one; they're to be excluded from the focal GenotypingContext but retained in
+        // the working set for the next iteration.
         //
         //   prior variant   |-----------------------------------|
         //   focal variant                  |------|
