@@ -149,7 +149,15 @@ class CLI : CliktCommand() {
             val pvcfRecordCount = spark.sparkContext.longAccumulator("pVCF records")
             val pvcfRecordBytes = spark.sparkContext.longAccumulator("pVCF bytes")
 
-            // discover all variants & collect them to a database file local to the driver
+            /*
+            Discover all variants & collect them to a database file local to the driver.
+
+            The variants list, with associated stats, occupies an awkward middle ground where it's
+            large enough that we don't want to broadcast it to all executors' JVM heaps, yet not so
+            large as to warrant keeping it partitioned as a DataFrame and necessitating a
+            gigantic shuffle of the input VCF records. Instead, we write them into a GenomicSQLite
+            database file and (below) distribute this file to all executors.
+            */
             val vcfFilenamesDF = aggHeader.vcfFilenamesDF(spark)
             val (variantCount, variantsDbFilename) = collectAllVariantsDb(
                 aggHeader.contigId,
@@ -229,9 +237,10 @@ fun writeHeaderAndEOF(headerText: String, dir: String) {
 
 /**
  * Given a filename local to the driver, broadcast it to all executors (with at least one partition
- * of someDataset) saved to the same local filename, which must not yet exist on any of them. This
- * is more scalable than going through HDFS because it leverages Spark's TorrentBroadcast. However,
- * large files require multiple rounds since broadcast is constrained by ByteArray max size.
+ * of someDataset) saved to the same local filename, which must not yet exist on any of them.
+ * Leveraging Spark's TorrentBroadcast in this way should be less bottlenecked than going through
+ * HDFS. However, large files require multiple rounds since broadcast is constrained by ByteArray
+ * max size.
  */
 fun <T> broadcastLargeFile(
     someDataset: Dataset<T>,

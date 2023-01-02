@@ -84,8 +84,8 @@ fun jointCall(
         .groupByKey(MapFunction<Row, Int> { it.getAs<Int>(0) }, Encoders.INT())
         .mapGroups(
             MapGroupsFunction<Int, Row, Row> { variantId, variantEntries ->
-                ExitStack().use { cleanup ->
-                    // look up this variant (using pooled resources...)
+                // look up this variant in the broadcast database file (using pooled resources...)
+                val variant = ExitStack().use { cleanup ->
                     val variants = cleanup.add(
                         GenomicSQLiteReadOnlyPool.get(variantsDbFilename).getConnection()
                     )
@@ -95,16 +95,18 @@ fun jointCall(
                     getVariant.setInt(1, variantId)
                     val rs = cleanup.add(getVariant.executeQuery())
                     check(rs.next())
-                    val line = generateJointLine(
-                        cfg,
-                        aggHeaderB.value,
-                        fieldsGenB.value,
-                        Variant(rs),
-                        variantEntries
-                    )
-                    pvcfRecordCount?.let { it.add(1L) }
-                    RowFactory.create(variantId, line)
+                    Variant(rs)
                 }
+                // assemble the entries into the pVCF line
+                val snappyLine = assembleJointLine(
+                    cfg,
+                    aggHeaderB.value,
+                    fieldsGenB.value,
+                    variant,
+                    variantEntries
+                )
+                pvcfRecordCount?.let { it.add(1L) }
+                RowFactory.create(variantId, snappyLine)
             },
             RowEncoder.apply(
                 StructType()
@@ -129,7 +131,7 @@ fun jointCall(
             // smaller number of reasonably-sized pVCF part files.
             // This is why we've dropped down to RDD -- Dataset.orderBy() doesn't provide direct
             // control of the output partitioning.
-            jsc.defaultParallelism().toDouble().pow(2.0 / 3.0).toInt()
+            jsc.defaultParallelism().toDouble().pow(3.0 / 4.0).toInt()
         ).map(
             Function<Row, String> { row ->
                 val ans = String(Snappy.uncompress(row.getAs<ByteArray>(1)))
@@ -139,6 +141,9 @@ fun jointCall(
         )
 }
 
+/**
+ * Generate the pVCF genotype entries for one callset
+ */
 fun generateJointCalls(
     cfg: JointConfig,
     aggHeader: AggVcfHeader,
@@ -148,6 +153,7 @@ fun generateJointCalls(
     vcfFilename: String
 ): Sequence<Triple<Int, Int, String>> = // [(variantId, sampleId, pvcfEntry)]
     sequence {
+        // variants sequence (read from broadcast database file)
         val variants = sequence {
             ExitStack().use { cleanup ->
                 val variants = cleanup.add(
@@ -163,7 +169,11 @@ fun generateJointCalls(
                 }
             }
         }
+        // VCF records sequence
         val records = scanVcfRecords(aggHeader.contigId, vcfFilename)
+
+        // merge the two sequences to generate GenotypingContexts with each variant and the
+        // overlapping VCF records
         generateGenotypingContexts(variants, records).forEach { ctx ->
             aggHeader.callsetsDetails[callsetId].callsetSamples
                 .forEachIndexed { sampleIndex, sampleId ->
@@ -189,18 +199,16 @@ fun generateJointCalls(
 class GenotypingContext(
     val variantId: Int,
     val variant: Variant,
-    val callsetRecords: List<VcfRecord>
+    val callsetRecords: List<VcfRecordUnpacked>
 ) {
     val referenceBands: List<VcfRecordUnpacked>
     val variantRecords: List<VcfRecordUnpacked>
     val otherVariantRecords: List<VcfRecordUnpacked>
 
     init {
+        callsetRecords.forEach { check(it.record.range.overlaps(variant.range)) }
         // reference bands have no (non-symbolic) ALT alleles
-        var parts = callsetRecords.map {
-            check(it.range.overlaps(variant.range))
-            VcfRecordUnpacked(it)
-        }.partition { it.altVariants.filterNotNull().isEmpty() }
+        var parts = callsetRecords.partition { it.altVariants.filterNotNull().isEmpty() }
         referenceBands = parts.first
         // partition variant records based on whether they include the focal variant
         parts = parts.second.partition { it.altVariants.contains(variant) }
@@ -220,18 +228,19 @@ fun generateGenotypingContexts(
     variants: Sequence<Pair<Int, Variant>>,
     records: Sequence<VcfRecord>
 ): Sequence<GenotypingContext> {
-    // buffer of records whose ranges neither strictly precede (<<) nor strictly follow (>>) the
-    // last-processed variant
-    val workingSet: MutableList<VcfRecord> = mutableListOf()
+    // buffer of records whose ranges don't strictly precede (<<) the last-processed variant, nor
+    // strictly follow (>>) any previously-processed variant
+    val workingSet: MutableList<VcfRecordUnpacked> = mutableListOf()
     // an upcoming record that's >> the last-processed variant
     var record: VcfRecord? = null
     // remaining records
     val recordsIter = records.iterator()
 
-    // for verifying sort order
+    // (to verify sort order)
     var lastVariantRange: GRange? = null
     var lastRecordRange: GRange? = null
 
+    // for each variant
     return variants.mapNotNull { (variantId, variant) ->
         val vr = variant.range
         lastVariantRange?.let { require(it <= vr) }
@@ -239,7 +248,8 @@ fun generateGenotypingContexts(
 
         // prune working set of records << variant
         workingSet.removeAll {
-            it.range.rid < vr.rid || (it.range.rid == vr.rid && it.range.end < vr.beg)
+            it.record.range.rid < vr.rid ||
+                (it.record.range.rid == vr.rid && it.record.range.end < vr.beg)
         }
 
         // consume records while not >> variant, adding to working set if not << variant
@@ -250,7 +260,7 @@ fun generateGenotypingContexts(
             val rr = record!!.range
             lastRecordRange?.let {
                 // VCF records are (rid,beg)-sorted but not necessarily (rid,beg,end)-sorted.
-                // That's okay because we'll decide whether to continue based on beg, not end.
+                // That's okay because we'll decide when to break based on beg, not end.
                 require(it.rid < rr.rid || (it.rid == rr.rid && it.beg <= rr.beg))
             }
             lastRecordRange = rr
@@ -260,69 +270,26 @@ fun generateGenotypingContexts(
                 break
             } else if (rr.rid == vr.rid && rr.end >= vr.beg) {
                 // record neither << nor >> variant; add to working set
-                workingSet.add(record!!)
+                workingSet.add(VcfRecordUnpacked(record!!))
             } // else discard record << variant
             record = if (recordsIter.hasNext()) recordsIter.next() else null
         }
 
         // Working set may still hold records that overlapped a prior (lengthy) variant, but not
-        // the focal one; they're to be excluded from the focal GenotypingContext but retained in
-        // the working set for the next iteration.
+        // the focal one; they're to be excluded from the focal GenotypingContext, but retained in
+        // the working set for the next one.
         //
         //   prior variant   |-----------------------------------|
         //   focal variant                  |------|
         // retained record                                     |----|
-        val hits = workingSet.filter { it.range.overlaps(variant.range) }
+        val hits = workingSet.filter { it.record.range.overlaps(variant.range) }
         if (hits.isNotEmpty()) { GenotypingContext(variantId, variant, hits) } else { null }
     }
 }
 
-fun generateJointLine(
-    cfg: JointConfig,
-    aggHeader: AggVcfHeader,
-    fieldsGen: JointFieldsGenerator,
-    variant: Variant,
-    entries: Iterator<Row>
-): ByteArray {
-    // prepare output TSV (array)
-    val lineTsv = Array<String>(VcfColumn.FIRST_SAMPLE.ordinal + aggHeader.samples.size) { "." }
-    lineTsv[VcfColumn.CHROM.ordinal] = aggHeader.contigs[variant.range.rid.toInt()] // CHROM
-    lineTsv[VcfColumn.POS.ordinal] = variant.range.beg.toString() // POS
-    // ID
-    lineTsv[VcfColumn.REF.ordinal] = variant.ref // REF
-    lineTsv[VcfColumn.ALT.ordinal] = variant.alt // ALT
-    // QUAL
-    lineTsv[VcfColumn.FILTER.ordinal] = "PASS" // FILTER
-    // INFO
-    lineTsv[VcfColumn.FORMAT.ordinal] =
-        (listOf("GT") + cfg.formatFields.map { it.name })
-            .joinToString(":") // FORMAT
-
-    // fill entries into lineTsv
-    var entryCount = 0
-    entries.forEach {
-        val sampleId = it.getAs<Int>("sampleId")
-        val entry = it.getAs<String>("entry")
-        val col = VcfColumn.FIRST_SAMPLE.ordinal + sampleId
-        require(
-            lineTsv[col] == ".",
-            {
-                "conflicting genotype entries @ ${aggHeader.samples[sampleId]}" +
-                    " ${variant.str(aggHeader.contigs)}: ${lineTsv[col]} $entry"
-            }
-        )
-        lineTsv[col] = entry
-        entryCount += 1
-    }
-    check(entryCount == aggHeader.samples.size)
-
-    // TODO: compute INFO fields
-    // lineTsv[VcfColumn.INFO.ordinal] = fieldsGen.generateInfoFields()
-
-    // generate compressed line for pVCF sorting
-    return Snappy.compress(lineTsv.joinToString("\t").toByteArray())
-}
-
+/**
+ * Given GenotypingContext, generate the pVCF genotype entry and FORMAT fields for one sample
+ */
 fun generateGenotypeAndFormatFields(
     cfg: JointConfig,
     fieldsGen: JointFieldsGenerator,
@@ -376,6 +343,9 @@ fun generateGenotypeAndFormatFields(
     return gtOut.toString() + fieldsGen.generateFormatFields(data, sampleIndex, gtOut, record)
 }
 
+/**
+ * id. for the case of no VCF records including the focal variant
+ */
 fun generateRefGenotypeAndFormatFields(
     cfg: JointConfig,
     fieldsGen: JointFieldsGenerator,
@@ -421,6 +391,54 @@ fun genotypeOverlapSentinel(mode: GT_OverlapMode): Int? = when (mode) {
     GT_OverlapMode.MISSING -> null
     GT_OverlapMode.SYMBOLIC -> 2
     GT_OverlapMode.REF -> 0
+}
+
+/**
+ * Given all the genotype entries for a specific variant, assemble the pVCF line as a compressed
+ * buffer. The Snappy compression is just to reduce the amount of data Spark has to shuffle around
+ * to sort the lines afterwards.
+ */
+fun assembleJointLine(
+    cfg: JointConfig,
+    aggHeader: AggVcfHeader,
+    fieldsGen: JointFieldsGenerator,
+    variant: Variant,
+    entries: Iterator<Row>
+): ByteArray {
+    // prepare output TSV (array)
+    val lineTsv = Array<String>(VcfColumn.FIRST_SAMPLE.ordinal + aggHeader.samples.size) { "." }
+    lineTsv[VcfColumn.CHROM.ordinal] = aggHeader.contigs[variant.range.rid.toInt()] // CHROM
+    lineTsv[VcfColumn.POS.ordinal] = variant.range.beg.toString() // POS
+    // ID
+    lineTsv[VcfColumn.REF.ordinal] = variant.ref // REF
+    lineTsv[VcfColumn.ALT.ordinal] = variant.alt // ALT
+    // QUAL
+    lineTsv[VcfColumn.FILTER.ordinal] = "PASS" // FILTER
+    // INFO
+    lineTsv[VcfColumn.FORMAT.ordinal] =
+        (listOf("GT") + cfg.formatFields.map { it.name })
+            .joinToString(":") // FORMAT
+
+    // fill entries into lineTsv
+    entries.forEach {
+        val sampleId = it.getAs<Int>("sampleId")
+        val entry = it.getAs<String>("entry")
+        val col = VcfColumn.FIRST_SAMPLE.ordinal + sampleId
+        require(
+            lineTsv[col] == ".",
+            {
+                "conflicting genotype entries @ ${aggHeader.samples[sampleId]}" +
+                    " ${variant.str(aggHeader.contigs)}: ${lineTsv[col]} $entry"
+            }
+        )
+        lineTsv[col] = entry
+    }
+
+    // TODO: compute INFO fields
+    // lineTsv[VcfColumn.INFO.ordinal] = fieldsGen.generateInfoFields()
+
+    // generate compressed line for pVCF sorting
+    return Snappy.compress(lineTsv.joinToString("\t").toByteArray())
 }
 
 /**
