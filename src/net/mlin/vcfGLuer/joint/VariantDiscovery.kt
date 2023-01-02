@@ -83,7 +83,7 @@ fun discoverAllVariants(
 }
 
 /**
- * Discover all variants & collect them into a database file local to the driver.
+ * Discover all variants & collect them into a GenomicSQLite file local to the driver.
  */
 fun collectAllVariantsDb(
     contigId: Map<String, Short>,
@@ -93,7 +93,7 @@ fun collectAllVariantsDb(
     vcfRecordCount: LongAccumulator? = null,
     vcfRecordBytes: LongAccumulator? = null
 ): Pair<Int, String> {
-    val tempFile = File.createTempFile("Variant.", ".db")
+    val tempFile = File.createTempFile("vcfGLuerVariants.", ".db")
     val tempFilename = tempFile.absolutePath
     tempFile.delete()
 
@@ -139,7 +139,7 @@ fun collectAllVariantsDb(
     }
 
     val crc = fileCRC32C(tempFilename)
-    val crcFile = File(tempFile.getParent(), "Variant.$crc.db")
+    val crcFile = File(tempFile.getParent(), "vcfGLuerVariants.$crc.db")
     tempFile.renameTo(crcFile)
 
     return variantId to crcFile.absolutePath
