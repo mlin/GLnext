@@ -1,7 +1,7 @@
 package net.mlin.vcfGLuer.joint
 import java.io.OutputStreamWriter
 import kotlin.math.log10
-import net.mlin.vcfGLuer.datamodel.*
+import net.mlin.vcfGLuer.data.*
 import net.mlin.vcfGLuer.util.*
 import org.apache.hadoop.fs.Path
 import org.apache.log4j.LogManager

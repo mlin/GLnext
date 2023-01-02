@@ -117,19 +117,3 @@ fun fileCRC32C(filename: String): Long {
     }
     return crc.value
 }
-
-/**
- * A file is on HDFS, and may also be copied on the local filesystem. If not then create the copy.
- */
-fun ensureLocalCopy(hdfsPath: Path, localFilename: String) {
-    val localFile = File(localFilename)
-    if (!localFile.isFile()) {
-        val tempFile = File.createTempFile(localFile.getName() + ".", ".tmp")
-        getFileSystem(hdfsPath.toString()).copyToLocalFile(hdfsPath, Path(tempFile.absolutePath))
-        if (!localFile.isFile()) {
-            tempFile.renameTo(localFile)
-        } else {
-            tempFile.delete()
-        }
-    }
-}

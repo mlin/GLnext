@@ -10,8 +10,7 @@ import com.github.ajalt.clikt.parameters.options.option
 import com.sksamuel.hoplite.*
 import java.io.File
 import java.util.Properties
-import net.mlin.vcfGLuer.database.*
-import net.mlin.vcfGLuer.datamodel.*
+import net.mlin.vcfGLuer.data.*
 import net.mlin.vcfGLuer.joint.*
 import net.mlin.vcfGLuer.util.*
 import org.apache.hadoop.fs.Path
@@ -144,35 +143,23 @@ class CLI : CliktCommand() {
             }
 
             // accumulators
-            val allRecordCount = spark.sparkContext.longAccumulator("unfiltered VCF records")
             val vcfRecordCount = spark.sparkContext.longAccumulator("input VCF records")
             val vcfRecordBytes = spark.sparkContext.longAccumulator("input VCF bytes)")
             val pvcfRecordCount = spark.sparkContext.longAccumulator("pVCF records")
             val pvcfRecordBytes = spark.sparkContext.longAccumulator("pVCF bytes")
 
-            // load all the input gVCF files into GenomicSQLite database files
-            val dbsDF = loadAllVcfRecordDbs(
-                spark,
-                aggHeader,
-                filterRangesB,
-                andDelete = deleteInputVcfs,
-                unfilteredRecordCount = allRecordCount,
-                recordCount = vcfRecordCount,
-                recordBytes = vcfRecordBytes
-            ).cache()
-
             // discover all variants & collect them to a database file local to the driver
+            val vcfFilenamesDF = aggHeader.vcfFilenamesDF(spark)
             val (variantCount, variantsDbFilename) = collectAllVariantsDb(
-                aggHeader,
-                dbsDF,
+                aggHeader.contigId,
+                vcfFilenamesDF,
                 filterRangesB,
-                onlyCalled = cfg.discovery.minCopies > 0
+                onlyCalled = cfg.discovery.minCopies > 0,
+                vcfRecordCount,
+                vcfRecordBytes
             )
 
             // report accumulators
-            filterRangesB?.let {
-                logger.info("unfiltered VCF records: ${allRecordCount.sum().pretty()}")
-            }
             logger.info("input VCF records: ${vcfRecordCount.sum().pretty()}")
             logger.info("input VCF bytes: ${vcfRecordBytes.sum().pretty()}")
             logger.info("joint variants: ${variantCount.pretty()}")
@@ -180,7 +167,7 @@ class CLI : CliktCommand() {
             logger.info("variants DB compressed: ${variantsDbFileSize.pretty()} bytes")
 
             // broadcast the variants database to the same temp filename on each executor
-            val variantsDbCopies = 1 + broadcastLargeFile(dbsDF, variantsDbFilename)
+            val variantsDbCopies = 1 + broadcastLargeFile(vcfFilenamesDF, variantsDbFilename)
             logger.info("variants DB broadcast: ${variantsDbCopies.pretty()} copies")
 
             // perform joint-calling
@@ -190,7 +177,7 @@ class CLI : CliktCommand() {
             )
             val (pvcfHeader, pvcfLines) = jointCall(
                 logger, cfg.joint, spark, aggHeader,
-                variantsDbFilename, dbsDF, pvcfHeaderMetaLines,
+                variantsDbFilename, vcfFilenamesDF, pvcfHeaderMetaLines,
                 pvcfRecordCount, pvcfRecordBytes
             )
 

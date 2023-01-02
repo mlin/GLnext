@@ -1,4 +1,4 @@
-package net.mlin.vcfGLuer.database
+package net.mlin.vcfGLuer.util
 import java.sql.Connection
 import java.sql.DriverManager
 import java.util.Properties
@@ -13,7 +13,6 @@ fun createGenomicSQLiteForBulkLoad(filename: String, threads: Int = 2): Connecti
         "genomicsqlite.config_json",
         """{
             "threads": $threads,
-            "zstd_level": 3,
             "inner_page_KiB": 64,
             "outer_page_KiB": 2,
             "unsafe_load": true,

@@ -5,13 +5,19 @@
  * file per chromosome). The assumption is that files with identical headers (including the sample
  * identifier(s) on the #CHROM line) comprise one callset.
  */
-package net.mlin.vcfGLuer.datamodel
+package net.mlin.vcfGLuer.data
 import java.io.Serializable
 import net.mlin.vcfGLuer.util.*
 import org.apache.hadoop.fs.FileSystem
 import org.apache.spark.api.java.JavaSparkContext
 import org.apache.spark.api.java.function.FlatMapFunction
 import org.apache.spark.api.java.function.Function
+import org.apache.spark.sql.Dataset
+import org.apache.spark.sql.Row
+import org.apache.spark.sql.RowFactory
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.types.DataTypes
+import org.apache.spark.sql.types.StructType
 import org.jetbrains.kotlinx.spark.api.*
 
 /**
@@ -343,4 +349,15 @@ class HtsJdkLineIteratorImpl(val inner: Iterator<String>) : htsjdk.tribble.reade
     override fun remove() {
         throw UnsupportedOperationException()
     }
+}
+
+fun AggVcfHeader.vcfFilenamesDF(spark: SparkSession): Dataset<Row> {
+    return spark.createDataFrame(
+        this.filenameCallsetId.map { (filename, callsetId) ->
+            RowFactory.create(filename, callsetId)
+        },
+        StructType()
+            .add("vcfFilename", DataTypes.StringType, false)
+            .add("callsetId", DataTypes.IntegerType, false)
+    ).repartition(spark.sparkContext.defaultParallelism())
 }
