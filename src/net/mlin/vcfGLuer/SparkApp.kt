@@ -66,11 +66,12 @@ class CLI : CliktCommand() {
         var sparkBuilder = org.apache.spark.sql.SparkSession.builder()
             .appName("vcfGLuer")
             .config("io.compression.codecs", compressionCodecsWithBGZF())
-            // Disabling some Spark optimizations involving in-memory hash maps; they seem to cause
-            // a lot of OOM problems for our usage patterns.
+            // Disabling some Spark optimizations that seem to cause OOM problems for our usage
+            // patterns.
             .config("spark.sql.join.preferSortMergeJoin", true)
             .config("spark.sql.autoBroadcastJoinThreshold", -1)
             .config("spark.sql.execution.useObjectHashAggregateExec", false)
+            .config("spark.sql.inMemoryColumnarStorage.compressed", false)
 
         if (cfg.spark.compressTempFiles) {
             sparkBuilder = sparkBuilder

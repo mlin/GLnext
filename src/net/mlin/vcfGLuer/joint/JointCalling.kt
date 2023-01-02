@@ -232,7 +232,7 @@ fun generateGenotypingContexts(
     var lastVariantRange: GRange? = null
     var lastRecordRange: GRange? = null
 
-    return variants.map { (variantId, variant) ->
+    return variants.mapNotNull { (variantId, variant) ->
         val vr = variant.range
         lastVariantRange?.let { require(it <= vr) }
         lastVariantRange = vr
@@ -273,7 +273,7 @@ fun generateGenotypingContexts(
         //   focal variant                  |------|
         // retained record                                     |----|
         val hits = workingSet.filter { it.range.overlaps(variant.range) }
-        GenotypingContext(variantId, variant, hits)
+        if (hits.isNotEmpty()) { GenotypingContext(variantId, variant, hits) } else { null }
     }
 }
 
