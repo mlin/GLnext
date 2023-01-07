@@ -146,7 +146,6 @@ class CLI : CliktCommand() {
             // accumulators
             val vcfRecordCount = spark.sparkContext.longAccumulator("input VCF records")
             val vcfRecordBytes = spark.sparkContext.longAccumulator("input VCF bytes)")
-            val pvcfRecordCount = spark.sparkContext.longAccumulator("pVCF records")
             val pvcfRecordBytes = spark.sparkContext.longAccumulator("pVCF bytes")
 
             /*
@@ -186,14 +185,13 @@ class CLI : CliktCommand() {
             )
             val (pvcfHeader, pvcfLines) = jointCall(
                 logger, cfg.joint, spark, aggHeader,
-                variantsDbFilename, vcfFilenamesDF, pvcfHeaderMetaLines,
-                pvcfRecordCount, pvcfRecordBytes
+                variantCount, variantsDbFilename, vcfFilenamesDF,
+                pvcfHeaderMetaLines, pvcfRecordBytes
             )
 
             // write pVCF lines (in BGZF parts)
             pvcfLines.saveAsTextFile(pvcfDir, BGZFCodec::class.java)
             logger.info("pVCF bytes: ${pvcfRecordBytes.sum().pretty()}")
-            check(pvcfRecordCount.sum() == variantCount.toLong())
 
             // reorganize part files
             reorgJointFiles(spark, pvcfDir, aggHeader)

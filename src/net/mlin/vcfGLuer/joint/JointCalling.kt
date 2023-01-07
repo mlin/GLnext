@@ -45,10 +45,10 @@ fun jointCall(
     cfg: JointConfig,
     spark: SparkSession,
     aggHeader: AggVcfHeader,
+    variantCount: Int,
     variantsDbFilename: String,
     vcfFilenamesDF: Dataset<Row>,
     pvcfHeaderMetaLines: List<String> = emptyList(),
-    pvcfRecordCount: LongAccumulator? = null,
     pvcfRecordBytes: LongAccumulator? = null
 ): Pair<String, JavaRDD<String>> {
     // broadcast supporting data for joint calling; using JavaSparkContext to sidestep
@@ -105,7 +105,6 @@ fun jointCall(
                     variant,
                     variantEntries
                 )
-                pvcfRecordCount?.let { it.add(1L) }
                 RowFactory.create(variantId, snappyLine)
             },
             RowEncoder.apply(
@@ -113,12 +112,14 @@ fun jointCall(
                     .add("variantId", DataTypes.IntegerType, false)
                     .add("snappyLine", DataTypes.BinaryType, false)
             )
-        ).cache() // cache() before sorting: https://stackoverflow.com/a/56310076
+            // persist before sorting: https://stackoverflow.com/a/56310076
+        ).persist(org.apache.spark.storage.StorageLevel.DISK_ONLY())
     // Perform a count() to force pvcfLinesDF, ensuring it registers as an SQL query in the history
     // server before next dropping to RDD. This provides useful diagnostic info that would
     // otherwise go missing. The log message also provides a progress marker.
     val pvcfLineCount = pvcfLinesDF.count()
     logger.info("sorting & writing ${pvcfLineCount.pretty()} pVCF lines...")
+    check(pvcfLineCount == variantCount.toLong())
 
     // sort pVCF rows by variantId and return the decompressed text of each line
     val pvcfHeader = jointVcfHeader(cfg, aggHeader, pvcfHeaderMetaLines, fieldsGenB.value)
@@ -172,7 +173,7 @@ fun generateJointCalls(
         // VCF records sequence
         val records = scanVcfRecords(aggHeader.contigId, vcfFilename)
 
-        // merge the two sequences to generate GenotypingContexts with each variant and the
+        // collate the two sequences to generate GenotypingContexts with each variant and the
         // overlapping VCF records
         generateGenotypingContexts(variants, records).forEach { ctx ->
             aggHeader.callsetsDetails[callsetId].callsetSamples
@@ -218,14 +219,14 @@ class GenotypingContext(
 }
 
 /**
- * Given variant & VCF record sequences (both range-sorted), produce the VariantCallingContext for
- * each variant with the overlapping VCF records (if any).
+ * Collate variant & VCF record sequences (both range-sorted), producing the VariantCallingContext
+ * for each variant with the overlapping VCF records (if any).
  *
  * The streaming algorithm assumes that the variants aren't too large and the VCF records aren't
  * too overlapping. These assumptions match up with small-variant gVCF inputs, of course.
  */
 fun generateGenotypingContexts(
-    variants: Sequence<Pair<Int, Variant>>,
+    variants: Sequence<Pair<Int, Variant>>, // (variantId, variant)
     records: Sequence<VcfRecord>
 ): Sequence<GenotypingContext> {
     // buffer of records whose ranges don't strictly precede (<<) the last-processed variant, nor
