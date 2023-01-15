@@ -74,7 +74,7 @@ fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeade
         partsToSplit.forEach {
             logger.info("  $it")
         }
-        splitParts = jsc.parallelize(partsToSplit).flatMap(
+        splitParts = jsc.parallelizeEvenly(partsToSplit).flatMap(
             FlatMapFunction<String, Triple<Short, Int, String>> {
                 splitByChr(pvcfDir, it, aggHeaderB.value).iterator()
             }
@@ -109,7 +109,14 @@ fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeade
                 val cPad = finalPartCount.toString().padStart(finalPartCountDigits, '0')
                 val posEndStr = if (posEnd >= 0) posEnd.toString() else "end"
                 val basename2 = "part-${iPad}of$cPad-$chrom-$posBeg-$posEndStr.bgz"
-                fs.rename(Path(pvcfDir, basename), Path(pvcfDir, basename2))
+                if (fs.exists(Path(pvcfDir, basename))) {
+                    fs.rename(Path(pvcfDir, basename), Path(pvcfDir, basename2))
+                } else {
+                    // Spark may be speculatively executing this task
+                    check(fs.exists(Path(pvcfDir, basename2)), {
+                        "expected one of $basename or $basename2 to exist"
+                    })
+                }
                 basename2
             }.iterator()
         }
@@ -139,9 +146,11 @@ fun splitByChr(
                 }
                 rid = rec.range.rid
 
+                // timestamp temp filename for robustness to Spark retry/speculation
+                val timestamp = System.currentTimeMillis().toString()
                 val tempName = (
                     "${aggHeader.contigs[rid.toInt()]}_" +
-                        "${rec.range.beg.toString().padStart(9,'0')}.bgz.wip"
+                        "${rec.range.beg.toString().padStart(9,'0')}.bgz.wip.$timestamp"
                     )
                 writer = OutputStreamWriter(
                     BGZFOutputStream(fs.create(Path(pvcfDir, tempName))),

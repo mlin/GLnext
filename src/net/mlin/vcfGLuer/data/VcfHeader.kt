@@ -353,11 +353,13 @@ class HtsJdkLineIteratorImpl(val inner: Iterator<String>) : htsjdk.tribble.reade
 
 fun AggVcfHeader.vcfFilenamesDF(spark: SparkSession): Dataset<Row> {
     return spark.createDataFrame(
-        this.filenameCallsetId.map { (filename, callsetId) ->
-            RowFactory.create(filename, callsetId)
-        },
+        JavaSparkContext(spark.sparkContext).parallelizeEvenly(
+            this.filenameCallsetId.map { (filename, callsetId) ->
+                RowFactory.create(filename, callsetId)
+            }
+        ),
         StructType()
             .add("vcfFilename", DataTypes.StringType, false)
             .add("callsetId", DataTypes.IntegerType, false)
-    ).repartition(spark.sparkContext.defaultParallelism())
+    )
 }
