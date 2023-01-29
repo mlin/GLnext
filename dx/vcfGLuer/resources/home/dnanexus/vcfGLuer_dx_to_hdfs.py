@@ -9,6 +9,9 @@ import subprocess
 import glob
 import dxpy
 
+# desired HDFS replication factor; perhaps higher than the dxspark apparent default of 2
+DFS_REPLICATION = 3
+
 # load gVCF manifest from in/vcf_manifest/*
 dxid_list = []
 for fn in glob.glob("/home/dnanexus/in/vcf_manifest/*"):
@@ -19,7 +22,9 @@ for fn in glob.glob("/home/dnanexus/in/vcf_manifest/*"):
 
 print(f"copying {len(dxid_list)} dxfiles to hdfs:///vcfGLuer/in/", file=sys.stderr)
 spark = pyspark.sql.SparkSession.builder.getOrCreate()
-dxid_rdd = spark.sparkContext.parallelize(dxid_list, min(spark.sparkContext.defaultParallelism, 256))
+dxid_rdd = spark.sparkContext.parallelize(
+    dxid_list, min(spark.sparkContext.defaultParallelism, 256)
+)
 subprocess.run("$HADOOP_HOME/bin/hadoop fs -mkdir -p /vcfGLuer/in", shell=True, check=True)
 
 dx_time_accumulator = spark.sparkContext.accumulator(0.0)
@@ -50,6 +55,8 @@ def process_dxfile(dxid):
             [
                 os.path.join(os.environ["HADOOP_HOME"], "bin", "hadoop"),
                 "fs",
+                "-D",
+                "dfs.replication=" + str(DFS_REPLICATION),
                 "-put",
                 os.path.join(tmpdir, fn),
                 "/vcfGLuer/in/",

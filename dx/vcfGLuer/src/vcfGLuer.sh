@@ -21,6 +21,9 @@ main() {
         exit 1
     fi
 
+    # checking HDFS replication:
+    # shuf vcfGLuer_in.hdfs.manifest | head -n 10 | xargs -i -n1 hadoop fs -stat %r {}
+
     # run vcfGLuer
     # references for gnarly GC tuning:
     #   https://aws.amazon.com/blogs/big-data/best-practices-for-successfully-managing-memory-for-apache-spark-applications-on-amazon-emr/
