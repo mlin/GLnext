@@ -150,7 +150,7 @@ fun splitByChr(
                 val timestamp = System.currentTimeMillis().toString()
                 val tempName = (
                     "${aggHeader.contigs[rid.toInt()]}_" +
-                        "${rec.range.beg.toString().padStart(9,'0')}.bgz.wip.${timestamp}"
+                        "${rec.range.beg.toString().padStart(9,'0')}.bgz.wip.$timestamp"
                     )
                 writer = OutputStreamWriter(
                     BGZFOutputStream(fs.create(Path(pvcfDir, tempName))),

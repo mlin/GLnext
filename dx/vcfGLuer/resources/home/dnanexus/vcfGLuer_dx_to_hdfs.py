@@ -58,6 +58,7 @@ def process_dxfile(dxid):
                 "-D",
                 "dfs.replication=" + str(DFS_REPLICATION),
                 "-put",
+                "-f",
                 os.path.join(tmpdir, fn),
                 "/vcfGLuer/in/",
             ],

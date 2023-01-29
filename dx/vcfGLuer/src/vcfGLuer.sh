@@ -37,6 +37,10 @@ main() {
     if [[ -n ${filter_bed:-} ]]; then
         filter_bed_arg="--filter-bed $(find ./in/filter_bed -type f)"
     fi
+    filter_contigs_arg=""
+    if [[ -n ${filter_contigs:-} ]]; then
+        filter_contigs_arg="--filter-contigs $filter_contigs"
+    fi
     dx-spark-submit --log-level WARN --collect-logs \
         --conf spark.driver.defaultJavaOptions="$all_java_options" \
         --conf spark.executor.defaultJavaOptions="$all_java_options" \
@@ -56,7 +60,7 @@ main() {
         --conf spark.sql.adaptive.coalescePartitions.initialPartitionNum=$spark_default_parallelism \
         --conf spark.sql.adaptive.coalescePartitions.parallelismFirst=false \
         --name vcfGLuer vcfGLuer-*.jar \
-        --manifest --config $config $filter_bed_arg \
+        --manifest --config $config $filter_bed_arg $filter_contigs_arg \
         vcfGLuer_in.hdfs.manifest hdfs:///vcfGLuer/out \
         || true
     $HADOOP_HOME/bin/hadoop fs -ls /vcfGLuer/out > ls.txt

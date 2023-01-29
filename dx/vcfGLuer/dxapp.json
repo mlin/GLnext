@@ -32,6 +32,12 @@
       "help": "only call variants within a region from this BED file"
     },
     {
+      "name": "filter_contigs",
+      "class": "string",
+      "optional": true,
+      "help": "only call variants on these comma-separated contigs (intersect with filter BED, if any)"
+    },
+    {
       "name": "java_options",
       "class": "string",
       "default": "",

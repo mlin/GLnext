@@ -15,7 +15,7 @@ import org.apache.spark.util.LongAccumulator
  */
 fun discoverVariants(
     it: VcfRecord,
-    filterRanges: org.apache.spark.broadcast.Broadcast<BedRanges>?,
+    filterRanges: org.apache.spark.broadcast.Broadcast<BedRanges>? = null,
     onlyCalled: Boolean = false
 ): List<Variant> {
     val vcfRecord = VcfRecordUnpacked(it)
@@ -55,7 +55,8 @@ fun discoverVariants(
 fun discoverAllVariants(
     contigId: Map<String, Short>,
     vcfFilenamesDF: Dataset<Row>,
-    filterRanges: Broadcast<BedRanges>?,
+    filterRids: Set<Short>? = null,
+    filterRanges: Broadcast<BedRanges>? = null,
     onlyCalled: Boolean = false,
     vcfRecordCount: LongAccumulator? = null,
     vcfRecordBytes: LongAccumulator? = null
@@ -67,12 +68,14 @@ fun discoverAllVariants(
                     lines.forEach { line ->
                         if (line.length > 0 && line.get(0) != '#') {
                             val rec = parseVcfRecord(contigId, line)
-                            vcfRecordCount?.add(1L)
-                            vcfRecordBytes?.add(line.length.toLong() + 1L)
-                            yieldAll(
-                                discoverVariants(rec, filterRanges, onlyCalled)
-                                    .map { it.toRow() }
-                            )
+                            if (filterRids?.contains(rec.range.rid) ?: true) {
+                                vcfRecordCount?.add(1L)
+                                vcfRecordBytes?.add(line.length.toLong() + 1L)
+                                yieldAll(
+                                    discoverVariants(rec, filterRanges, onlyCalled)
+                                        .map { it.toRow() }
+                                )
+                            }
                         }
                     }
                 }
@@ -88,7 +91,8 @@ fun discoverAllVariants(
 fun collectAllVariantsDb(
     contigId: Map<String, Short>,
     vcfPathsDF: Dataset<Row>,
-    filterRanges: Broadcast<BedRanges>?,
+    filterRids: Set<Short>? = null,
+    filterRanges: Broadcast<BedRanges>? = null,
     onlyCalled: Boolean = false,
     vcfRecordCount: LongAccumulator? = null,
     vcfRecordBytes: LongAccumulator? = null
@@ -118,6 +122,7 @@ fun collectAllVariantsDb(
         discoverAllVariants(
             contigId,
             vcfPathsDF,
+            filterRids,
             filterRanges,
             onlyCalled,
             vcfRecordCount,

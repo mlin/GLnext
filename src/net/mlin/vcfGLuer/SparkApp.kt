@@ -45,8 +45,10 @@ class CLI : CliktCommand() {
     val config: String by option(help = "Configuration preset name").default("DeepVariant")
     val filterBed: String? by
         option(help = "only call variants within a region from this BED file")
-    val deleteInputVcfs by
-        option(help = "Delete input VCF files after loading them (DANGER!)").flag(default = false)
+    val filterContigs: String? by
+        option(
+            help = "comma-separated list of contigs to process (intersect with BED regions, if any)"
+        )
 
     override fun run() {
         val cfg = ConfigLoader.Builder()
@@ -142,6 +144,13 @@ class CLI : CliktCommand() {
                 logger.info("BED filter ranges: ${filterRanges.size}")
                 JavaSparkContext(spark.sparkContext).broadcast(filterRanges)
             }
+            val filterRids = filterContigs?.let {
+                it.split(",").map {
+                    val ans = aggHeader.contigId.get(it)
+                    require(ans != null, { "unknown contig $it in --filter-contigs" })
+                    ans
+                }.toSet()
+            }
 
             // accumulators
             val vcfRecordCount = spark.sparkContext.longAccumulator("input VCF records")
@@ -161,6 +170,7 @@ class CLI : CliktCommand() {
             val (variantCount, variantsDbFilename) = collectAllVariantsDb(
                 aggHeader.contigId,
                 vcfFilenamesDF,
+                filterRids,
                 filterRangesB,
                 onlyCalled = cfg.discovery.minCopies > 0,
                 vcfRecordCount,
