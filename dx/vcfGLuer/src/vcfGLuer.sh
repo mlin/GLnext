@@ -10,10 +10,13 @@ main() {
 
     dx-download-all-inputs
 
+    HDFS_RETRY_CONF='--conf spark.hadoop.dfs.client.retry.policy.enabled=true --conf spark.hadoop.dfs.client.retry.window.base=5000 --conf spark.hadoop.dfs.client.max.block.acquire.failures=5'
+
     # copy input gVCFs from dnanexus to hdfs
     dx-spark-submit --log-level WARN \
         --conf spark.driver.maxResultSize=0 \
         --conf spark.default.parallelism=$spark_default_parallelism \
+        $HDFS_RETRY_CONF \
         vcfGLuer_dx_to_hdfs.py || true
     # Spark occasionally throws some meaningless exception during shutdown of a successful app,
     # so ignore its exit code and check for sentinel file our script created atomically on success.
@@ -59,6 +62,7 @@ main() {
         --conf spark.sql.adaptive.coalescePartitions.enabled=true \
         --conf spark.sql.adaptive.coalescePartitions.initialPartitionNum=$spark_default_parallelism \
         --conf spark.sql.adaptive.coalescePartitions.parallelismFirst=false \
+        $HDFS_RETRY_CONF \
         --name vcfGLuer vcfGLuer-*.jar \
         --manifest --config $config $filter_bed_arg $filter_contigs_arg \
         vcfGLuer_in.hdfs.manifest hdfs:///vcfGLuer/out \
@@ -73,6 +77,7 @@ main() {
     dx-spark-submit --log-level WARN \
         --conf spark.driver.maxResultSize=0 \
         --conf spark.default.parallelism=$spark_default_parallelism \
+        $HDFS_RETRY_CONF \
         vcfGLuer_hdfs_to_dx.py || true
     if ! [[ -f job_output.json ]]; then
         exit 1
