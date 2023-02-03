@@ -1,4 +1,5 @@
 package net.mlin.vcfGLuer.data
+import htsjdk.samtools.util.CloseableIterator
 import net.mlin.vcfGLuer.util.fileReaderDetectGz
 
 enum class VcfColumn {
@@ -48,16 +49,41 @@ fun parseVcfRecordInfo(info: String): Map<String, String> {
 }
 
 /**
- * Scan records in VCF file
+ * Iterator over records in a VCF file, closeable to allow prompt cleanup even if only partially
+ * consumed
  */
-fun scanVcfRecords(contigId: Map<String, Short>, vcfFilename: String): Sequence<VcfRecord> {
-    return sequence {
-        fileReaderDetectGz(vcfFilename).useLines { lines ->
-            lines.forEach {
-                if (it.isNotEmpty() && it[0] != '#') {
-                    yield(parseVcfRecord(contigId, it))
+fun scanVcfRecords(
+    contigId: Map<String, Short>,
+    vcfFilename: String
+): CloseableIterator<VcfRecord> {
+    val reader = fileReaderDetectGz(vcfFilename)
+    return object : CloseableIterator<VcfRecord> {
+        var next: String? = null
+        private fun update() {
+            if (next == null) {
+                var line = reader.readLine()
+                while (line != null && (line.isEmpty() || line[0] == '#')) {
+                    line = reader.readLine()
                 }
+                next = line
             }
+        }
+        override fun hasNext(): Boolean {
+            update()
+            return next != null
+        }
+        override fun next(): VcfRecord? {
+            update()
+            val line = next ?: throw NoSuchElementException()
+            next = null
+            return parseVcfRecord(contigId, line)
+        }
+        override fun remove() {
+            throw UnsupportedOperationException()
+        }
+        override fun close() {
+            next = null
+            reader.close()
         }
     }
 }

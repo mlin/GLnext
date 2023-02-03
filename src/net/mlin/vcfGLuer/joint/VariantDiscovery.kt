@@ -64,18 +64,15 @@ fun discoverAllVariants(
     return vcfFilenamesDF.flatMap(
         FlatMapFunction<Row, Row> { row ->
             sequence {
-                fileReaderDetectGz(row.getAs<String>("vcfFilename")).useLines { lines ->
-                    lines.forEach { line ->
-                        if (line.length > 0 && line.get(0) != '#') {
-                            val rec = parseVcfRecord(contigId, line)
-                            if (filterRids?.contains(rec.range.rid) ?: true) {
-                                vcfRecordCount?.add(1L)
-                                vcfRecordBytes?.add(line.length.toLong() + 1L)
-                                yieldAll(
-                                    discoverVariants(rec, filterRanges, onlyCalled)
-                                        .map { it.toRow() }
-                                )
-                            }
+                scanVcfRecords(contigId, row.getAs<String>("vcfFilename")).use { records ->
+                    records.forEach { rec ->
+                        if (filterRids?.contains(rec.range.rid) ?: true) {
+                            vcfRecordCount?.add(1L)
+                            vcfRecordBytes?.add(rec.line.length.toLong() + 1L)
+                            yieldAll(
+                                discoverVariants(rec, filterRanges, onlyCalled)
+                                    .map { it.toRow() }
+                            )
                         }
                     }
                 }

@@ -185,6 +185,7 @@ class CLI : CliktCommand() {
             logger.info("variants DB compressed: ${variantsDbFileSize.pretty()} bytes")
 
             // broadcast the variants database to the same temp filename on each executor
+            // TODO: also copy to HDFS for any executors that come online afterwards
             val variantsDbCopies = 1 + broadcastLargeFile(vcfFilenamesDF, variantsDbFilename)
             logger.info("variants DB broadcast: ${variantsDbCopies.pretty()} copies")
 

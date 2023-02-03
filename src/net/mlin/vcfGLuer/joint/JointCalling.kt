@@ -170,27 +170,26 @@ fun generateJointCalls(
                 }
             }
         }
-        // VCF records sequence
-        val records = scanVcfRecords(aggHeader.contigId, vcfFilename)
-
-        // collate the two sequences to generate GenotypingContexts with each variant and the
-        // overlapping VCF records
-        generateGenotypingContexts(variants, records).forEach { ctx ->
-            aggHeader.callsetsDetails[callsetId].callsetSamples
-                .forEachIndexed { sampleIndex, sampleId ->
-                    yield(
-                        Triple(
-                            ctx.variantId,
-                            sampleId,
-                            generateGenotypeAndFormatFields(
-                                cfg,
-                                fieldsGen,
-                                ctx,
-                                sampleIndex
+        scanVcfRecords(aggHeader.contigId, vcfFilename).use { records ->
+            // collate the two sequences to generate GenotypingContexts with each variant and the
+            // overlapping VCF records
+            generateGenotypingContexts(variants, records).forEach { ctx ->
+                aggHeader.callsetsDetails[callsetId].callsetSamples
+                    .forEachIndexed { sampleIndex, sampleId ->
+                        yield(
+                            Triple(
+                                ctx.variantId,
+                                sampleId,
+                                generateGenotypeAndFormatFields(
+                                    cfg,
+                                    fieldsGen,
+                                    ctx,
+                                    sampleIndex
+                                )
                             )
                         )
-                    )
-                }
+                    }
+            }
         }
     }
 
@@ -227,15 +226,13 @@ class GenotypingContext(
  */
 fun generateGenotypingContexts(
     variants: Sequence<Pair<Int, Variant>>, // (variantId, variant)
-    records: Sequence<VcfRecord>
+    recordsIter: Iterator<VcfRecord>
 ): Sequence<GenotypingContext> {
     // buffer of records whose ranges don't strictly precede (<<) the last-processed variant, nor
     // strictly follow (>>) any previously-processed variant
     val workingSet: MutableList<VcfRecordUnpacked> = mutableListOf()
     // an upcoming record that's >> the last-processed variant
     var record: VcfRecord? = null
-    // remaining records
-    val recordsIter = records.iterator()
 
     // (to verify sort order)
     var lastVariantRange: GRange? = null
@@ -278,7 +275,7 @@ fun generateGenotypingContexts(
 
         // Working set may still hold records that overlapped a prior (lengthy) variant, but not
         // the focal one; they're to be excluded from the focal GenotypingContext, but retained in
-        // the working set for the next one.
+        // the working set for the next one(s).
         //
         //   prior variant   |-----------------------------------|
         //   focal variant                  |------|

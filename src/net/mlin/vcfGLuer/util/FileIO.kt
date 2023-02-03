@@ -1,7 +1,7 @@
 package net.mlin.vcfGLuer.util
+import java.io.BufferedReader
 import java.io.File
 import java.io.InputStream
-import java.io.Reader
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
 
@@ -42,7 +42,7 @@ fun fileReaderDetectGz(
     filename: String,
     fs: FileSystem? = null,
     bufferSize: Int = 65536
-): Reader {
+): BufferedReader {
     val fs2 = fs ?: getFileSystem(filename)
     var instream: InputStream = fs2.open(Path(filename))
     // TODO: decide based on magic bytes instead of filename
