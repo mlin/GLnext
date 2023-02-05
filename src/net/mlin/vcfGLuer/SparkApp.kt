@@ -49,6 +49,10 @@ class CLI : CliktCommand() {
         option(
             help = "comma-separated list of contigs to process (intersect with BED regions, if any)"
         )
+    val tmpDir: String? by
+        option(
+            help = "shared (HDFS) temporary directory"
+        )
 
     override fun run() {
         val cfg = ConfigLoader.Builder()
@@ -167,7 +171,7 @@ class CLI : CliktCommand() {
               (below) distribute this compressed file to all executors.
             */
             val vcfFilenamesDF = aggHeader.vcfFilenamesDF(spark)
-            val (variantCount, variantsDbFilename) = collectAllVariantsDb(
+            val (variantCount, variantsDbLocalFilename) = collectAllVariantsDb(
                 aggHeader.contigId,
                 vcfFilenamesDF,
                 filterRids,
@@ -181,13 +185,22 @@ class CLI : CliktCommand() {
             logger.info("input VCF records: ${vcfRecordCount.sum().pretty()}")
             logger.info("input VCF bytes: ${vcfRecordBytes.sum().pretty()}")
             logger.info("joint variants: ${variantCount.pretty()}")
-            val variantsDbFileSize = File(variantsDbFilename).length()
+            val variantsDbFileSize = File(variantsDbLocalFilename).length()
             logger.info("variants DB compressed: ${variantsDbFileSize.pretty()} bytes")
 
             // broadcast the variants database to the same temp filename on each executor
-            // TODO: also copy to HDFS for any executors that come online afterwards
-            val variantsDbCopies = 1 + broadcastLargeFile(vcfFilenamesDF, variantsDbFilename)
+            val variantsDbCopies = 1 + broadcastLargeFile(vcfFilenamesDF, variantsDbLocalFilename)
             logger.info("variants DB broadcast: ${variantsDbCopies.pretty()} copies")
+            // if HDFS --tmp-dir supplied, also copy to HDFS where it can be accessed by any
+            // executors that come online after the broadcast
+            val variantsDbSharedFilename = tmpDir?.let { ddn ->
+                val dfs = getFileSystem(ddn)
+                dfs.mkdirs(Path(ddn))
+                val ans = Path(ddn, File(variantsDbLocalFilename).getName())
+                dfs.copyFromLocalFile(Path(variantsDbLocalFilename), ans)
+                logger.info("variants DB also copied to: $ans")
+                ans.toString()
+            }
 
             // perform joint-calling
             val pvcfHeaderMetaLines = listOf(
@@ -196,8 +209,8 @@ class CLI : CliktCommand() {
             )
             val (pvcfHeader, pvcfLines) = jointCall(
                 logger, cfg.joint, spark, aggHeader,
-                variantCount, variantsDbFilename, vcfFilenamesDF,
-                pvcfHeaderMetaLines, pvcfRecordBytes
+                variantCount, variantsDbLocalFilename, variantsDbSharedFilename,
+                vcfFilenamesDF, pvcfHeaderMetaLines, pvcfRecordBytes
             )
 
             // write pVCF lines (in BGZF parts)
