@@ -1,174 +1,56 @@
 package net.mlin.vcfGLuer.joint
 import java.io.OutputStreamWriter
-import kotlin.math.log10
-import net.mlin.vcfGLuer.data.*
 import net.mlin.vcfGLuer.util.*
 import org.apache.hadoop.fs.Path
-import org.apache.log4j.LogManager
-import org.apache.spark.api.java.JavaSparkContext
-import org.apache.spark.api.java.function.FlatMapFunction
-import org.apache.spark.sql.SparkSession
-import org.jetbrains.kotlinx.spark.api.*
+import org.apache.spark.api.java.function.Function2
+import org.apache.spark.sql.Dataset
+import org.apache.spark.sql.Row
+import org.apache.spark.util.LongAccumulator
+import org.xerial.snappy.Snappy
 
-// Reorganize the pVCF parts written out by spark:
-// Read the first VcfRecord from each part to infer (i) which parts may span multiple CHROMs and
-// (ii) the genomic ranges covered by the remaining parts.
-// For parts (ii): rename them so that filename indicates the genomic range
-// For parts (i): split them by CHROM, naming each subpart according to the same schema
-fun reorgJointFiles(spark: SparkSession, pvcfDir: String, aggHeader: AggVcfHeader) {
-    val logger = LogManager.getLogger("vcfGLuer")
-    val jsc = JavaSparkContext(spark.sparkContext)
-    // limits parallelism of tiny HDFS requests to prevent overloading metadata server
-    val parallelism = 64
-
-    // List part filenames in pvcfDir
-    val partBasenames = getFileSystem(pvcfDir).listSequence(pvcfDir, false).toList()
-        .filter { it.isFile() && it.getPath().getName().startsWith("part-") }
-        .map { it.getPath().getName() }
-        .sorted()
-    // TODO sanity-check basenames are the complete sequence...
-
-    // Read the first VcfRecord GRange from each part
-    val aggHeaderB = jsc.broadcast(aggHeader)
-    val partsAndFirstRange = jsc.parallelize(partBasenames, parallelism).mapPartitions(
-        FlatMapFunction<Iterator<String>, Pair<String, GRange>> {
-                basenames ->
+fun writeJointFiles(
+    pvcfHeader: String,
+    pvcfLines: Dataset<Row>,
+    pvcfDir: String,
+    pvcfRecordBytes: LongAccumulator? = null
+): Int {
+    val fs = getFileSystem(pvcfDir)
+    require(fs.mkdirs(Path(pvcfDir)), { "output directory $pvcfDir mustn't already exist" })
+    val partCount = pvcfLines.toJavaRDD().mapPartitionsWithIndex(
+        Function2<Int, Iterator<Row>, Iterator<String>> { partIndex, rows ->
+            val partIndexPadded = partIndex.toString().padStart(6, '0')
+            val partPath = Path(pvcfDir, "part-$partIndexPadded.bgz")
             val fs = getFileSystem(pvcfDir)
-            basenames.asSequence().map {
-                    basename ->
-                fileReaderDetectGz("$pvcfDir/$basename", fs).useLines {
-                    val rec = parseVcfRecord(aggHeaderB.value.contigId, it.first())
-                    basename to rec.range
+            fs.create(partPath).use {
+                BGZFOutputStream(it).use { bgzf ->
+                    rows.forEach { row ->
+                        val line = Snappy.uncompress(row.getAs<ByteArray>("snappyLine"))
+                        pvcfRecordBytes?.let { it.add(line.size + 1L) }
+                        bgzf.write(line)
+                        bgzf.write(10) // \n
+                    }
                 }
-            }.iterator()
-        }
-    ).collect().sortedBy { it.first }.toTypedArray()
+            }
+            listOf(partPath.toString()).iterator()
+        },
+        false
+    ).count().toInt()
 
+    fs.create(Path(pvcfDir, "00HEADER.bgz"), true).use {
+        BGZFOutputStream(it).use {
+            OutputStreamWriter(it, "UTF-8").use {
+                it.write(pvcfHeader)
+            }
+        }
+    }
+
+    fs.create(Path(pvcfDir, ".wip.zzEOF.bgz"), true).use {
+        it.write(htsjdk.samtools.util.BlockCompressedStreamConstants.EMPTY_GZIP_BLOCK)
+    }
     check(
-        partsAndFirstRange.toList().sortedBy { it.second } == partsAndFirstRange.toList(),
-        { "inconsistent part # and GRange order" }
+        fs.rename(Path(pvcfDir, ".wip.zzEOF.bgz"), Path(pvcfDir, "zzEOF.bgz")),
+        { "unable to finalize $pvcfDir/zzEOF.bgz" }
     )
 
-    // Infer which parts have content from only one chromosome, storing the rid and first POS.
-    // -1 for parts potentially spanning multiple chromosomes.
-    val classifiedParts: List<Triple<Short, Int, String>> = partsAndFirstRange
-        .toList().mapIndexed {
-                i, (basename, firstRange) ->
-            val oneChrom = (
-                i + 1 < partsAndFirstRange.size &&
-                    partsAndFirstRange[i + 1].second.rid == firstRange.rid
-                )
-            if (oneChrom) {
-                Triple(firstRange.rid, firstRange.beg, basename)
-            } else {
-                Triple(-1, -1, basename)
-            }
-        }
-    logger.info("Initial output part count = ${classifiedParts.size}")
-
-    // Split parts potentially spanning multiple chromosomes
-    val partsToSplit = classifiedParts.filter { it.first < 0 }.map { it.third }
-    var splitParts: List<Triple<Short, Int, String>> = emptyList()
-    if (!partsToSplit.isEmpty()) {
-        logger.info("Splitting output part files potentially spanning multiple chromosomes:")
-        partsToSplit.forEach {
-            logger.info("  $it")
-        }
-        splitParts = jsc.parallelizeEvenly(partsToSplit).flatMap(
-            FlatMapFunction<String, Triple<Short, Int, String>> {
-                splitByChr(pvcfDir, it, aggHeaderB.value).iterator()
-            }
-        ).collect()
-    }
-
-    // Consolidate the part list and calculate a last pos for each (-1 for chrom end)
-    val revisedParts = (classifiedParts.filter { it.first >= 0 } + splitParts)
-        .sortedWith(compareBy({ it.first }, { it.second })).toTypedArray()
-    val rangeParts = revisedParts.mapIndexed {
-            i, (rid, firstPos, basename) ->
-        val lastPos = if (i + 1 < revisedParts.size && revisedParts[i + 1].first == rid) {
-            revisedParts[i + 1].second
-        } else {
-            -1
-        }
-        i to Triple(rid, (firstPos to lastPos), basename)
-    }
-    val finalPartCount = rangeParts.size
-    val finalPartCountDigits = 1 + log10(finalPartCount.toDouble()).toInt()
-
-    // Rename all the parts
-    val newNames = jsc.parallelize(rangeParts, parallelism).mapPartitions(
-        FlatMapFunction<Iterator<Pair<Int, Triple<Short, Pair<Int, Int>, String>>>, String> {
-            val fs = getFileSystem(pvcfDir)
-            it.asSequence().map {
-                    (i, t) ->
-                val (rid, pos, basename) = t
-                val (posBeg, posEnd) = pos
-                val chrom = aggHeaderB.value.contigs[rid.toInt()]
-                val iPad = (i + 1).toString().padStart(finalPartCountDigits, '0')
-                val cPad = finalPartCount.toString().padStart(finalPartCountDigits, '0')
-                val posEndStr = if (posEnd >= 0) posEnd.toString() else "end"
-                val basename2 = "part-${iPad}of$cPad-$chrom-$posBeg-$posEndStr.bgz"
-                if (fs.exists(Path(pvcfDir, basename))) {
-                    fs.rename(Path(pvcfDir, basename), Path(pvcfDir, basename2))
-                } else {
-                    // Spark may be speculatively re-executing this task
-                    check(fs.exists(Path(pvcfDir, basename2)), {
-                        "expected one of $basename or $basename2 to exist"
-                    })
-                }
-                basename2
-            }.iterator()
-        }
-    ).collect()
-    check(newNames.size == finalPartCount)
-    logger.info("Final output part count = $finalPartCount")
-    check(newNames.distinct().sorted() == newNames.sorted())
-}
-
-fun splitByChr(
-    pvcfDir: String,
-    partBasename: String,
-    aggHeader: AggVcfHeader
-): List<Triple<Short, Int, String>> {
-    val fs = getFileSystem(pvcfDir)
-
-    val ans: MutableList<Triple<Short, Int, String>> = mutableListOf()
-    var rid: Short = -1
-
-    fileReaderDetectGz("$pvcfDir/$partBasename", fs).useLines {
-        var writer: OutputStreamWriter? = null
-        for (line in it) {
-            val rec = parseVcfRecord(aggHeader.contigId, line)
-            if (rec.range.rid != rid) {
-                if (writer != null) {
-                    writer.close()
-                }
-                rid = rec.range.rid
-
-                // timestamp temp filename for robustness to Spark retry/speculation
-                val timestamp = System.currentTimeMillis().toString()
-                val tempName = (
-                    "${aggHeader.contigs[rid.toInt()]}_" +
-                        "${rec.range.beg.toString().padStart(9,'0')}.bgz.wip.$timestamp"
-                    )
-                writer = OutputStreamWriter(
-                    BGZFOutputStream(fs.create(Path(pvcfDir, tempName))),
-                    "UTF-8"
-                )
-                ans.add(Triple(rid, rec.range.beg, tempName))
-            }
-            check(writer != null)
-            writer.write(line)
-            writer.write("\n")
-        }
-
-        if (writer != null) {
-            writer.close()
-        }
-    }
-
-    check(fs.delete(Path(pvcfDir, partBasename), false), { "unable to delete $partBasename" })
-
-    return ans
+    return partCount
 }

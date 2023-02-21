@@ -1,16 +1,13 @@
 package net.mlin.vcfGLuer.joint
 import java.io.File
 import java.io.Serializable
-import kotlin.math.pow
 import kotlin.text.StringBuilder
 import net.mlin.vcfGLuer.data.*
 import net.mlin.vcfGLuer.util.*
 import org.apache.hadoop.fs.Path
 import org.apache.log4j.Logger
-import org.apache.spark.api.java.JavaRDD
 import org.apache.spark.api.java.JavaSparkContext
 import org.apache.spark.api.java.function.FlatMapFunction
-import org.apache.spark.api.java.function.Function
 import org.apache.spark.api.java.function.MapFunction
 import org.apache.spark.api.java.function.MapGroupsFunction
 import org.apache.spark.sql.Dataset
@@ -21,7 +18,6 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.types.DataTypes
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.util.LongAccumulator
 import org.jetbrains.kotlinx.spark.api.*
 import org.xerial.snappy.Snappy
 
@@ -39,21 +35,19 @@ data class JointConfig(
 ) : Serializable
 
 /**
- * From local databases of variants & VCF records, generate pVCF header and sorted RDD of the pVCF
- * lines
+ * From local databases of variants & VCF records, generate pVCF header, pVCF line count, and
+ * sorted RDD of Snappy-compressed pVCF lines
  */
 fun jointCall(
     logger: Logger,
     cfg: JointConfig,
     spark: SparkSession,
     aggHeader: AggVcfHeader,
-    variantCount: Int,
     variantsDbLocalFilename: String,
     variantsDbSharedFilename: String?,
     vcfFilenamesDF: Dataset<Row>,
-    pvcfHeaderMetaLines: List<String> = emptyList(),
-    pvcfRecordBytes: LongAccumulator? = null
-): Pair<String, JavaRDD<String>> {
+    pvcfHeaderMetaLines: List<String> = emptyList()
+): Triple<String, Long, Dataset<Row>> {
     // broadcast supporting data for joint calling; using JavaSparkContext to sidestep
     // kotlin-spark-api overrides
     val jsc = JavaSparkContext(spark.sparkContext)
@@ -123,28 +117,10 @@ fun jointCall(
     // server before next dropping to RDD. This provides useful diagnostic info that would
     // otherwise go missing. The log message also provides a progress marker.
     val pvcfLineCount = pvcfLinesDF.count()
-    logger.info("sorting & writing ${pvcfLineCount.pretty()} pVCF lines...")
-    check(pvcfLineCount == variantCount.toLong())
 
     // sort pVCF rows by variantId and return the decompressed text of each line
     val pvcfHeader = jointVcfHeader(cfg, aggHeader, pvcfHeaderMetaLines, fieldsGenB.value)
-    return pvcfHeader to pvcfLinesDF
-        .toJavaRDD()
-        .sortBy(
-            Function<Row, Int> { it.getAs<Int>(0) },
-            true,
-            // Coalesce to fewer partitions now that the data size has been reduced, to output a
-            // smaller number of reasonably-sized pVCF part files.
-            // This is why we've dropped down to RDD -- Dataset.orderBy() doesn't provide direct
-            // control of the output partitioning.
-            jsc.defaultParallelism().toDouble().pow(3.0 / 4.0).toInt()
-        ).map(
-            Function<Row, String> { row ->
-                val ans = String(Snappy.uncompress(row.getAs<ByteArray>(1)))
-                pvcfRecordBytes?.let { it.add(ans.length + 1L) }
-                ans
-            }
-        )
+    return Triple(pvcfHeader, pvcfLineCount, pvcfLinesDF.sort("variantId"))
 }
 
 /**

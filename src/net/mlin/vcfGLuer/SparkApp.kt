@@ -44,14 +44,16 @@ class CLI : CliktCommand() {
             .flag(default = false)
     val config: String by option(help = "Configuration preset name").default("DeepVariant")
     val filterBed: String? by
-        option(help = "only call variants within a region from this BED file")
+        option(help = "Call variants only within a region from this BED file")
     val filterContigs: String? by
         option(
-            help = "comma-separated list of contigs to process (intersect with BED regions, if any)"
+            help = "Contigs to process, comma-separated (intersect with BED regions, if any)"
         )
+    val splitBed: String? by
+        option(help = "Guide pVCF part splitting with regions from this non-overlapping BED file")
     val tmpDir: String? by
         option(
-            help = "shared (HDFS) temporary directory"
+            help = "Shared (HDFS) temporary directory"
         )
 
     override fun run() {
@@ -207,21 +209,23 @@ class CLI : CliktCommand() {
                 "vcfGLuer_version=${getProjectVersion()}",
                 "vcfGLuer_config=$cfg"
             )
-            val (pvcfHeader, pvcfLines) = jointCall(
-                logger, cfg.joint, spark, aggHeader,
-                variantCount, variantsDbLocalFilename, variantsDbSharedFilename,
-                vcfFilenamesDF, pvcfHeaderMetaLines, pvcfRecordBytes
+            val (pvcfHeader, pvcfLineCount, pvcfLines) = jointCall(
+                logger,
+                cfg.joint,
+                spark,
+                aggHeader,
+                variantsDbLocalFilename,
+                variantsDbSharedFilename,
+                vcfFilenamesDF,
+                pvcfHeaderMetaLines
             )
+            check(pvcfLineCount == variantCount.toLong())
+            logger.info("sorting & writing ${pvcfLineCount.pretty()} pVCF lines...")
 
             // write pVCF lines (in BGZF parts)
-            pvcfLines.saveAsTextFile(pvcfDir, BGZFCodec::class.java)
-            logger.info("pVCF bytes: ${pvcfRecordBytes.sum().pretty()}")
-
-            // reorganize part files
-            reorgJointFiles(spark, pvcfDir, aggHeader)
-
-            // write output VCF header & BGZF EOF marker
-            writeHeaderAndEOF(pvcfHeader, pvcfDir)
+            val pvcfFileCount = writeJointFiles(pvcfHeader, pvcfLines, pvcfDir, pvcfRecordBytes)
+            logger.info("pVCF record bytes: ${pvcfRecordBytes.sum().pretty()}")
+            logger.info("wrote $pvcfFileCount pVCF part files (+ header & EOF)")
         }
     }
 }
@@ -233,26 +237,6 @@ fun getProjectVersion(): String {
             .getResourceAsStream("META-INF/maven/net.mlin/vcfGLuer/pom.properties")
     )
     return props.getProperty("version")
-}
-
-fun writeHeaderAndEOF(headerText: String, dir: String) {
-    val fs = getFileSystem(dir)
-
-    fs.create(Path(dir, "00HEADER.bgz"), true).use {
-        BGZFOutputStream(it).use {
-            java.io.OutputStreamWriter(it, "UTF-8").use {
-                it.write(headerText)
-            }
-        }
-    }
-
-    fs.create(Path(dir, ".wip.zzEOF.bgz"), true).use {
-        it.write(htsjdk.samtools.util.BlockCompressedStreamConstants.EMPTY_GZIP_BLOCK)
-    }
-    check(
-        fs.rename(Path(dir, ".wip.zzEOF.bgz"), Path(dir, "zzEOF.bgz")),
-        { "unable to finalize $dir/zzEOF.bgz" }
-    )
 }
 
 /**
