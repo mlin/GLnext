@@ -77,7 +77,7 @@ fun jointCall(
         },
         RowEncoder.apply(
             StructType()
-                .add("variantId", DataTypes.LongType, false)
+                .add("variantId", DataTypes.IntegerType, false)
                 .add("sampleId", DataTypes.IntegerType, false)
                 .add("entry", DataTypes.StringType, false)
         )
@@ -85,9 +85,9 @@ fun jointCall(
 
     // group the genotype entries by variantId and generate pVCF text lines (Snappy-compressed)
     val pvcfLinesDF = entriesDF
-        .groupByKey(MapFunction<Row, Long> { it.getAs<Long>(0) }, Encoders.LONG())
+        .groupByKey(MapFunction<Row, Int> { it.getAs<Int>(0) }, Encoders.INT())
         .mapGroups(
-            MapGroupsFunction<Long, Row, Row> { variantId, variantEntries ->
+            MapGroupsFunction<Int, Row, Row> { variantId, variantEntries ->
                 // look up this variant in the broadcast database file (using pooled resources...)
                 ensureVariantsDb(variantsDbLocalFilename, variantsDbSharedFilename)
                 val variant = ExitStack().use { cleanup ->
@@ -97,7 +97,7 @@ fun jointCall(
                     val getVariant = cleanup.add(
                         variants.prepareStatement("SELECT * from Variant WHERE variantId = ?")
                     )
-                    getVariant.setLong(1, variantId)
+                    getVariant.setInt(1, variantId)
                     val rs = cleanup.add(getVariant.executeQuery())
                     check(rs.next())
                     Variant(rs)
@@ -110,12 +110,11 @@ fun jointCall(
                     variant,
                     variantEntries
                 )
-                // TODO: assign region
                 RowFactory.create(variantId, snappyLine)
             },
             RowEncoder.apply(
                 StructType()
-                    .add("variantId", DataTypes.LongType, false)
+                    .add("variantId", DataTypes.IntegerType, false)
                     .add("snappyLine", DataTypes.BinaryType, false)
             )
             // persist before sorting: https://stackoverflow.com/a/56310076
@@ -132,7 +131,7 @@ fun jointCall(
     return pvcfHeader to pvcfLinesDF
         .toJavaRDD()
         .sortBy(
-            Function<Row, Long> { it.getAs<Long>(0) },
+            Function<Row, Int> { it.getAs<Int>(0) },
             true,
             // Coalesce to fewer partitions now that the data size has been reduced, to output a
             // smaller number of reasonably-sized pVCF part files.
@@ -188,7 +187,7 @@ fun generateJointCalls(
     variantsDbFilename: String,
     callsetId: Int,
     vcfFilename: String
-): Sequence<Triple<Long, Int, String>> = // [(variantId, sampleId, pvcfEntry)]
+): Sequence<Triple<Int, Int, String>> = // [(variantId, sampleId, pvcfEntry)]
     sequence {
         // variants sequence (read from broadcast database file)
         val variants = sequence {
@@ -200,7 +199,7 @@ fun generateJointCalls(
                     "SELECT * FROM Variant ORDER BY variantId"
                 )
                 while (rs.next()) {
-                    val variantId = rs.getLong("variantId")
+                    val variantId = rs.getInt("variantId")
                     val variant = Variant(rs)
                     yield(variantId to variant)
                 }
@@ -233,7 +232,7 @@ fun generateJointCalls(
  * Callset records assorted into reference bands, records containing the focal variant, and others
  */
 class GenotypingContext(
-    val variantId: Long,
+    val variantId: Int,
     val variant: Variant,
     val callsetRecords: List<VcfRecordUnpacked>
 ) {
@@ -261,7 +260,7 @@ class GenotypingContext(
  * too overlapping. These assumptions match up with small-variant gVCF inputs, of course.
  */
 fun generateGenotypingContexts(
-    variants: Sequence<Pair<Long, Variant>>, // (variantId, variant)
+    variants: Sequence<Pair<Int, Variant>>, // (variantId, variant)
     recordsIter: Iterator<VcfRecord>
 ): Sequence<GenotypingContext> {
     // buffer of records whose ranges don't strictly precede (<<) the last-processed variant, nor
