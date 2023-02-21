@@ -6,7 +6,9 @@ import org.apache.spark.api.java.function.FlatMapFunction
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.Dataset
 import org.apache.spark.sql.Row
+import org.apache.spark.sql.functions.monotonically_increasing_id
 import org.apache.spark.util.LongAccumulator
+import org.jetbrains.kotlinx.spark.api.*
 
 /**
  * Harvest variants from a VCF record
@@ -98,14 +100,16 @@ fun collectAllVariantsDb(
     val tempFilename = tempFile.absolutePath
     tempFile.delete()
 
-    var variantId = 0
+    val defaultParallelism = vcfPathsDF.sparkSession().sparkContext.defaultParallelism()
 
+    var variantCount = 0
     ExitStack().use { cleanup ->
         val dbc = cleanup.add(createGenomicSQLiteForBulkLoad(tempFilename, threads = 8))
         val adhoc = cleanup.add(dbc.createStatement())
         adhoc.executeUpdate(
             """
             CREATE TABLE Variant(
+                partition INTEGER NOT NULL,
                 variantId INTEGER PRIMARY KEY,
                 rid INTEGER NOT NULL,
                 beg INTEGER NOT NULL,
@@ -115,7 +119,7 @@ fun collectAllVariantsDb(
             )
             """
         )
-        val insert = cleanup.add(dbc.prepareStatement("INSERT INTO Variant VALUES(?,?,?,?,?,?)"))
+        val insert = cleanup.add(dbc.prepareStatement("INSERT INTO Variant VALUES(?,?,?,?,?,?,?)"))
         discoverAllVariants(
             contigId,
             vcfPathsDF,
@@ -126,16 +130,29 @@ fun collectAllVariantsDb(
             vcfRecordBytes
         )
             .orderBy("rid", "beg", "end", "ref", "alt")
+            .withColumn("variantId", monotonically_increasing_id())
+            .selectExpr(
+                "*",
+                """
+                int(
+                    $defaultParallelism * 0.999999 *
+                        percent_rank() OVER (ORDER BY variantId)
+                ) AS partition"
+                """
+                // hmmm....we need to increase partitioning further by 'cross product' with the first-level region boundaries
+            )
+            .orderBy("variantId")
             .toLocalIterator()
             .forEach { row ->
-                insert.setInt(1, variantId)
-                insert.setInt(2, row.getAs<Int>("rid"))
-                insert.setInt(3, row.getAs<Int>("beg") - 1)
-                insert.setInt(4, row.getAs<Int>("end"))
-                insert.setString(5, row.getAs<String>("ref"))
-                insert.setString(6, row.getAs<String>("alt"))
+                insert.setInt(1, row.getAs<Int>("partition"))
+                insert.setLong(2, row.getAs<Long>("variantId"))
+                insert.setInt(3, row.getAs<Int>("rid"))
+                insert.setInt(4, row.getAs<Int>("beg") - 1)
+                insert.setInt(5, row.getAs<Int>("end"))
+                insert.setString(6, row.getAs<String>("ref"))
+                insert.setString(7, row.getAs<String>("alt"))
                 insert.executeUpdate()
-                variantId += 1
+                variantCount += 1
             }
         dbc.commit()
     }
@@ -144,5 +161,5 @@ fun collectAllVariantsDb(
     val crcFile = File(tempFile.getParent(), "vcfGLuerVariants.$crc.db")
     tempFile.renameTo(crcFile)
 
-    return variantId to crcFile.absolutePath
+    return variantCount to crcFile.absolutePath
 }
