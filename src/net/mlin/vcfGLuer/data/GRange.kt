@@ -1,4 +1,5 @@
 package net.mlin.vcfGLuer.data
+import org.apache.spark.sql.Row
 
 /**
  * Genomic range with reference sequence id (rid), one-based begin position, and inclusive end
@@ -11,6 +12,8 @@ data class GRange(val rid: Short, val beg: Int, val end: Int) :
         require(beg > 0)
         require(end >= beg)
     }
+    constructor(row: Row) :
+        this(row.getAs<Short>("rid"), row.getAs<Int>("beg"), row.getAs<Int>("end")) {}
     override fun compareTo(other: GRange) = compareValuesBy(
         this,
         other,

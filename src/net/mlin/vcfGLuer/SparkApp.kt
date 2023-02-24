@@ -50,7 +50,7 @@ class CLI : CliktCommand() {
             help = "Contigs to process, comma-separated (intersect with BED regions, if any)"
         )
     val splitBed: String? by
-        option(help = "Guide pVCF part splitting with regions from this non-overlapping BED file")
+        option(help = "Guide pVCF part splitting using non-overlapping regions from this BED file")
     val tmpDir: String? by
         option(
             help = "Shared (HDFS) temporary directory"
@@ -223,7 +223,14 @@ class CLI : CliktCommand() {
             logger.info("sorting & writing ${pvcfLineCount.pretty()} pVCF lines...")
 
             // write pVCF lines (in BGZF parts)
-            val pvcfFileCount = writeJointFiles(pvcfHeader, pvcfLines, pvcfDir, pvcfRecordBytes)
+            val pvcfFileCount = writeJointFiles(
+                aggHeader.contigs,
+                readSplitBed(aggHeader.contigId, splitBed),
+                pvcfHeader,
+                pvcfLines,
+                pvcfDir,
+                pvcfRecordBytes
+            )
             logger.info("pVCF record bytes: ${pvcfRecordBytes.sum().pretty()}")
             logger.info("wrote $pvcfFileCount pVCF part files (+ header & EOF)")
         }

@@ -104,11 +104,20 @@ fun jointCall(
                     variant,
                     variantEntries
                 )
-                RowFactory.create(variantId, snappyLine)
+                RowFactory.create(
+                    variantId,
+                    variant.range.rid,
+                    variant.range.beg,
+                    variant.range.end,
+                    snappyLine
+                )
             },
             RowEncoder.apply(
                 StructType()
                     .add("variantId", DataTypes.IntegerType, false)
+                    .add("rid", DataTypes.ShortType, false)
+                    .add("beg", DataTypes.IntegerType, false)
+                    .add("end", DataTypes.IntegerType, false)
                     .add("snappyLine", DataTypes.BinaryType, false)
             )
             // persist before sorting: https://stackoverflow.com/a/56310076
