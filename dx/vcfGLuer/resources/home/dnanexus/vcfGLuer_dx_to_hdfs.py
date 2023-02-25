@@ -1,13 +1,14 @@
 # PySpark script to "localize" gVCF files from DNAnexus project to the apachespark cluster's HDFS
 
-import pyspark
-import time
-import tempfile
-import sys
+import glob
 import os
 import subprocess
-import glob
+import sys
+import tempfile
+import time
+
 import dxpy
+import pyspark
 
 # desired HDFS replication factor; perhaps higher than the dxspark apparent default of 2
 DFS_REPLICATION = 3

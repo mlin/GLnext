@@ -21,22 +21,26 @@ fun getFileSystem(path: String): FileSystem {
 }
 
 /**
- * As FileSystem.concat, but fall back to a naive implementation if the underlying raises
- * UnsupportedOperationException (as does the default local ChecksumFileSystem for example).
+ * Naive implementation of FileSystem.concat
+ *
+ * We use this because many of the concrete FileSystem implementations leave concat unsupported or
+ * impose tricky restrictions (e.g. see hadoop's FSDirConcatOp.java)
  */
-fun FileSystem.concat2(
+fun FileSystem.concatNaive(
     dst: Path,
     src: Array<Path>
 ) {
-    try {
-        this.concat(dst, src)
-    } catch (_exc: UnsupportedOperationException) {
-        this.create(dst, true).use { outfile ->
-            src.forEach {
-                this.open(it).use { it.transferTo(outfile) }
+    var totalFileSize = 0L
+    var bytesWritten = 0L
+    this.create(dst, true).use { outfile ->
+        src.forEach {
+            totalFileSize += this.getFileStatus(it).getLen()
+            this.open(it).use {
+                bytesWritten += it.transferTo(outfile)
             }
         }
     }
+    check(bytesWritten == totalFileSize)
 }
 
 /**

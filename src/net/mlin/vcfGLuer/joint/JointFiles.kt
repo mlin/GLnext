@@ -57,17 +57,15 @@ fun writeJointFiles(
     // concatenate the parts from each splitBed region into a well-formed p.vcf.gz file
     val jsc = JavaSparkContext(pvcfLines.sparkSession().sparkContext())
     val pvcfFiles = jsc.parallelize(partsPerSplit).map { pvcfFileParts ->
-        getFileSystem(pvcfDir).use { fscat ->
-            val pvcfPath = Path(
-                pvcfDir,
-                Path(pvcfDir).getName() + "_" +
-                    Path(pvcfFileParts.first().path).getParent().getName() +
-                    ".vcf.gz"
-            )
-            val cat = listOf(headerPath) + pvcfFileParts.map { it.path } + listOf(eofPath)
-            fscat.concat2(pvcfPath, cat.map { Path(it) }.toTypedArray())
-            pvcfPath to pvcfFileParts.map { it.lineCount }.sum()
-        }
+        val pvcfPath = Path(
+            pvcfDir,
+            Path(pvcfDir).getName() + "_" +
+                Path(pvcfFileParts.first().path).getParent().getName() +
+                ".vcf.gz"
+        )
+        val cat = listOf(headerPath) + pvcfFileParts.map { it.path } + listOf(eofPath)
+        getFileSystem(pvcfDir).concatNaive(pvcfPath, cat.map { Path(it) }.toTypedArray())
+        pvcfPath to pvcfFileParts.map { it.lineCount }.sum()
     }.collect()
 
     // cross-check total line count
@@ -207,7 +205,6 @@ fun writeJointFileParts(
         }
     } finally {
         bgzf?.close()
-        fs.close()
     }
     if (partWriting != null) {
         partsWritten.put(partWriting.path, partWriting)

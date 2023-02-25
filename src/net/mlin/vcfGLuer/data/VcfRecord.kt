@@ -1,7 +1,6 @@
 package net.mlin.vcfGLuer.data
 import htsjdk.samtools.util.CloseableIterator
 import net.mlin.vcfGLuer.util.fileReaderDetectGz
-import net.mlin.vcfGLuer.util.getFileSystem
 
 enum class VcfColumn {
     CHROM, POS, ID, REF, ALT, QUAL, FILTER, INFO, FORMAT, FIRST_SAMPLE
@@ -57,8 +56,7 @@ fun scanVcfRecords(
     contigId: Map<String, Short>,
     vcfFilename: String
 ): CloseableIterator<VcfRecord> {
-    val fs = getFileSystem(vcfFilename)
-    val reader = fileReaderDetectGz(vcfFilename, fs)
+    val reader = fileReaderDetectGz(vcfFilename)
     return object : CloseableIterator<VcfRecord> {
         var next: String? = null
         private fun update() {
@@ -86,7 +84,6 @@ fun scanVcfRecords(
         override fun close() {
             next = null
             reader.close()
-            fs.close()
         }
     }
 }

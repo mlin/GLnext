@@ -35,7 +35,7 @@ data class JointConfig(
 
 /**
  * From local databases of variants & VCF records, generate pVCF header, pVCF line count, and
- * sorted RDD of Snappy-compressed pVCF lines
+ * sorted DataFrame of Snappy-compressed pVCF lines
  */
 fun jointCall(
     cfg: JointConfig,
@@ -121,12 +121,11 @@ fun jointCall(
             // persist before sorting: https://stackoverflow.com/a/56310076
         ).persist(org.apache.spark.storage.StorageLevel.DISK_ONLY())
         .sort("variantId").persist(org.apache.spark.storage.StorageLevel.DISK_ONLY())
+
     // Perform a count() to force pvcfLinesDF, ensuring it registers as an SQL query in the history
     // server before subsequent steps that will drop to RDD. This provides useful diagnostic info
     // that would otherwise go missing at RDD level.
     val pvcfLineCount = pvcfLinesDF.count()
-
-    // sort pVCF rows by variantId and return the decompressed text of each line
     val pvcfHeader = jointVcfHeader(cfg, aggHeader, pvcfHeaderMetaLines, fieldsGenB.value)
     return Triple(pvcfHeader, pvcfLineCount, pvcfLinesDF)
 }

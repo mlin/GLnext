@@ -38,6 +38,13 @@
       "help": "only call variants on these comma-separated contigs (intersect with filter BED, if any)"
     },
     {
+      "name": "split_bed",
+      "class": "file",
+      "optional": true,
+      "patterns": ["*.bed", "*.bed.gz"],
+      "help": "split output pVCF files according to regions from this BED file (default: per-chromosome)"
+    },
+    {
       "name": "java_options",
       "class": "string",
       "default": "",
