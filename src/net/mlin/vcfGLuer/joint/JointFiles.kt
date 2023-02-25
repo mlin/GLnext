@@ -2,12 +2,84 @@ package net.mlin.vcfGLuer.joint
 import java.io.OutputStreamWriter
 import net.mlin.vcfGLuer.data.*
 import net.mlin.vcfGLuer.util.*
+import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
+import org.apache.log4j.Logger
+import org.apache.spark.api.java.JavaSparkContext
 import org.apache.spark.api.java.function.Function2
 import org.apache.spark.sql.Dataset
 import org.apache.spark.sql.Row
-import org.apache.spark.util.LongAccumulator
 import org.xerial.snappy.Snappy
+
+data class PartWritten(
+    val path: String,
+    val splitId: Int,
+    val partIndex: Int,
+    var lineCount: Int,
+    var byteCount: Long
+) : java.io.Serializable
+
+// Write the sorted pVCF Dataset to an output p.vcf.gz file for each splitBed region
+fun writeJointFiles(
+    logger: Logger,
+    contigs: Array<String>,
+    splitBed: BedRanges,
+    pvcfHeader: String,
+    pvcfLines: Dataset<Row>,
+    pvcfDir: String,
+    variantCount: Int
+) {
+    val fs = getFileSystem(pvcfDir)
+    require(fs.mkdirs(Path(pvcfDir)), { "output directory $pvcfDir mustn't already exist" })
+
+    // write file parts (split by both spark partition and splitBed)
+    val (headerPath, eofPath, partsWritten) = writeAllJointFileParts(
+        contigs,
+        splitBed,
+        pvcfHeader,
+        pvcfLines,
+        Path(pvcfDir, "_parts").toString(),
+        variantCount,
+        fs
+    )
+
+    val totalBytes = partsWritten.map { it.byteCount }.sum()
+    logger.info(
+        "wrote ${totalBytes.pretty()} pVCF record bytes in" +
+            " ${partsWritten.size} parts; concatenating parts to pVCF files..."
+    )
+
+    // group the parts by splitBed region
+    val partsPerSplit = partsWritten.groupBy {
+        it.splitId
+    }.entries.map { it.value.sortedBy { it.partIndex } }
+
+    // concatenate the parts from each splitBed region into a well-formed p.vcf.gz file
+    val jsc = JavaSparkContext(pvcfLines.sparkSession().sparkContext())
+    val pvcfFiles = jsc.parallelize(partsPerSplit).map { pvcfFileParts ->
+        getFileSystem(pvcfDir).use { fscat ->
+            val pvcfPath = Path(
+                pvcfDir,
+                Path(pvcfDir).getName() + "_" +
+                    Path(pvcfFileParts.first().path).getParent().getName() +
+                    ".vcf.gz"
+            )
+            val cat = listOf(headerPath) + pvcfFileParts.map { it.path } + listOf(eofPath)
+            fscat.concat2(pvcfPath, cat.map { Path(it) }.toTypedArray())
+            pvcfPath to pvcfFileParts.map { it.lineCount }.sum()
+        }
+    }.collect()
+
+    // cross-check total line count
+    check(pvcfFiles.map { it.second }.sum() == variantCount)
+
+    // mark _SUCCESS
+    fs.create(Path(pvcfDir, "_SUCCESS"), false).use {}
+
+    logger.info("created ${pvcfFiles.size} output pVCF files under $pvcfDir")
+
+    // TODO: clean up _parts?
+}
 
 // Write the sorted pVCF Dataset to a number of sorted output files.
 //
@@ -15,32 +87,35 @@ import org.xerial.snappy.Snappy
 // partitioning AND splitBed. Each file has sorted variants whose beg POS lies within exactly one
 // splitBed region (but each splitBed region may have multiple sorted output files, according to
 // the Spark partitioning).
-fun writeJointFiles(
+fun writeAllJointFileParts(
     contigs: Array<String>,
     splitBed: BedRanges,
     pvcfHeader: String,
     pvcfLines: Dataset<Row>,
-    pvcfDir: String,
-    pvcfRecordBytes: LongAccumulator? = null
-): Int {
-    val fs = getFileSystem(pvcfDir)
-    require(fs.mkdirs(Path(pvcfDir)), { "output directory $pvcfDir mustn't already exist" })
-    val partCount = pvcfLines.toJavaRDD().mapPartitionsWithIndex(
-        Function2<Int, Iterator<Row>, Iterator<String>> { partIndex, rows ->
-            writeJointPart(
+    partsDir: String,
+    variantCount: Int,
+    fs: FileSystem
+): Triple<String, String, List<PartWritten>> {
+    require(fs.mkdirs(Path(partsDir)), { "output directory $partsDir mustn't already exist" })
+    val partsWritten = pvcfLines.toJavaRDD().mapPartitionsWithIndex(
+        Function2<Int, Iterator<Row>, Iterator<PartWritten>> { partIndex, rows ->
+            writeJointFileParts(
                 contigs,
                 splitBed,
                 partIndex,
                 rows,
-                pvcfDir,
-                pvcfRecordBytes
+                partsDir
             ).iterator()
         },
         false
-    ).count().toInt()
+    ).collect()
+
+    // cross-check total line count
+    check(partsWritten.map { it.lineCount }.sum() == variantCount)
 
     // write header
-    fs.create(Path(pvcfDir, "00HEADER.bgz"), true).use {
+    val headerPath = Path(partsDir, "00HEADER.bgz")
+    fs.create(headerPath, true).use {
         BGZFOutputStream(it).use {
             OutputStreamWriter(it, "UTF-8").use {
                 it.write(pvcfHeader)
@@ -48,37 +123,35 @@ fun writeJointFiles(
         }
     }
 
-    // lastly write EOF, atomically -- existence of zzEOF.bgz signals successful overall completion
-    fs.create(Path(pvcfDir, ".wip.zzEOF.bgz"), true).use {
+    // write EOF
+    val eofPath = Path(partsDir, "zzEOF.bgz")
+    fs.create(eofPath, true).use {
         it.write(htsjdk.samtools.util.BlockCompressedStreamConstants.EMPTY_GZIP_BLOCK)
     }
-    check(
-        fs.rename(Path(pvcfDir, ".wip.zzEOF.bgz"), Path(pvcfDir, "zzEOF.bgz")),
-        { "unable to finalize $pvcfDir/zzEOF.bgz" }
-    )
 
-    return partCount
+    return Triple(headerPath.toString(), eofPath.toString(), partsWritten)
 }
 
 // Write one Spark partition of pVCF lines out to one or more bgzipped files. The partition may
-// generate multiple output files if it crosses multiple splitBed ranges (chromosomes by default).
-fun writeJointPart(
+// generate multiple output files if it spans multiple splitBed ranges (chromosomes by default).
+fun writeJointFileParts(
     contigs: Array<String>,
     splitBed: BedRanges,
     partIndex: Int,
     rows: Iterator<Row>,
-    pvcfDir: String,
-    pvcfRecordBytes: LongAccumulator? = null
-): List<String> {
+    pvcfDir: String
+): List<PartWritten> {
     val fs = getFileSystem(pvcfDir)
-    val allPartPaths: MutableList<Path> = mutableListOf()
+    val partsWritten: HashMap<String, PartWritten> = hashMapOf()
+
+    // current open file
+    var partWriting: PartWritten? = null
     var bgzf: BGZFOutputStream? = null
     try {
         // for each dataset row
         while (rows.hasNext()) {
             val row = rows.next()
-            // derive the output part filename this pVCF line should go into, considering the
-            // splitBed region its POS falls into and the Spark partIndex.
+            // figure out which splitBed region the record's POS falls into
             var range = GRange(row)
             val splitHits = splitBed.queryOverlapping(GRange(range.rid, range.beg, range.beg))
             require(
@@ -88,19 +161,32 @@ fun writeJointPart(
                 }
             )
             val splitHit = splitHits.first()
-            val partPath = jointPartPath(
-                contigs,
-                pvcfDir,
-                splitHit.id,
-                GRange(range.rid, splitHit.beg, splitHit.end),
-                splitBed.size,
-                partIndex
-            )
 
-            // if that's not the currently-open file, then open it now
-            if (allPartPaths.isEmpty() || partPath != allPartPaths.last()) {
-                bgzf?.close()
-                check(!allPartPaths.contains(partPath)) // double-check row sorting
+            // if we don't already have the part file for that region open, then open it now
+            if (partWriting == null || partWriting.splitId != splitHit.id) {
+                // close completed part file, if any
+                if (partWriting != null) {
+                    bgzf!!.close()
+                    partsWritten.put(partWriting.path, partWriting)
+                }
+                bgzf = null
+                partWriting = null
+
+                // Begin writing file for this partIndex & split region.
+                // We set overwrite=true in case the Spark task had to be retried. Otherwise, we
+                // won't erroneously clobber an existing file because our partIndex is unique and
+                // and we double-check that we're not circling back on a file that we already wrote
+                // ourselves (which could only happen if the rows aren't sorted).
+                val partPath = jointPartPath(
+                    contigs,
+                    pvcfDir,
+                    splitHit.id,
+                    GRange(range.rid, splitHit.beg, splitHit.end),
+                    splitBed.size,
+                    partIndex
+                )
+                partWriting = PartWritten(partPath.toString(), splitHit.id, partIndex, 0, 0L)
+                check(!partsWritten.containsKey(partWriting.path))
                 fs.mkdirs(partPath.getParent())
                 val outfile = fs.create(partPath, true)
                 try {
@@ -109,21 +195,24 @@ fun writeJointPart(
                     outfile.close()
                     throw exc
                 }
-                allPartPaths.add(partPath)
-                check(allPartPaths.contains(partPath))
             }
-            check(bgzf != null)
+            check(bgzf != null && partWriting != null)
 
             // write the line into the open BGZFOutputStream
             val line = Snappy.uncompress(row.getAs<ByteArray>("snappyLine"))
             bgzf.write(line)
             bgzf.write(10) // \n
-            pvcfRecordBytes?.let { it.add(line.size + 1L) }
+            partWriting.lineCount += 1
+            partWriting.byteCount += line.size + 1L
         }
     } finally {
         bgzf?.close()
+        fs.close()
     }
-    return allPartPaths.map { it.toString() }
+    if (partWriting != null) {
+        partsWritten.put(partWriting.path, partWriting)
+    }
+    return partsWritten.values.toList()
 }
 
 // Derive individual output filename given pvcfDir, splitBed region, and Spark partition index.
@@ -148,7 +237,7 @@ fun jointPartPath(
         )
 
     val partIndexPadded = (partIndex + 1).toString().padStart(7, '0') // FIXME not to hardcode 7
-    return Path(Path(pvcfDir, splitSubdir), "${splitSubdir}_$partIndexPadded.bgz")
+    return Path(Path(pvcfDir, splitSubdir), partIndexPadded)
 }
 
 // Load the split BED file into BedRanges. If no BED file specified, then synthesize one range per

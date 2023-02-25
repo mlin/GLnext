@@ -161,7 +161,6 @@ class CLI : CliktCommand() {
             // accumulators
             val vcfRecordCount = spark.sparkContext.longAccumulator("input VCF records")
             val vcfRecordBytes = spark.sparkContext.longAccumulator("input VCF bytes)")
-            val pvcfRecordBytes = spark.sparkContext.longAccumulator("pVCF bytes")
 
             /*
               Discover all variants & collect them to a database file local to the driver.
@@ -205,12 +204,12 @@ class CLI : CliktCommand() {
             }
 
             // perform joint-calling
+            logger.info("genotyping...")
             val pvcfHeaderMetaLines = listOf(
                 "vcfGLuer_version=${getProjectVersion()}",
                 "vcfGLuer_config=$cfg"
             )
             val (pvcfHeader, pvcfLineCount, pvcfLines) = jointCall(
-                logger,
                 cfg.joint,
                 spark,
                 aggHeader,
@@ -220,19 +219,18 @@ class CLI : CliktCommand() {
                 pvcfHeaderMetaLines
             )
             check(pvcfLineCount == variantCount.toLong())
-            logger.info("sorting & writing ${pvcfLineCount.pretty()} pVCF lines...")
+            logger.info("writing ${pvcfLineCount.pretty()} pVCF lines...")
 
-            // write pVCF lines (in BGZF parts)
-            val pvcfFileCount = writeJointFiles(
+            // write output pVCF files
+            writeJointFiles(
+                logger,
                 aggHeader.contigs,
                 readSplitBed(aggHeader.contigId, splitBed),
                 pvcfHeader,
                 pvcfLines,
                 pvcfDir,
-                pvcfRecordBytes
+                variantCount
             )
-            logger.info("pVCF record bytes: ${pvcfRecordBytes.sum().pretty()}")
-            logger.info("wrote $pvcfFileCount pVCF part files (+ header & EOF)")
         }
     }
 }

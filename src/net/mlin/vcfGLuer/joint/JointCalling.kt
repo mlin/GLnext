@@ -5,7 +5,6 @@ import kotlin.text.StringBuilder
 import net.mlin.vcfGLuer.data.*
 import net.mlin.vcfGLuer.util.*
 import org.apache.hadoop.fs.Path
-import org.apache.log4j.Logger
 import org.apache.spark.api.java.JavaSparkContext
 import org.apache.spark.api.java.function.FlatMapFunction
 import org.apache.spark.api.java.function.MapFunction
@@ -39,7 +38,6 @@ data class JointConfig(
  * sorted RDD of Snappy-compressed pVCF lines
  */
 fun jointCall(
-    logger: Logger,
     cfg: JointConfig,
     spark: SparkSession,
     aggHeader: AggVcfHeader,
@@ -122,14 +120,15 @@ fun jointCall(
             )
             // persist before sorting: https://stackoverflow.com/a/56310076
         ).persist(org.apache.spark.storage.StorageLevel.DISK_ONLY())
+        .sort("variantId").persist(org.apache.spark.storage.StorageLevel.DISK_ONLY())
     // Perform a count() to force pvcfLinesDF, ensuring it registers as an SQL query in the history
-    // server before next dropping to RDD. This provides useful diagnostic info that would
-    // otherwise go missing. The log message also provides a progress marker.
+    // server before subsequent steps that will drop to RDD. This provides useful diagnostic info
+    // that would otherwise go missing at RDD level.
     val pvcfLineCount = pvcfLinesDF.count()
 
     // sort pVCF rows by variantId and return the decompressed text of each line
     val pvcfHeader = jointVcfHeader(cfg, aggHeader, pvcfHeaderMetaLines, fieldsGenB.value)
-    return Triple(pvcfHeader, pvcfLineCount, pvcfLinesDF.sort("variantId"))
+    return Triple(pvcfHeader, pvcfLineCount, pvcfLinesDF)
 }
 
 /**
@@ -238,8 +237,8 @@ class GenotypingContext(
 }
 
 /**
- * Collate variant & VCF record sequences (both range-sorted), producing the VariantCallingContext
- * for each variant with the overlapping VCF records (if any).
+ * Collate variant & VCF record sequences (both range-sorted), producing the GenotypingContext for
+ * each variant with the overlapping VCF records (if any).
  *
  * The streaming algorithm assumes that the variants aren't too large and the VCF records aren't
  * too overlapping. These assumptions match up with small-variant gVCF inputs, of course.

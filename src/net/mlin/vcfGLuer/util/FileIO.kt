@@ -21,16 +21,20 @@ fun getFileSystem(path: String): FileSystem {
 }
 
 /**
- * Recursively list a [HDFS] directory, as a Sequence
+ * As FileSystem.concat, but fall back to a naive implementation if the underlying raises
+ * UnsupportedOperationException (as does the default local ChecksumFileSystem for example).
  */
-fun FileSystem.listSequence(
-    path: String,
-    recursive: Boolean
-): Sequence<org.apache.hadoop.fs.LocatedFileStatus> {
-    val it = getFileSystem(path).listFiles(Path(path), recursive)
-    return sequence {
-        while (it.hasNext()) {
-            yield(it.next())
+fun FileSystem.concat2(
+    dst: Path,
+    src: Array<Path>
+) {
+    try {
+        this.concat(dst, src)
+    } catch (_exc: UnsupportedOperationException) {
+        this.create(dst, true).use { outfile ->
+            src.forEach {
+                this.open(it).use { it.transferTo(outfile) }
+            }
         }
     }
 }
