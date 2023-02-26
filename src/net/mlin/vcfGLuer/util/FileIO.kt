@@ -93,25 +93,6 @@ fun readFileChunks(filename: String, chunkSize: Int): Sequence<ByteArray> {
 }
 
 /**
- * Concatenate several local files into dest
- */
-fun concatFiles(src: List<String>, dest: String, chunkSize: Int = 1048576) {
-    File(dest).outputStream().use { destOut ->
-        val buf = ByteArray(chunkSize)
-        src.forEach { srcFilename ->
-            val srcFile = File(srcFilename)
-            check(srcFile.isFile())
-            srcFile.inputStream().use { srcIn ->
-                var n: Int
-                while (srcIn.read(buf).also { n = it } >= 0) {
-                    destOut.write(buf, 0, n)
-                }
-            }
-        }
-    }
-}
-
-/**
  * Compute CRC32C checksum of the file
  */
 fun fileCRC32C(filename: String): Long {

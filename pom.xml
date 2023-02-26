@@ -84,11 +84,10 @@
             <artifactId>iitj</artifactId>
             <version>0.1.0</version>
         </dependency>
-        <!-- FIXME: temporarily pin SQLite due to query planning regression in v3.40.0 -->
         <dependency>
             <groupId>org.xerial</groupId>
             <artifactId>sqlite-jdbc</artifactId>
-            <version>3.39.4.1</version>
+            <version>3.41.0.0</version>
         </dependency>
         <dependency>
             <groupId>net.mlin</groupId>

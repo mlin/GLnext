@@ -68,9 +68,11 @@ main() {
         --conf spark.sql.adaptive.coalescePartitions.parallelismFirst=false \
         $HDFS_RETRY_CONF \
         --name vcfGLuer vcfGLuer-*.jar \
-        --manifest --tmp-dir hdfs:///tmp --config $config $filter_bed_arg $filter_contigs_arg \
+        --manifest --tmp-dir hdfs:///tmp --config $config \
+        $filter_bed_arg $filter_contigs_arg $split_bed_arg \
         vcfGLuer_in.hdfs.manifest "hdfs:///vcfGLuer/out/$output_name" \
         || true
+    dx upload --destination "$DX_PROJECT_CONTEXT_ID:/" /tmp/vcfGLuerVariants.*.db
     $HADOOP_HOME/bin/hadoop fs -get "/vcfGLuer/out/$output_name/_SUCCESS" .
 
     # upload pVCF parts from hdfs to dnanexus

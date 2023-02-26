@@ -43,6 +43,7 @@ fun jointCall(
     aggHeader: AggVcfHeader,
     variantsDbLocalFilename: String,
     variantsDbSharedFilename: String?,
+    variantsDbCRC32C: Long,
     vcfFilenamesDF: Dataset<Row>,
     pvcfHeaderMetaLines: List<String> = emptyList()
 ): Triple<String, Long, Dataset<Row>> {
@@ -55,7 +56,7 @@ fun jointCall(
     // make big DataFrame of pVCF genotype entries: (variantId, sampleId, pvcfEntry)
     val entriesDF = vcfFilenamesDF.flatMap(
         FlatMapFunction<Row, Row> {
-            ensureVariantsDb(variantsDbLocalFilename, variantsDbSharedFilename)
+            ensureVariantsDb(variantsDbLocalFilename, variantsDbSharedFilename, variantsDbCRC32C)
             generateJointCalls(
                 cfg,
                 aggHeaderB.value,
@@ -81,18 +82,27 @@ fun jointCall(
         .mapGroups(
             MapGroupsFunction<Int, Row, Row> { variantId, variantEntries ->
                 // look up this variant in the broadcast database file (using pooled resources...)
-                ensureVariantsDb(variantsDbLocalFilename, variantsDbSharedFilename)
+                ensureVariantsDb(
+                    variantsDbLocalFilename,
+                    variantsDbSharedFilename,
+                    variantsDbCRC32C
+                )
                 val variant = ExitStack().use { cleanup ->
-                    val variants = cleanup.add(
-                        GenomicSQLiteReadOnlyPool.get(variantsDbLocalFilename).getConnection()
-                    )
-                    val getVariant = cleanup.add(
-                        variants.prepareStatement("SELECT * from Variant WHERE variantId = ?")
-                    )
-                    getVariant.setInt(1, variantId)
-                    val rs = cleanup.add(getVariant.executeQuery())
-                    check(rs.next())
-                    Variant(rs)
+                    try {
+                        val variants = cleanup.add(
+                            GenomicSQLiteReadOnlyPool.get(variantsDbLocalFilename).getConnection()
+                        )
+                        val getVariant = cleanup.add(
+                            variants.prepareStatement("SELECT * from Variant WHERE variantId = ?")
+                        )
+                        getVariant.setInt(1, variantId)
+                        val rs = cleanup.add(getVariant.executeQuery())
+                        check(rs.next())
+                        Variant(rs)
+                    } catch (exc: org.sqlite.SQLiteException) {
+                        check(fileCRC32C(variantsDbLocalFilename) == variantsDbCRC32C)
+                        throw exc
+                    }
                 }
                 // assemble the entries into the pVCF line
                 val snappyLine = assembleJointLine(
@@ -136,7 +146,8 @@ fun jointCall(
  */
 fun ensureVariantsDb(
     variantsDbLocalFilename: String,
-    variantsDbSharedFilename: String?
+    variantsDbSharedFilename: String?,
+    variantsDbCRC32C: Long
 ) {
     val FAILSAFE_ITERATIONS = 1800
     variantsDbSharedFilename?.let { dfn ->
@@ -153,6 +164,7 @@ fun ensureVariantsDb(
                     Path(variantsDbSharedFilename),
                     Path(localWip.toString())
                 )
+                check(fileCRC32C(localWip.toString()) == variantsDbCRC32C)
                 localWip.renameTo(local)
                 check(local.isFile())
             }

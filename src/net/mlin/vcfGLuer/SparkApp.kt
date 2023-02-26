@@ -172,7 +172,7 @@ class CLI : CliktCommand() {
               (below) distribute this compressed file to all executors.
             */
             val vcfFilenamesDF = aggHeader.vcfFilenamesDF(spark)
-            val (variantCount, variantsDbLocalFilename) = collectAllVariantsDb(
+            val (variantCount, variantsDbLocalFilename, variantsDbCRC32C) = collectAllVariantsDb(
                 aggHeader.contigId,
                 vcfFilenamesDF,
                 filterRids,
@@ -190,7 +190,11 @@ class CLI : CliktCommand() {
             logger.info("variants DB compressed: ${variantsDbFileSize.pretty()} bytes")
 
             // broadcast the variants database to the same temp filename on each executor
-            val variantsDbCopies = 1 + broadcastLargeFile(vcfFilenamesDF, variantsDbLocalFilename)
+            val variantsDbCopies = 1 + broadcastLargeFile(
+                vcfFilenamesDF,
+                variantsDbLocalFilename,
+                checkCRC32C = variantsDbCRC32C
+            )
             logger.info("variants DB broadcast: ${variantsDbCopies.pretty()} copies")
             // if HDFS --tmp-dir supplied, also copy to HDFS where it can be accessed by any
             // executors that come online after the broadcast
@@ -215,6 +219,7 @@ class CLI : CliktCommand() {
                 aggHeader,
                 variantsDbLocalFilename,
                 variantsDbSharedFilename,
+                variantsDbCRC32C,
                 vcfFilenamesDF,
                 pvcfHeaderMetaLines
             )
@@ -255,7 +260,8 @@ fun getProjectVersion(): String {
 fun <T> broadcastLargeFile(
     someDataset: Dataset<T>,
     filename: String,
-    chunkSize: Int = 1073741824
+    chunkSize: Int = 1073741824,
+    checkCRC32C: Long? = null
 ): Int {
     val sc = someDataset.sparkSession().sparkContext
     val jsc = JavaSparkContext(sc)
@@ -282,8 +288,14 @@ fun <T> broadcastLargeFile(
         ForeachPartitionFunction<T> {
             val localCopy = File(filename)
             if (localCopy.createNewFile()) {
-                concatFiles(chunkFilenames, filename, chunkSize)
+                getFileSystem(filename).concatNaive(
+                    Path(filename),
+                    chunkFilenames.map { Path(it) }.toTypedArray()
+                )
                 check(localCopy.length() == fileSize)
+                checkCRC32C?.let {
+                    check(fileCRC32C(filename) == it)
+                }
                 chunkFilenames.forEach { File(it).delete() }
                 copies.add(1L)
             }
