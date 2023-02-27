@@ -50,18 +50,17 @@ time "${SPARK_HOME}/bin/spark-submit" \
 
 ls -l dv1KGP.out
 
-test -f dv1KGP.out/zzEOF.bgz
+test -f dv1KGP.out/dv1KGP.out_12_GRCh38.chr12.vcf.gz
 is "$?" "0" "vcfGLuer"
-cat dv1KGP.out/*.bgz > dv1KGP.vcf.gz
-bcftools view dv1KGP.vcf.gz > dv1KGP.vcf
+bcftools view dv1KGP.out/dv1KGP.out_12_GRCh38.chr12.vcf.gz > dv1KGP.vcf
 is "$?" "0" "bcftools view"
-tabix dv1KGP.vcf.gz
+tabix dv1KGP.out/dv1KGP.out_12_GRCh38.chr12.vcf.gz
 is "$?" "0" "tabix"
-test -f dv1KGP.vcf.gz.tbi
+test -f dv1KGP.out/dv1KGP.out_12_GRCh38.chr12.vcf.gz.tbi
 is "$?" "0" "tbi"
 
 # regression test - merging config files
-zgrep 'minCopies=1' dv1KGP.out/00HEADER.bgz
+zgrep 'minCopies=1' dv1KGP.out/dv1KGP.out_12_GRCh38.chr12.vcf.gz
 is "$?" "0" "config merging"
 
 echo "$DN"
