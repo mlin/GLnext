@@ -44,14 +44,16 @@ class CLI : CliktCommand() {
             .flag(default = false)
     val config: String by option(help = "Configuration preset name").default("DeepVariant")
     val filterBed: String? by
-        option(help = "only call variants within a region from this BED file")
+        option(help = "Call variants only within a region from this BED file")
     val filterContigs: String? by
         option(
-            help = "comma-separated list of contigs to process (intersect with BED regions, if any)"
+            help = "Contigs to process, comma-separated (intersect with BED regions, if any)"
         )
+    val splitBed: String? by
+        option(help = "Guide pVCF part splitting using non-overlapping regions from this BED file")
     val tmpDir: String? by
         option(
-            help = "shared (HDFS) temporary directory"
+            help = "Shared (HDFS) temporary directory"
         )
 
     override fun run() {
@@ -159,7 +161,6 @@ class CLI : CliktCommand() {
             // accumulators
             val vcfRecordCount = spark.sparkContext.longAccumulator("input VCF records")
             val vcfRecordBytes = spark.sparkContext.longAccumulator("input VCF bytes)")
-            val pvcfRecordBytes = spark.sparkContext.longAccumulator("pVCF bytes")
 
             /*
               Discover all variants & collect them to a database file local to the driver.
@@ -171,7 +172,7 @@ class CLI : CliktCommand() {
               (below) distribute this compressed file to all executors.
             */
             val vcfFilenamesDF = aggHeader.vcfFilenamesDF(spark)
-            val (variantCount, variantsDbLocalFilename) = collectAllVariantsDb(
+            val (variantCount, variantsDbLocalFilename, variantsDbCRC32C) = collectAllVariantsDb(
                 aggHeader.contigId,
                 vcfFilenamesDF,
                 filterRids,
@@ -189,7 +190,11 @@ class CLI : CliktCommand() {
             logger.info("variants DB compressed: ${variantsDbFileSize.pretty()} bytes")
 
             // broadcast the variants database to the same temp filename on each executor
-            val variantsDbCopies = 1 + broadcastLargeFile(vcfFilenamesDF, variantsDbLocalFilename)
+            val variantsDbCopies = 1 + broadcastLargeFile(
+                vcfFilenamesDF,
+                variantsDbLocalFilename,
+                checkCRC32C = variantsDbCRC32C
+            )
             logger.info("variants DB broadcast: ${variantsDbCopies.pretty()} copies")
             // if HDFS --tmp-dir supplied, also copy to HDFS where it can be accessed by any
             // executors that come online after the broadcast
@@ -203,25 +208,34 @@ class CLI : CliktCommand() {
             }
 
             // perform joint-calling
+            logger.info("genotyping...")
             val pvcfHeaderMetaLines = listOf(
                 "vcfGLuer_version=${getProjectVersion()}",
                 "vcfGLuer_config=$cfg"
             )
-            val (pvcfHeader, pvcfLines) = jointCall(
-                logger, cfg.joint, spark, aggHeader,
-                variantCount, variantsDbLocalFilename, variantsDbSharedFilename,
-                vcfFilenamesDF, pvcfHeaderMetaLines, pvcfRecordBytes
+            val (pvcfHeader, pvcfLineCount, pvcfLines) = jointCall(
+                cfg.joint,
+                spark,
+                aggHeader,
+                variantsDbLocalFilename,
+                variantsDbSharedFilename,
+                variantsDbCRC32C,
+                vcfFilenamesDF,
+                pvcfHeaderMetaLines
             )
+            check(pvcfLineCount == variantCount.toLong())
+            logger.info("writing ${pvcfLineCount.pretty()} pVCF lines...")
 
-            // write pVCF lines (in BGZF parts)
-            pvcfLines.saveAsTextFile(pvcfDir, BGZFCodec::class.java)
-            logger.info("pVCF bytes: ${pvcfRecordBytes.sum().pretty()}")
-
-            // reorganize part files
-            reorgJointFiles(spark, pvcfDir, aggHeader)
-
-            // write output VCF header & BGZF EOF marker
-            writeHeaderAndEOF(pvcfHeader, pvcfDir)
+            // write output pVCF files
+            writeJointFiles(
+                logger,
+                aggHeader.contigs,
+                readSplitBed(aggHeader.contigId, splitBed),
+                pvcfHeader,
+                pvcfLines,
+                pvcfDir,
+                variantCount
+            )
         }
     }
 }
@@ -235,26 +249,6 @@ fun getProjectVersion(): String {
     return props.getProperty("version")
 }
 
-fun writeHeaderAndEOF(headerText: String, dir: String) {
-    val fs = getFileSystem(dir)
-
-    fs.create(Path(dir, "00HEADER.bgz"), true).use {
-        BGZFOutputStream(it).use {
-            java.io.OutputStreamWriter(it, "UTF-8").use {
-                it.write(headerText)
-            }
-        }
-    }
-
-    fs.create(Path(dir, ".wip.zzEOF.bgz"), true).use {
-        it.write(htsjdk.samtools.util.BlockCompressedStreamConstants.EMPTY_GZIP_BLOCK)
-    }
-    check(
-        fs.rename(Path(dir, ".wip.zzEOF.bgz"), Path(dir, "zzEOF.bgz")),
-        { "unable to finalize $dir/zzEOF.bgz" }
-    )
-}
-
 /**
  * Given a filename local to the driver, broadcast it to all executors (with at least one partition
  * of someDataset) saved to the same local filename, which must not yet exist on any of them.
@@ -266,7 +260,8 @@ fun writeHeaderAndEOF(headerText: String, dir: String) {
 fun <T> broadcastLargeFile(
     someDataset: Dataset<T>,
     filename: String,
-    chunkSize: Int = 1073741824
+    chunkSize: Int = 1073741824,
+    checkCRC32C: Long? = null
 ): Int {
     val sc = someDataset.sparkSession().sparkContext
     val jsc = JavaSparkContext(sc)
@@ -293,8 +288,14 @@ fun <T> broadcastLargeFile(
         ForeachPartitionFunction<T> {
             val localCopy = File(filename)
             if (localCopy.createNewFile()) {
-                concatFiles(chunkFilenames, filename, chunkSize)
+                getFileSystem(filename).concatNaive(
+                    Path(filename),
+                    chunkFilenames.map { Path(it) }.toTypedArray()
+                )
                 check(localCopy.length() == fileSize)
+                checkCRC32C?.let {
+                    check(fileCRC32C(filename) == it)
+                }
                 chunkFilenames.forEach { File(it).delete() }
                 copies.add(1L)
             }

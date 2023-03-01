@@ -21,18 +21,26 @@ fun getFileSystem(path: String): FileSystem {
 }
 
 /**
- * Recursively list a [HDFS] directory, as a Sequence
+ * Naive implementation of FileSystem.concat
+ *
+ * We use this because many of the concrete FileSystem implementations leave concat unsupported or
+ * impose tricky restrictions (e.g. see hadoop's FSDirConcatOp.java)
  */
-fun FileSystem.listSequence(
-    path: String,
-    recursive: Boolean
-): Sequence<org.apache.hadoop.fs.LocatedFileStatus> {
-    val it = getFileSystem(path).listFiles(Path(path), recursive)
-    return sequence {
-        while (it.hasNext()) {
-            yield(it.next())
+fun FileSystem.concatNaive(
+    dst: Path,
+    src: Array<Path>
+) {
+    var totalFileSize = 0L
+    var bytesWritten = 0L
+    this.create(dst, true).use { outfile ->
+        src.forEach {
+            totalFileSize += this.getFileStatus(it).getLen()
+            this.open(it).use {
+                bytesWritten += it.transferTo(outfile)
+            }
         }
     }
+    check(bytesWritten == totalFileSize)
 }
 
 /**
@@ -79,25 +87,6 @@ fun readFileChunks(filename: String, chunkSize: Int): Sequence<ByteArray> {
 
                 check(chunk <= todo)
                 todo -= chunk
-            }
-        }
-    }
-}
-
-/**
- * Concatenate several local files into dest
- */
-fun concatFiles(src: List<String>, dest: String, chunkSize: Int = 1048576) {
-    File(dest).outputStream().use { destOut ->
-        val buf = ByteArray(chunkSize)
-        src.forEach { srcFilename ->
-            val srcFile = File(srcFilename)
-            check(srcFile.isFile())
-            srcFile.inputStream().use { srcIn ->
-                var n: Int
-                while (srcIn.read(buf).also { n = it } >= 0) {
-                    destOut.write(buf, 0, n)
-                }
             }
         }
     }

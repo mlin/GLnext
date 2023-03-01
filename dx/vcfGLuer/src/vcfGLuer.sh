@@ -44,6 +44,10 @@ main() {
     if [[ -n ${filter_contigs:-} ]]; then
         filter_contigs_arg="--filter-contigs $filter_contigs"
     fi
+    split_bed_arg=""
+    if [[ -n ${split_bed:-} ]]; then
+        split_bed_arg="--split-bed $(find ./in/split_bed -type f)"
+    fi
     dx-spark-submit --log-level WARN --collect-logs \
         --conf spark.driver.defaultJavaOptions="$all_java_options" \
         --conf spark.executor.defaultJavaOptions="$all_java_options" \
@@ -64,13 +68,11 @@ main() {
         --conf spark.sql.adaptive.coalescePartitions.parallelismFirst=false \
         $HDFS_RETRY_CONF \
         --name vcfGLuer vcfGLuer-*.jar \
-        --manifest --tmp-dir hdfs:///tmp --config $config $filter_bed_arg $filter_contigs_arg \
-        vcfGLuer_in.hdfs.manifest hdfs:///vcfGLuer/out \
+        --manifest --tmp-dir hdfs:///tmp --config $config \
+        $filter_bed_arg $filter_contigs_arg $split_bed_arg \
+        vcfGLuer_in.hdfs.manifest "hdfs:///vcfGLuer/out/$output_name" \
         || true
-    $HADOOP_HOME/bin/hadoop fs -ls /vcfGLuer/out > ls.txt
-    head -n 100 ls.txt
-    wc -l ls.txt
-    $HADOOP_HOME/bin/hadoop fs -get /vcfGLuer/out/zzEOF.bgz .
+    $HADOOP_HOME/bin/hadoop fs -get "/vcfGLuer/out/$output_name/_SUCCESS" .
 
     # upload pVCF parts from hdfs to dnanexus
     rm -f job_output.json

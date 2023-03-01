@@ -1,16 +1,12 @@
 package net.mlin.vcfGLuer.joint
 import java.io.File
 import java.io.Serializable
-import kotlin.math.pow
 import kotlin.text.StringBuilder
 import net.mlin.vcfGLuer.data.*
 import net.mlin.vcfGLuer.util.*
 import org.apache.hadoop.fs.Path
-import org.apache.log4j.Logger
-import org.apache.spark.api.java.JavaRDD
 import org.apache.spark.api.java.JavaSparkContext
 import org.apache.spark.api.java.function.FlatMapFunction
-import org.apache.spark.api.java.function.Function
 import org.apache.spark.api.java.function.MapFunction
 import org.apache.spark.api.java.function.MapGroupsFunction
 import org.apache.spark.sql.Dataset
@@ -21,7 +17,6 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.types.DataTypes
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.util.LongAccumulator
 import org.jetbrains.kotlinx.spark.api.*
 import org.xerial.snappy.Snappy
 
@@ -39,21 +34,19 @@ data class JointConfig(
 ) : Serializable
 
 /**
- * From local databases of variants & VCF records, generate pVCF header and sorted RDD of the pVCF
- * lines
+ * From local databases of variants & VCF records, generate pVCF header, pVCF line count, and
+ * sorted DataFrame of Snappy-compressed pVCF lines
  */
 fun jointCall(
-    logger: Logger,
     cfg: JointConfig,
     spark: SparkSession,
     aggHeader: AggVcfHeader,
-    variantCount: Int,
     variantsDbLocalFilename: String,
     variantsDbSharedFilename: String?,
+    variantsDbCRC32C: Long,
     vcfFilenamesDF: Dataset<Row>,
-    pvcfHeaderMetaLines: List<String> = emptyList(),
-    pvcfRecordBytes: LongAccumulator? = null
-): Pair<String, JavaRDD<String>> {
+    pvcfHeaderMetaLines: List<String> = emptyList()
+): Triple<String, Long, Dataset<Row>> {
     // broadcast supporting data for joint calling; using JavaSparkContext to sidestep
     // kotlin-spark-api overrides
     val jsc = JavaSparkContext(spark.sparkContext)
@@ -63,7 +56,7 @@ fun jointCall(
     // make big DataFrame of pVCF genotype entries: (variantId, sampleId, pvcfEntry)
     val entriesDF = vcfFilenamesDF.flatMap(
         FlatMapFunction<Row, Row> {
-            ensureVariantsDb(variantsDbLocalFilename, variantsDbSharedFilename)
+            ensureVariantsDb(variantsDbLocalFilename, variantsDbSharedFilename, variantsDbCRC32C)
             generateJointCalls(
                 cfg,
                 aggHeaderB.value,
@@ -89,7 +82,11 @@ fun jointCall(
         .mapGroups(
             MapGroupsFunction<Int, Row, Row> { variantId, variantEntries ->
                 // look up this variant in the broadcast database file (using pooled resources...)
-                ensureVariantsDb(variantsDbLocalFilename, variantsDbSharedFilename)
+                ensureVariantsDb(
+                    variantsDbLocalFilename,
+                    variantsDbSharedFilename,
+                    variantsDbCRC32C
+                )
                 val variant = ExitStack().use { cleanup ->
                     val variants = cleanup.add(
                         GenomicSQLiteReadOnlyPool.get(variantsDbLocalFilename).getConnection()
@@ -110,41 +107,32 @@ fun jointCall(
                     variant,
                     variantEntries
                 )
-                RowFactory.create(variantId, snappyLine)
+                RowFactory.create(
+                    variantId,
+                    variant.range.rid,
+                    variant.range.beg,
+                    variant.range.end,
+                    snappyLine
+                )
             },
             RowEncoder.apply(
                 StructType()
                     .add("variantId", DataTypes.IntegerType, false)
+                    .add("rid", DataTypes.ShortType, false)
+                    .add("beg", DataTypes.IntegerType, false)
+                    .add("end", DataTypes.IntegerType, false)
                     .add("snappyLine", DataTypes.BinaryType, false)
             )
             // persist before sorting: https://stackoverflow.com/a/56310076
         ).persist(org.apache.spark.storage.StorageLevel.DISK_ONLY())
-    // Perform a count() to force pvcfLinesDF, ensuring it registers as an SQL query in the history
-    // server before next dropping to RDD. This provides useful diagnostic info that would
-    // otherwise go missing. The log message also provides a progress marker.
-    val pvcfLineCount = pvcfLinesDF.count()
-    logger.info("sorting & writing ${pvcfLineCount.pretty()} pVCF lines...")
-    check(pvcfLineCount == variantCount.toLong())
+        .sort("variantId").persist(org.apache.spark.storage.StorageLevel.DISK_ONLY())
 
-    // sort pVCF rows by variantId and return the decompressed text of each line
+    // Perform a count() to force pvcfLinesDF, ensuring it registers as an SQL query in the history
+    // server before subsequent steps that will drop to RDD. This provides useful diagnostic info
+    // that would otherwise go missing at RDD level.
+    val pvcfLineCount = pvcfLinesDF.count()
     val pvcfHeader = jointVcfHeader(cfg, aggHeader, pvcfHeaderMetaLines, fieldsGenB.value)
-    return pvcfHeader to pvcfLinesDF
-        .toJavaRDD()
-        .sortBy(
-            Function<Row, Int> { it.getAs<Int>(0) },
-            true,
-            // Coalesce to fewer partitions now that the data size has been reduced, to output a
-            // smaller number of reasonably-sized pVCF part files.
-            // This is why we've dropped down to RDD -- Dataset.orderBy() doesn't provide direct
-            // control of the output partitioning.
-            jsc.defaultParallelism().toDouble().pow(3.0 / 4.0).toInt()
-        ).map(
-            Function<Row, String> { row ->
-                val ans = String(Snappy.uncompress(row.getAs<ByteArray>(1)))
-                pvcfRecordBytes?.let { it.add(ans.length + 1L) }
-                ans
-            }
-        )
+    return Triple(pvcfHeader, pvcfLineCount, pvcfLinesDF)
 }
 
 /**
@@ -153,7 +141,8 @@ fun jointCall(
  */
 fun ensureVariantsDb(
     variantsDbLocalFilename: String,
-    variantsDbSharedFilename: String?
+    variantsDbSharedFilename: String?,
+    variantsDbCRC32C: Long
 ) {
     val FAILSAFE_ITERATIONS = 1800
     variantsDbSharedFilename?.let { dfn ->
@@ -170,6 +159,7 @@ fun ensureVariantsDb(
                     Path(variantsDbSharedFilename),
                     Path(localWip.toString())
                 )
+                check(fileCRC32C(localWip.toString()) == variantsDbCRC32C)
                 localWip.renameTo(local)
                 check(local.isFile())
             }
@@ -253,8 +243,8 @@ class GenotypingContext(
 }
 
 /**
- * Collate variant & VCF record sequences (both range-sorted), producing the VariantCallingContext
- * for each variant with the overlapping VCF records (if any).
+ * Collate variant & VCF record sequences (both range-sorted), producing the GenotypingContext for
+ * each variant with the overlapping VCF records (if any).
  *
  * The streaming algorithm assumes that the variants aren't too large and the VCF records aren't
  * too overlapping. These assumptions match up with small-variant gVCF inputs, of course.

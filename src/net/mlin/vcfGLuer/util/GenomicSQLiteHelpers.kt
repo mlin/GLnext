@@ -32,7 +32,8 @@ fun getGenomicSQLiteReadOnlyConfigJSON(threads: Int = 2): String {
     return """{
             "threads": $threads,
             "page_cache_MiB": 256,
-            "immutable": true
+            "immutable": true,
+            "vfs_log": 2
         }"""
 }
 

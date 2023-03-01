@@ -93,7 +93,7 @@ fun collectAllVariantsDb(
     onlyCalled: Boolean = false,
     vcfRecordCount: LongAccumulator? = null,
     vcfRecordBytes: LongAccumulator? = null
-): Pair<Int, String> {
+): Triple<Int, String, Long> {
     val tempFile = File.createTempFile("vcfGLuerVariants.", ".db")
     val tempFilename = tempFile.absolutePath
     tempFile.delete()
@@ -144,5 +144,5 @@ fun collectAllVariantsDb(
     val crcFile = File(tempFile.getParent(), "vcfGLuerVariants.$crc.db")
     tempFile.renameTo(crcFile)
 
-    return variantId to crcFile.absolutePath
+    return Triple(variantId, crcFile.absolutePath, crc)
 }

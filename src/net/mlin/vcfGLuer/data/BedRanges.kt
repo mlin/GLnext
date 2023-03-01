@@ -7,47 +7,49 @@ import net.mlin.iitj.IntegerIntervalTree
  */
 class BedRanges : java.io.Serializable {
     private val iit: Array<IntegerIntervalTree>
-    val count: Int
+    private val totalCounts: Array<Int> // cumulative interval count, for id offset
 
-    constructor(contigId: Map<String, Short>, bed: java.io.Reader) {
-        val ranges = Array<MutableList<Pair<Int, Int>>>(contigId.size) { mutableListOf() }
-
-        bed.useLines {
-                lines ->
-            lines.forEach {
-                val tsv = it.splitToSequence('\t').take(3).toList().toTypedArray()
-                check(tsv.size == 3, { "[BED] invalid line: $it" })
-                val rid = contigId.get(tsv[0])
-                check(rid != null, { "[BED] unknown chromosome: ${tsv[0]}" })
-                val beg = tsv[1].toInt()
-                val end = tsv[2].toInt()
-                check(end >= beg, { "[BED] invalid range: $it" })
-                ranges[rid.toInt()].add(beg to end)
-            }
+    constructor(contigId: Map<String, Short>, ranges: Iterator<GRange>) {
+        val rangesByRid = Array<MutableList<Pair<Int, Int>>>(contigId.size) { mutableListOf() }
+        ranges.forEach {
+            check(it.beg >= 1 && it.beg <= it.end)
+            rangesByRid[it.rid.toInt()].add(it.beg to it.end)
         }
 
         var counter = 0
-        iit = ranges.map {
+        val totCounts = mutableListOf(0)
+        iit = rangesByRid.map {
                 ridRanges ->
             val builder = IntegerIntervalTree.Builder()
             ridRanges
                 .sortedWith(compareBy({ it.first }, { it.second }))
                 .forEach {
-                    builder.add(it.first, it.second)
+                    builder.add(it.first - 1, it.second)
                     counter++
                 }
             check(builder.isSorted())
+            totCounts.add(counter)
             builder.build()
         }.toTypedArray()
-        count = counter
+        totalCounts = totCounts.toTypedArray()
     }
 
-    public val size get() = count
+    constructor(contigId: Map<String, Short>, bed: java.io.Reader) :
+        this(contigId, parseBed(contigId, bed).iterator()) {}
+
+    public val size get() = totalCounts[iit.size]
 
     public fun hasOverlapping(query: GRange): Boolean {
         // nb: interval trees are zero-based & half-open (as in BED)
         //     GRange is one-based & closed
         return iit[query.rid.toInt()].queryOverlapExists(query.beg - 1, query.end)
+    }
+
+    public fun queryOverlapping(query: GRange): List<IntegerIntervalTree.QueryResult> {
+        val ridi = query.rid.toInt()
+        return iit[ridi].queryOverlap(query.beg - 1, query.end).map {
+            IntegerIntervalTree.QueryResult(it.beg + 1, it.end, it.id + totalCounts[ridi])
+        }
     }
 
     public fun hasContaining(query: GRange): Boolean {
@@ -61,5 +63,22 @@ class BedRanges : java.io.Serializable {
             }
         })
         return ans
+    }
+}
+
+fun parseBed(contigId: Map<String, Short>, bed: java.io.Reader): Sequence<GRange> {
+    return sequence {
+        bed.useLines { lines ->
+            lines.forEach {
+                val tsv = it.splitToSequence('\t').take(3).toList().toTypedArray()
+                check(tsv.size == 3, { "[BED] invalid line: $it" })
+                val rid = contigId.get(tsv[0])
+                check(rid != null, { "[BED] unknown chromosome: ${tsv[0]}" })
+                val beg = tsv[1].toInt()
+                val end = tsv[2].toInt()
+                check(end >= beg, { "[BED] invalid range: $it" })
+                yield(GRange(rid, beg + 1, end))
+            }
+        }
     }
 }
