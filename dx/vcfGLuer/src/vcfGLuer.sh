@@ -72,7 +72,6 @@ main() {
         $filter_bed_arg $filter_contigs_arg $split_bed_arg \
         vcfGLuer_in.hdfs.manifest "hdfs:///vcfGLuer/out/$output_name" \
         || true
-    dx upload --destination "$DX_PROJECT_CONTEXT_ID:/" /tmp/vcfGLuerVariants.*.db
     $HADOOP_HOME/bin/hadoop fs -get "/vcfGLuer/out/$output_name/_SUCCESS" .
 
     # upload pVCF parts from hdfs to dnanexus

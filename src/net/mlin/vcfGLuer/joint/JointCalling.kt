@@ -88,21 +88,16 @@ fun jointCall(
                     variantsDbCRC32C
                 )
                 val variant = ExitStack().use { cleanup ->
-                    try {
-                        val variants = cleanup.add(
-                            GenomicSQLiteReadOnlyPool.get(variantsDbLocalFilename).getConnection()
-                        )
-                        val getVariant = cleanup.add(
-                            variants.prepareStatement("SELECT * from Variant WHERE variantId = ?")
-                        )
-                        getVariant.setInt(1, variantId)
-                        val rs = cleanup.add(getVariant.executeQuery())
-                        check(rs.next())
-                        Variant(rs)
-                    } catch (exc: org.sqlite.SQLiteException) {
-                        check(fileCRC32C(variantsDbLocalFilename) == variantsDbCRC32C)
-                        throw exc
-                    }
+                    val variants = cleanup.add(
+                        GenomicSQLiteReadOnlyPool.get(variantsDbLocalFilename).getConnection()
+                    )
+                    val getVariant = cleanup.add(
+                        variants.prepareStatement("SELECT * from Variant WHERE variantId = ?")
+                    )
+                    getVariant.setInt(1, variantId)
+                    val rs = cleanup.add(getVariant.executeQuery())
+                    check(rs.next())
+                    Variant(rs)
                 }
                 // assemble the entries into the pVCF line
                 val snappyLine = assembleJointLine(
