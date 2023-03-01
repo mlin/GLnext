@@ -92,7 +92,7 @@
         <dependency>
             <groupId>net.mlin</groupId>
             <artifactId>genomicsqlite-jdbc</artifactId>
-            <version>v0.9.3</version>
+            <version>v0.9.4</version>
         </dependency>
     </dependencies>
 
