@@ -48,7 +48,7 @@ main() {
     if [[ -n ${split_bed:-} ]]; then
         split_bed_arg="--split-bed $(find ./in/split_bed -type f)"
     fi
-    dx-spark-submit --log-level WARN --collect-logs \
+    dx-spark-submit --log-level WARN \
         --conf spark.driver.defaultJavaOptions="$all_java_options" \
         --conf spark.executor.defaultJavaOptions="$all_java_options" \
         --conf spark.executor.memory=72g \
@@ -74,6 +74,10 @@ main() {
         || true
     $HADOOP_HOME/bin/hadoop fs -get "/vcfGLuer/out/$output_name/_SUCCESS" .
 
+    # ensure at least 5 minutes pass after Spark job completion, to guarantee all workers upload
+    # their logs
+    sleep 300 & log_sleep_pid=$!
+
     # upload pVCF parts from hdfs to dnanexus
     rm -f job_output.json
     dx-spark-submit --log-level WARN \
@@ -84,4 +88,6 @@ main() {
     if ! [[ -f job_output.json ]]; then
         exit 1
     fi
+
+    wait $log_sleep_pid
 }
