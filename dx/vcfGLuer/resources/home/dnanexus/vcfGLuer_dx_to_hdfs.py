@@ -10,6 +10,11 @@ import time
 import dxpy
 import pyspark
 
+multiply = os.environ.get("_multiply", None)
+if multiply:
+    multiply = int(multiply)
+else:
+    multiply = 1
 # desired HDFS replication factor; perhaps higher than the dxspark apparent default of 2
 DFS_REPLICATION = 3
 
@@ -21,7 +26,7 @@ for fn in glob.glob("/home/dnanexus/in/vcf_manifest/*"):
             assert "file-" in line, "manifest should contain file-xxxx IDs, one ID per line"
             dxid_list.append(line.strip())
 
-print(f"copying {len(dxid_list)} dxfiles to hdfs:///vcfGLuer/in/", file=sys.stderr)
+print(f"copying {len(dxid_list)}*{multiply} dxfiles to hdfs:///vcfGLuer/in/", file=sys.stderr)
 spark = pyspark.sql.SparkSession.builder.getOrCreate()
 dxid_rdd = spark.sparkContext.parallelize(
     dxid_list, min(spark.sparkContext.defaultParallelism, 256)
@@ -52,27 +57,36 @@ def process_dxfile(dxid):
         )
         t1 = time.time()
         dx_time_accumulator += t1 - t0
-        proc = subprocess.run(
-            [
-                os.path.join(os.environ["HADOOP_HOME"], "bin", "hadoop"),
-                "fs",
-                "-D",
-                "dfs.replication=" + str(DFS_REPLICATION),
-                "-put",
-                "-f",
-                os.path.join(tmpdir, fn),
-                "/vcfGLuer/in/",
-            ],
-            universal_newlines=True,
-            stderr=subprocess.PIPE,
-        )
-        assert proc.returncode == 0, f"Failed copying {dxid} to HDFS:\n{proc.stderr}"
+        ans = []
+        for i in range(multiply):
+            prefix = f"_x{i+1}_" if multiply > 1 else ""
+            dest = f"/vcfGLuer/in/{prefix}{fn}"
+            hdfs_put(os.path.join(tmpdir, fn), dest)
+            ans.append("hdfs://" + dest)
         hdfs_time_accumulator += time.time() - t1
-        return "hdfs:///vcfGLuer/in/" + fn
+        return ans
 
 
-hdfs_paths = dxid_rdd.map(process_dxfile).collect()
-assert len(hdfs_paths) == len(dxid_list)
+def hdfs_put(local_path, hdfs_path):
+    proc = subprocess.run(
+        [
+            os.path.join(os.environ["HADOOP_HOME"], "bin", "hadoop"),
+            "fs",
+            "-D",
+            "dfs.replication=" + str(DFS_REPLICATION),
+            "-put",
+            "-f",
+            local_path,
+            hdfs_path,
+        ],
+        universal_newlines=True,
+        stderr=subprocess.PIPE,
+    )
+    assert proc.returncode == 0, f"Failed copying {local_path} to HDFS:\n{proc.stderr}"
+
+
+hdfs_paths = dxid_rdd.flatMap(process_dxfile).collect()
+assert len(hdfs_paths) == len(dxid_list) * multiply
 
 print(f"cumulative seconds downloading dxfiles: {dx_time_accumulator.value}", file=sys.stderr)
 print(f"cumulative seconds putting to HDFS: {hdfs_time_accumulator.value}", file=sys.stderr)

@@ -9,6 +9,7 @@ package net.mlin.vcfGLuer.data
 import java.io.Serializable
 import net.mlin.vcfGLuer.util.*
 import org.apache.hadoop.fs.FileSystem
+import org.apache.hadoop.fs.Path
 import org.apache.spark.api.java.JavaSparkContext
 import org.apache.spark.api.java.function.FlatMapFunction
 import org.apache.spark.api.java.function.Function
@@ -79,6 +80,10 @@ fun aggregateVcfHeaders(
 ): AggVcfHeader {
     val jsc = JavaSparkContext(spark.sparkContext)
     val exampleFilename = filenames.first()
+    // pattern for recognizing artifically-multiplied files (for scalability testing)
+    val multiplyPattern = System.getenv("_multiply")?.let {
+        if (!it.isEmpty()) Regex("^_x(\\d+)_.+") else null
+    }
 
     // read the headers of all VCFs, and group the filenames by common header
     data class _DigestedHeader(val filename: String, val headerDigest: String, val header: String) :
@@ -92,7 +97,12 @@ fun aggregateVcfHeaders(
                 val fs = getFileSystem(exampleFilename)
                 filenamesPart.asSequence().map {
                     val (headerDigest, header) = readVcfHeader(it, fs)
-                    _DigestedHeader(it, headerDigest, header)
+                    val headerDigest2 = headerDigest + (
+                        // give multiplied headers artificially distinct digests
+                        multiplyPattern?.find(Path(it).getName())
+                            ?.let { "_x${it.groupValues.get(1)}" } ?: ""
+                        )
+                    _DigestedHeader(it, headerDigest2, header)
                 }.iterator()
             }
         )
@@ -131,11 +141,16 @@ fun aggregateVcfHeaders(
                 val lastHeaderLine = it._2.header.trimEnd('\n').splitToSequence("\n").last()
                 require(lastHeaderLine.startsWith("#CHROM"))
                 val samples = lastHeaderLine.splitToSequence("\t").drop(9).toList()
+                val exemplarFilename = Path(it._2.filenames.first()).getName()
                 require(samples.toSet().size == samples.size, {
-                    val exemplarFilename = java.io.File(filenames.first()).getName()!!
                     "$exemplarFilename header has duplicate sample names"
                 })
-                _CallsetDetailsPre(callsetId, it._2.filenames, samples)
+                // put prefix on samples from artifically-multiplied files
+                val samples2 = multiplyPattern?.find(exemplarFilename)?.let {
+                        x ->
+                    samples.map { "_x${x.groupValues.get(1)}_$it" }
+                } ?: samples
+                _CallsetDetailsPre(callsetId, it._2.filenames, samples2)
             }
         ).collect().sortedBy { it.callsetId }
         val filenameToCallsetId = callsetsDetailsPre.flatMapIndexed {

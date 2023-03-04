@@ -72,11 +72,15 @@ main() {
         $filter_bed_arg $filter_contigs_arg $split_bed_arg \
         vcfGLuer_in.hdfs.manifest "hdfs:///vcfGLuer/out/$output_name" \
         || true
-    $HADOOP_HOME/bin/hadoop fs -get "/vcfGLuer/out/$output_name/_SUCCESS" .
 
     # ensure at least 5 minutes pass after Spark job completion, to guarantee all workers upload
     # their logs
     sleep 300 & log_sleep_pid=$!
+
+    # check for _SUCCESS sentinel output file
+    if ! $HADOOP_HOME/bin/hadoop fs -get "/vcfGLuer/out/$output_name/_SUCCESS" . ; then
+        exit 1
+    fi
 
     # upload pVCF parts from hdfs to dnanexus
     rm -f job_output.json

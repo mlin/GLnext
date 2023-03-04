@@ -55,6 +55,12 @@
       "class": "int",
       "default": 256,
       "help": "spark.default.parallelism (set at least the # cluster cores)"
+    },
+    {
+      "name": "_multiply",
+      "class": "int",
+      "optional": true,
+      "help": "artifically multiply input VCF files (for scalability testing)"
     }
   ],
   "outputSpec": [

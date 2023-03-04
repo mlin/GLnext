@@ -4,6 +4,7 @@ set -euxo pipefail
 
 echo "in prebootstrap.sh"
 
+# set default JVM to java 11 (installation of which is specified in dxapp.json)
 update-alternatives --set java /usr/lib/jvm/java-11-openjdk-amd64/bin/java
 
 # update hdfs-site.xml to increase dfs.datanode.max.transfer.threads

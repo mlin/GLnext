@@ -50,7 +50,8 @@ fi
 
 echo  "Collecting logs $ITER"
 if [ $COMPRESS -ne 0 ]; then
-  tar -czvf $NODE_NAME.tar.gz --exclude="*.jar" \
+  tar_code=0
+  tar -czvf $NODE_NAME.tar.gz --warning=no-file-changed --exclude="*.jar" \
     /cluster/logger/eventlogs \
     "$SPARK_LOG_DIR" \
     "$SPARK_WORK_DIR" \
@@ -58,7 +59,10 @@ if [ $COMPRESS -ne 0 ]; then
     ${ERROR_FILE} \
     ${OUT_FILE} \
     /cluster/dx-cluster.environment \
-    "$SPARK_CONF_DIR"
+    "$SPARK_CONF_DIR" || tar_code=$?
+  if (( tar_code != 0 )) && (( tar_code != 1 )); then
+    exit $tar_code
+  fi
   dx upload $NODE_NAME.tar.gz --destination "$DX_PROJECT_CONTEXT_ID:/$DEST/$ITER/"
 else
   dx upload -r \
