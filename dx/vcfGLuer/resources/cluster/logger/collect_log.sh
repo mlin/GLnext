@@ -51,7 +51,7 @@ fi
 echo  "Collecting logs $ITER"
 if [ $COMPRESS -ne 0 ]; then
   tar_code=0
-  tar_name="$NODE_NAME.$(hostname).tar.gz"
+  tar_name="$NODE_NAME.$(hostname -A | egrep -o 'ip[-0-9]+').tar.gz"
   tar -czvf "$tar_name" --warning=no-file-changed --exclude="*.jar" \
     /cluster/logger/eventlogs \
     "$SPARK_LOG_DIR" \

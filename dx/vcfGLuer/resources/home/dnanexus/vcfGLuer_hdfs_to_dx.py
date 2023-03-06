@@ -66,7 +66,10 @@ def process_part(hdfs_part):
         hdfs_time_accumulator += t1 - t0
 
         dxfile = dxpy.upload_local_file(
-            os.path.join(tmpdir, os.path.basename(hdfs_part)), folder=dxfolder, parents=True
+            os.path.join(tmpdir, os.path.basename(hdfs_part)),
+            folder=dxfolder,
+            parents=True,
+            write_buffer_size=1073741824,
         )
         dx_time_accumulator += time.time() - t1
         return dxfile.get_id()
