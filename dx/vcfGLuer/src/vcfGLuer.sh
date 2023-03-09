@@ -73,12 +73,12 @@ main() {
         vcfGLuer_in.hdfs.manifest "hdfs:///vcfGLuer/out/$output_name" \
         || true
 
-    # ensure at least 5 minutes pass after Spark job completion, to guarantee all workers upload
-    # their logs
-    sleep 300 & log_sleep_pid=$!
+    # Note: before exiting we'll sleep 5 minutes after Spark job completion to ensure delivery of
+    # all logs (see log_svc.sh).
 
     # check for _SUCCESS sentinel output file
     if ! $HADOOP_HOME/bin/hadoop fs -get "/vcfGLuer/out/$output_name/_SUCCESS" . ; then
+        sleep 300
         exit 1
     fi
 
@@ -89,9 +89,8 @@ main() {
         --conf spark.default.parallelism=$spark_default_parallelism \
         $HDFS_RETRY_CONF \
         vcfGLuer_hdfs_to_dx.py || true
+    sleep 300
     if ! [[ -f job_output.json ]]; then
         exit 1
     fi
-
-    wait $log_sleep_pid
 }
