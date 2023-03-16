@@ -112,7 +112,8 @@
             "type": "apachespark",
             "version": "3.2.0",
             "initialInstanceCount": 2,
-            "bootstrapScript":"src/bootstrap.sh"
+            "bootstrapScript":"src/bootstrap.sh",
+            "ports": "7337"
           }
         }
       }

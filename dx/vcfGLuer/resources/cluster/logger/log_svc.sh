@@ -36,7 +36,7 @@ done
 # Run the log collection after every interval seconds
 while true
 do
-    /bin/bash /cluster/logger/collect_log.sh $iterations $compress $folder
+    flock /cluster/logger/collect_log.sh /bin/bash /cluster/logger/collect_log.sh $iterations $compress $folder
     sleep $interval
     iterations=$(($iterations+1))
 done

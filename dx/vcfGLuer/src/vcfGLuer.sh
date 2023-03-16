@@ -32,6 +32,7 @@ main() {
     #   https://aws.amazon.com/blogs/big-data/best-practices-for-successfully-managing-memory-for-apache-spark-applications-on-amazon-emr/
     #   https://www.oracle.com/technical-resources/articles/java/g1gc.html
     #   https://databricks.com/blog/2015/05/28/tuning-java-garbage-collection-for-spark-applications.html
+    #   https://www.slideshare.net/databricks/tuning-apache-spark-for-largescale-workloads-gaoxiang-liu-and-sital-kedia
     all_java_options="\
     -Xss16m -XX:InitiatingHeapOccupancyPercent=35 -XX:MaxGCPauseMillis=1000 \
     -XX:+PrintFlagsFinal \
@@ -66,6 +67,20 @@ main() {
         --conf spark.sql.adaptive.coalescePartitions.enabled=true \
         --conf spark.sql.adaptive.coalescePartitions.initialPartitionNum=$spark_default_parallelism \
         --conf spark.sql.adaptive.coalescePartitions.parallelismFirst=false \
+        --conf spark.network.timeout=300s \
+        --conf spark.rpc.netty.dispatcher.numThreads=24 \
+        --conf spark.rpc.io.clientThreads=24 \
+        --conf spark.rpc.io.serverThreads=24 \
+        --conf spark.shuffle.io.clientThreads=24 \
+        --conf spark.shuffle.io.serverThreads=24 \
+        --conf spark.shuffle.io.maxRetries=8 \
+        --conf spark.shuffle.io.retryWait=10s \
+        --conf spark.shuffle.io.numConnectionsPerPeer=4 \
+        --conf spark.shuffle.io.backLog=4096 \
+        --conf spark.shuffle.file.buffer=1m \
+        --conf spark.unsafe.sorter.spill.reader.buffer.size=1m \
+        --conf spark.shuffle.service.enabled=false \
+        --conf spark.shuffle.service.index.cache.size=1g \
         $HDFS_RETRY_CONF \
         --name vcfGLuer vcfGLuer-*.jar \
         --manifest --tmp-dir hdfs:///tmp --config $config \
@@ -79,6 +94,7 @@ main() {
     # check for _SUCCESS sentinel output file
     if ! $HADOOP_HOME/bin/hadoop fs -get "/vcfGLuer/out/$output_name/_SUCCESS" . ; then
         sleep 300
+        flock -w 3600 /cluster/logger/collect_log.sh date
         exit 1
     fi
 
@@ -90,6 +106,7 @@ main() {
         $HDFS_RETRY_CONF \
         vcfGLuer_hdfs_to_dx.py || true
     sleep 300
+    flock -w 3600 /cluster/logger/collect_log.sh date
     if ! [[ -f job_output.json ]]; then
         exit 1
     fi
