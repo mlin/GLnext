@@ -5,8 +5,9 @@ export LC_ALL=C
 main() {
     set -euxo pipefail
 
-    cat $PRE_BOOTSTRAP_LOG || echo "no PRE_BOOTSTRAP_LOG"
+    cat "$PRE_BOOTSTRAP_LOG" || echo "no PRE_BOOTSTRAP_LOG"
     java -version
+    grep spark.shuffle.service.enabled /cluster/spark/conf/spark-defaults.conf | grep true
 
     dx-download-all-inputs
 
@@ -49,6 +50,7 @@ main() {
     if [[ -n ${split_bed:-} ]]; then
         split_bed_arg="--split-bed $(find ./in/split_bed -type f)"
     fi
+    # NOTE: other obscure spark tuning settings are set in prebootstrap.sh
     dx-spark-submit --log-level WARN \
         --conf spark.driver.defaultJavaOptions="$all_java_options" \
         --conf spark.executor.defaultJavaOptions="$all_java_options" \
@@ -67,20 +69,6 @@ main() {
         --conf spark.sql.adaptive.coalescePartitions.enabled=true \
         --conf spark.sql.adaptive.coalescePartitions.initialPartitionNum=$spark_default_parallelism \
         --conf spark.sql.adaptive.coalescePartitions.parallelismFirst=false \
-        --conf spark.network.timeout=300s \
-        --conf spark.rpc.netty.dispatcher.numThreads=24 \
-        --conf spark.rpc.io.clientThreads=24 \
-        --conf spark.rpc.io.serverThreads=24 \
-        --conf spark.shuffle.io.clientThreads=24 \
-        --conf spark.shuffle.io.serverThreads=24 \
-        --conf spark.shuffle.io.maxRetries=8 \
-        --conf spark.shuffle.io.retryWait=10s \
-        --conf spark.shuffle.io.numConnectionsPerPeer=4 \
-        --conf spark.shuffle.io.backLog=4096 \
-        --conf spark.shuffle.file.buffer=1m \
-        --conf spark.unsafe.sorter.spill.reader.buffer.size=1m \
-        --conf spark.shuffle.service.enabled=false \
-        --conf spark.shuffle.service.index.cache.size=1g \
         $HDFS_RETRY_CONF \
         --name vcfGLuer vcfGLuer-*.jar \
         --manifest --tmp-dir hdfs:///tmp --config $config \
