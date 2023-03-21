@@ -5,15 +5,20 @@ export LC_ALL=C
 main() {
     set -euxo pipefail
 
-    cat "$PRE_BOOTSTRAP_LOG" || echo "no PRE_BOOTSTRAP_LOG"
+    # Set exit trap to ensure complete log delivery (see log_svc.sh)
+    trap 'sleep 300 && flock -w 3600 /cluster/logger/collect_log.sh date' EXIT
+
+    # check JAR
     java -version
+    jar tf vcfGLuer-*.jar | grep vcfGLuer/SparkApp.class
+
+    # check spark conf in prebootstrap.sh
+    cat "$PRE_BOOTSTRAP_LOG" || echo "no PRE_BOOTSTRAP_LOG"
     grep spark.shuffle.service.enabled /cluster/spark/conf/spark-defaults.conf | grep true
 
-    dx-download-all-inputs
-
-    HDFS_RETRY_CONF='--conf spark.hadoop.dfs.client.retry.policy.enabled=true --conf spark.hadoop.dfs.client.retry.window.base=5000 --conf spark.hadoop.dfs.client.max.block.acquire.failures=5'
-
     # copy input gVCFs from dnanexus to hdfs
+    HDFS_RETRY_CONF='--conf spark.hadoop.dfs.client.retry.policy.enabled=true --conf spark.hadoop.dfs.client.retry.window.base=5000 --conf spark.hadoop.dfs.client.max.block.acquire.failures=5'
+    dx-download-all-inputs
     dx-spark-submit --log-level WARN \
         --conf spark.driver.maxResultSize=0 \
         --conf spark.default.parallelism=$spark_default_parallelism \
@@ -63,26 +68,20 @@ main() {
         --conf spark.speculation.multiplier=8 \
         --conf spark.speculation.quantile=0.98 \
         --conf spark.speculation.minTaskRuntime=30m \
-        --conf spark.default.parallelism=$spark_default_parallelism \
-        --conf spark.sql.shuffle.partitions=$spark_default_parallelism \
+        --conf spark.default.parallelism="$spark_default_parallelism" \
+        --conf spark.sql.shuffle.partitions="$spark_default_parallelism" \
         --conf spark.sql.adaptive.enabled=true \
         --conf spark.sql.adaptive.coalescePartitions.enabled=true \
-        --conf spark.sql.adaptive.coalescePartitions.initialPartitionNum=$spark_default_parallelism \
+        --conf spark.sql.adaptive.coalescePartitions.initialPartitionNum="$spark_default_parallelism" \
         --conf spark.sql.adaptive.coalescePartitions.parallelismFirst=false \
         $HDFS_RETRY_CONF \
         --name vcfGLuer vcfGLuer-*.jar \
-        --manifest --tmp-dir hdfs:///tmp --config $config \
+        --manifest --tmp-dir hdfs:///tmp --config "$config" \
         $filter_bed_arg $filter_contigs_arg $split_bed_arg \
         vcfGLuer_in.hdfs.manifest "hdfs:///vcfGLuer/out/$output_name" \
         || true
-
-    # Note: before exiting we'll sleep 5 minutes after Spark job completion to ensure delivery of
-    # all logs (see log_svc.sh).
-
     # check for _SUCCESS sentinel output file
-    if ! $HADOOP_HOME/bin/hadoop fs -get "/vcfGLuer/out/$output_name/_SUCCESS" . ; then
-        sleep 300
-        flock -w 3600 /cluster/logger/collect_log.sh date
+    if ! "$HADOOP_HOME/bin/hadoop" fs -get "/vcfGLuer/out/$output_name/_SUCCESS" . ; then
         exit 1
     fi
 
@@ -90,11 +89,9 @@ main() {
     rm -f job_output.json
     dx-spark-submit --log-level WARN \
         --conf spark.driver.maxResultSize=0 \
-        --conf spark.default.parallelism=$spark_default_parallelism \
+        --conf spark.default.parallelism="$spark_default_parallelism" \
         $HDFS_RETRY_CONF \
         vcfGLuer_hdfs_to_dx.py || true
-    sleep 300
-    flock -w 3600 /cluster/logger/collect_log.sh date
     if ! [[ -f job_output.json ]]; then
         exit 1
     fi
