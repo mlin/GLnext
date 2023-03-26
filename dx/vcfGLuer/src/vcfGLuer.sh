@@ -15,6 +15,7 @@ main() {
     # check spark conf in prebootstrap.sh
     cat "$PRE_BOOTSTRAP_LOG" || echo "no PRE_BOOTSTRAP_LOG"
     grep spark.shuffle.service.enabled /cluster/spark/conf/spark-defaults.conf | grep true
+    grep SPARK_DAEMON_MEMORY= /cluster/spark/conf/spark-env.sh
 
     # copy input gVCFs from dnanexus to hdfs
     HDFS_RETRY_CONF='--conf spark.hadoop.dfs.client.retry.policy.enabled=true --conf spark.hadoop.dfs.client.retry.window.base=5000 --conf spark.hadoop.dfs.client.max.block.acquire.failures=5'

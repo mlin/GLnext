@@ -11,7 +11,7 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <kotlin.version>1.6.21</kotlin.version>
+        <kotlin.version>1.8.10</kotlin.version>
         <kotlin.code.style>official</kotlin.code.style>
     </properties>
 
@@ -39,7 +39,7 @@
         <dependency> <!-- Kotlin Spark API dependency -->
             <groupId>org.jetbrains.kotlinx.spark</groupId>
             <artifactId>kotlin-spark-api_3.2.0_2.12</artifactId>
-            <version>1.2.2</version>
+            <version>1.2.3</version>
         </dependency>
         <dependency> <!-- Spark dependency -->
             <groupId>org.apache.spark</groupId>
@@ -49,19 +49,19 @@
         <dependency>
             <groupId>org.xerial.snappy</groupId>
             <artifactId>snappy-java</artifactId>
-            <version>1.1.8.4</version>
+            <version>1.1.9.1</version>
             <type>jar</type>
             <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>com.github.samtools</groupId>
             <artifactId>htsjdk</artifactId>
-            <version>2.24.1</version>
+            <version>3.0.5</version>
         </dependency>
         <dependency>
             <groupId>com.github.ajalt.clikt</groupId>
             <artifactId>clikt-jvm</artifactId>
-            <version>3.4.0</version>
+            <version>3.5.2</version>
         </dependency>
         <dependency>
             <groupId>com.sksamuel.hoplite</groupId>
@@ -87,7 +87,7 @@
         <dependency>
             <groupId>org.xerial</groupId>
             <artifactId>sqlite-jdbc</artifactId>
-            <version>3.41.0.0</version>
+            <version>3.41.2.1</version>
         </dependency>
         <dependency>
             <groupId>net.mlin</groupId>
