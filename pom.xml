@@ -184,6 +184,8 @@
                                 <arg value="no-wildcard-imports"/>
                                 <arg value="src/*.kt"/>
                                 <arg value="src/**/*.kt"/>
+                                <jvmarg value="--add-opens"/>
+                                <jvmarg value="java.base/java.lang=ALL-UNNAMED"/>
                             </java>
                         </target>
                         </configuration>
@@ -201,6 +203,8 @@
                                 <arg value="no-wildcard-imports"/>
                                 <arg value="src/*.kt"/>
                                 <arg value="src/**/*.kt"/>
+                                <jvmarg value="--add-opens"/>
+                                <jvmarg value="java.base/java.lang=ALL-UNNAMED"/>
                             </java>
                         </target>
                         </configuration>
@@ -211,7 +215,7 @@
                     <dependency>
                         <groupId>com.pinterest</groupId>
                         <artifactId>ktlint</artifactId>
-                        <version>0.48.0</version>
+                        <version>0.48.2</version>
                     </dependency>
                     <!-- additional 3rd party ruleset(s) can be specified here -->
                 </dependencies>

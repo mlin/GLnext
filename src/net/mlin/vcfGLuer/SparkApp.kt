@@ -13,12 +13,9 @@ import java.util.Properties
 import net.mlin.vcfGLuer.data.*
 import net.mlin.vcfGLuer.joint.*
 import net.mlin.vcfGLuer.util.*
-import org.apache.hadoop.fs.Path
 import org.apache.log4j.Level
 import org.apache.log4j.LogManager
 import org.apache.spark.api.java.JavaSparkContext
-import org.apache.spark.api.java.function.ForeachPartitionFunction
-import org.apache.spark.sql.Dataset
 import org.jetbrains.kotlinx.spark.api.*
 
 data class SparkConfig(val compressTempFiles: Boolean)
@@ -145,10 +142,11 @@ class CLI : CliktCommand() {
             logger.info("contigs: ${aggHeader.contigId.size.pretty()}")
 
             // load filter ranges BED, if any
+            val jsc = JavaSparkContext(spark.sparkContext)
             val filterRangesB = filterBed?.let {
                 val filterRanges = BedRanges(aggHeader.contigId, fileReaderDetectGz(it))
                 logger.info("BED filter ranges: ${filterRanges.size}")
-                JavaSparkContext(spark.sparkContext).broadcast(filterRanges)
+                jsc.broadcast(filterRanges)
             }
             val filterRids = filterContigs?.let {
                 it.split(",").map {
@@ -172,7 +170,7 @@ class CLI : CliktCommand() {
               (below) distribute this compressed file to all executors.
             */
             val vcfFilenamesDF = aggHeader.vcfFilenamesDF(spark)
-            val (variantCount, variantsDbLocalFilename, variantsDbCRC32C) = collectAllVariantsDb(
+            val (variantCount, variantsDbLocalFilename) = collectAllVariantsDb(
                 aggHeader.contigId,
                 vcfFilenamesDF,
                 filterRids,
@@ -181,6 +179,9 @@ class CLI : CliktCommand() {
                 vcfRecordCount,
                 vcfRecordBytes
             )
+            // broadcast the variants DB file to all executors
+            jsc.addFile(variantsDbLocalFilename)
+            val variantsDbSparkFile = File(variantsDbLocalFilename).name
 
             // report accumulators
             logger.info("input VCF records: ${vcfRecordCount.sum().pretty()}")
@@ -188,25 +189,6 @@ class CLI : CliktCommand() {
             logger.info("joint variants: ${variantCount.pretty()}")
             val variantsDbFileSize = File(variantsDbLocalFilename).length()
             logger.info("variants DB compressed: ${variantsDbFileSize.pretty()} bytes")
-
-            // TODO: use SparkFiles instead
-            // broadcast the variants database to the same temp filename on each executor
-            val variantsDbCopies = 1 + broadcastLargeFile(
-                vcfFilenamesDF,
-                variantsDbLocalFilename,
-                checkCRC32C = variantsDbCRC32C
-            )
-            logger.info("variants DB broadcast: ${variantsDbCopies.pretty()} copies")
-            // if HDFS --tmp-dir supplied, also copy to HDFS where it can be accessed by any
-            // executors that come online after the broadcast
-            val variantsDbSharedFilename = tmpDir?.let { ddn ->
-                val dfs = getFileSystem(ddn)
-                dfs.mkdirs(Path(ddn))
-                val ans = Path(ddn, File(variantsDbLocalFilename).getName())
-                dfs.copyFromLocalFile(Path(variantsDbLocalFilename), ans)
-                logger.info("variants DB also copied to: $ans")
-                ans.toString()
-            }
 
             // perform joint-calling
             logger.info("genotyping...")
@@ -218,9 +200,7 @@ class CLI : CliktCommand() {
                 cfg.joint,
                 spark,
                 aggHeader,
-                variantsDbLocalFilename,
-                variantsDbSharedFilename,
-                variantsDbCRC32C,
+                variantsDbSparkFile,
                 vcfFilenamesDF,
                 pvcfHeaderMetaLines
             )
@@ -248,60 +228,4 @@ fun getProjectVersion(): String {
             .getResourceAsStream("META-INF/maven/net.mlin/vcfGLuer/pom.properties")
     )
     return props.getProperty("version")
-}
-
-/**
- * Given a filename local to the driver, broadcast it to all executors (with at least one partition
- * of someDataset) saved to the same local filename, which must not yet exist on any of them.
- *
- * Leveraging Spark's TorrentBroadcast in this way should be less bottlenecked than going through
- * HDFS. However, large files require multiple rounds since broadcast is constrained by ByteArray
- * max size.
- */
-fun <T> broadcastLargeFile(
-    someDataset: Dataset<T>,
-    filename: String,
-    chunkSize: Int = 1073741824,
-    checkCRC32C: Long? = null
-): Int {
-    val sc = someDataset.sparkSession().sparkContext
-    val jsc = JavaSparkContext(sc)
-    var fileSize = 0L
-
-    val chunkFilenames = readFileChunks(filename, chunkSize).mapIndexed { chunkNum, chunk ->
-        val chunkFilename = filename + String.format(".chunk-%04d", chunkNum)
-        val chunkB = jsc.broadcast(chunk)
-        someDataset.foreachPartition(
-            ForeachPartitionFunction<T> {
-                val localChunk = File(chunkFilename)
-                if (localChunk.createNewFile()) {
-                    localChunk.writeBytes(chunkB.value)
-                }
-            }
-        )
-        chunkB.unpersist()
-        fileSize += chunk.size.toLong()
-        chunkFilename
-    }.toList()
-
-    val copies = sc.longAccumulator("broadcast copies of " + filename)
-    someDataset.foreachPartition(
-        ForeachPartitionFunction<T> {
-            val localCopy = File(filename)
-            if (localCopy.createNewFile()) {
-                getFileSystem(filename).concatNaive(
-                    Path(filename),
-                    chunkFilenames.map { Path(it) }.toTypedArray()
-                )
-                check(localCopy.length() == fileSize)
-                checkCRC32C?.let {
-                    check(fileCRC32C(filename) == it)
-                }
-                chunkFilenames.forEach { File(it).delete() }
-                copies.add(1L)
-            }
-        }
-    )
-
-    return copies.sum().toInt()
 }

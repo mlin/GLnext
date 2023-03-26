@@ -1,10 +1,9 @@
 package net.mlin.vcfGLuer.joint
-import java.io.File
 import java.io.Serializable
 import kotlin.text.StringBuilder
 import net.mlin.vcfGLuer.data.*
 import net.mlin.vcfGLuer.util.*
-import org.apache.hadoop.fs.Path
+import org.apache.spark.SparkFiles
 import org.apache.spark.api.java.JavaSparkContext
 import org.apache.spark.api.java.function.FlatMapFunction
 import org.apache.spark.api.java.function.MapFunction
@@ -41,9 +40,7 @@ fun jointCall(
     cfg: JointConfig,
     spark: SparkSession,
     aggHeader: AggVcfHeader,
-    variantsDbLocalFilename: String,
-    variantsDbSharedFilename: String?,
-    variantsDbCRC32C: Long,
+    variantsDbSparkFile: String,
     vcfFilenamesDF: Dataset<Row>,
     pvcfHeaderMetaLines: List<String> = emptyList()
 ): Triple<String, Long, Dataset<Row>> {
@@ -56,12 +53,11 @@ fun jointCall(
     // make big DataFrame of pVCF genotype entries: (variantId, sampleId, pvcfEntry)
     val entriesDF = vcfFilenamesDF.flatMap(
         FlatMapFunction<Row, Row> {
-            ensureVariantsDb(variantsDbLocalFilename, variantsDbSharedFilename, variantsDbCRC32C)
             generateJointCalls(
                 cfg,
                 aggHeaderB.value,
                 fieldsGenB.value,
-                variantsDbLocalFilename,
+                SparkFiles.get(variantsDbSparkFile),
                 it.getAs<Int>("callsetId"),
                 it.getAs<String>("vcfFilename")
             )
@@ -82,14 +78,11 @@ fun jointCall(
         .mapGroups(
             MapGroupsFunction<Int, Row, Row> { variantId, variantEntries ->
                 // look up this variant in the broadcast database file (using pooled resources...)
-                ensureVariantsDb(
-                    variantsDbLocalFilename,
-                    variantsDbSharedFilename,
-                    variantsDbCRC32C
-                )
                 val variant = ExitStack().use { cleanup ->
                     val variants = cleanup.add(
-                        GenomicSQLiteReadOnlyPool.get(variantsDbLocalFilename).getConnection()
+                        GenomicSQLiteReadOnlyPool
+                            .get(SparkFiles.get(variantsDbSparkFile))
+                            .getConnection()
                     )
                     val getVariant = cleanup.add(
                         variants.prepareStatement("SELECT * from Variant WHERE variantId = ?")
@@ -133,38 +126,6 @@ fun jointCall(
     val pvcfLineCount = pvcfLinesDF.count()
     val pvcfHeader = jointVcfHeader(cfg, aggHeader, pvcfHeaderMetaLines, fieldsGenB.value)
     return Triple(pvcfHeader, pvcfLineCount, pvcfLinesDF)
-}
-
-/**
- * If the local copy doesn't exist, copy it into place from the shared copy (if available).
- * This supports executors that came online late (after the broadcast).
- */
-fun ensureVariantsDb(
-    variantsDbLocalFilename: String,
-    variantsDbSharedFilename: String?,
-    variantsDbCRC32C: Long
-) {
-    val FAILSAFE_ITERATIONS = 1800
-    variantsDbSharedFilename?.let { dfn ->
-        val local = File(variantsDbLocalFilename)
-        val localWip = File(variantsDbLocalFilename + ".wip")
-        var iterations = 0
-        while (!local.isFile()) {
-            if (!localWip.createNewFile()) {
-                Thread.sleep(1000)
-                iterations += 1
-                check(iterations <= FAILSAFE_ITERATIONS)
-            } else {
-                getFileSystem(dfn).copyToLocalFile(
-                    Path(variantsDbSharedFilename),
-                    Path(localWip.toString())
-                )
-                check(fileCRC32C(localWip.toString()) == variantsDbCRC32C)
-                localWip.renameTo(local)
-                check(local.isFile())
-            }
-        }
-    }
 }
 
 /**
