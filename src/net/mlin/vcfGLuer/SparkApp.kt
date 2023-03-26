@@ -189,6 +189,7 @@ class CLI : CliktCommand() {
             val variantsDbFileSize = File(variantsDbLocalFilename).length()
             logger.info("variants DB compressed: ${variantsDbFileSize.pretty()} bytes")
 
+            // TODO: use SparkFiles instead
             // broadcast the variants database to the same temp filename on each executor
             val variantsDbCopies = 1 + broadcastLargeFile(
                 vcfFilenamesDF,

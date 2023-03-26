@@ -126,6 +126,7 @@ fun collectAllVariantsDb(
             vcfRecordBytes
         )
             .orderBy("rid", "beg", "end", "ref", "alt")
+            // TODO: cache before toLocalIterator()
             .toLocalIterator()
             .forEach { row ->
                 insert.setInt(1, variantId)

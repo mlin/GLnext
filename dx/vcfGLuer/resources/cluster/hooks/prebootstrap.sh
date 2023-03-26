@@ -32,7 +32,13 @@ spark.shuffle.file.buffer                     1m
 spark.unsafe.sorter.spill.reader.buffer.size  1m
 spark.shuffle.service.enabled                 true
 spark.shuffle.service.index.cache.size        1g
+spark.local.dir                               /tmp
 ' >> /cluster/spark/conf/spark-defaults.conf
 cat /cluster/spark/conf/spark-defaults.conf
+
+echo '
+SPARK_DAEMON_MEMORY=8g
+' >> /cluster/spark/conf/spark-env.sh
+cat /cluster/spark/conf/spark-env.sh
 
 echo "out prebootstrap.sh"
