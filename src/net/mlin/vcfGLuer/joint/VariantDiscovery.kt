@@ -116,7 +116,7 @@ fun collectAllVariantsDb(
             """
         )
         val insert = cleanup.add(dbc.prepareStatement("INSERT INTO Variant VALUES(?,?,?,?,?,?)"))
-        discoverAllVariants(
+        val allVariantsDF = discoverAllVariants(
             contigId,
             vcfPathsDF,
             filterRids,
@@ -126,7 +126,9 @@ fun collectAllVariantsDb(
             vcfRecordBytes
         )
             .orderBy("rid", "beg", "end", "ref", "alt")
-            // TODO: cache before toLocalIterator()
+            .cache()
+        allVariantsDF.count() // force materialization before toLocalIterator()
+        allVariantsDF
             .toLocalIterator()
             .forEach { row ->
                 insert.setInt(1, variantId)
