@@ -3,6 +3,7 @@ import java.io.File
 import net.mlin.vcfGLuer.data.*
 import net.mlin.vcfGLuer.util.*
 import org.apache.spark.api.java.function.FlatMapFunction
+import org.apache.spark.api.java.function.Function
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.Dataset
 import org.apache.spark.sql.Row
@@ -125,10 +126,23 @@ fun collectAllVariantsDb(
             vcfRecordCount,
             vcfRecordBytes
         )
-            .orderBy("rid", "beg", "end", "ref", "alt")
+        // Drop to RDD<Row>, sort, and cache before processing the variants on the driver.
+        // Using RDD.sortBy() allows us to control the partitioning, which is very important
+        // to reduce the overhead in serially processing each partition with toLocalIterator().
+        //
+        // Since we're going to collect the variants on the driver anyway, we can assume 10
+        // partitions will comfortably avoid any of them being too large for any executor.
+        //
+        // Ideally we'd just use Dataset<Row>.orderBy() and rely on AQE to make the partitioning
+        // reasonable, but AQE doesn't seem to work with cached data:
+        //   https://community.databricks.com/s/question/0D53f00001tDGYHCA4/spark-3-aqe-and-cache
+        // and the toLocalIterator() docs say it should be used on cached data.
+        val sortedVariantsRDD = allVariantsDF.toJavaRDD()
+            .sortBy(Function<Row, Variant> { row -> Variant(row) }, true, 10)
             .cache()
-        allVariantsDF.count() // force materialization before toLocalIterator()
-        allVariantsDF
+        sortedVariantsRDD.count() // force cache materialization before toLocalIterator()
+        check(sortedVariantsRDD.getNumPartitions() <= 10)
+        sortedVariantsRDD
             .toLocalIterator()
             .forEach { row ->
                 insert.setInt(1, variantId)

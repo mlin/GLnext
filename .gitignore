@@ -31,3 +31,5 @@ dependency-reduced-pom.xml
 
 .git-versioned-pom.xml
 build_run.sh
+
+gvcf_dv_1.3.0/
