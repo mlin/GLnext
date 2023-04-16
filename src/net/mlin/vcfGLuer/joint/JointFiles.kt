@@ -17,7 +17,7 @@ data class PartWritten(
     val partIndex: Int,
     var lineCount: Int,
     var byteCount: Long
-) : java.io.Serializable
+)
 
 // Write the sorted pVCF Dataset to an output p.vcf.gz file for each splitBed region
 fun writeJointFiles(

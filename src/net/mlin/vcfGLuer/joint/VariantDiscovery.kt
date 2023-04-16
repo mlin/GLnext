@@ -125,36 +125,42 @@ fun collectAllVariantsDb(
             onlyCalled,
             vcfRecordCount,
             vcfRecordBytes
-        )
-        // Drop to RDD<Row>, sort, and cache before processing the variants on the driver.
+        ).coalesce(64).persist(org.apache.spark.storage.StorageLevel.MEMORY_AND_DISK())
+        allVariantsDF.count()
+        // Drop to RDD<Variant>, sort, and cache before processing on the driver.
         // Using RDD.sortBy() allows us to control the partitioning, which is very important
         // to reduce the overhead in serially processing each partition with toLocalIterator().
         //
-        // Since we're going to collect the variants on the driver anyway, we can assume 10
-        // partitions will comfortably avoid any of them being too large for any executor.
+        // Since we intend to collect the variants on the driver anyway, we can assume 16
+        // partitions should avoid any of them being too large for any executor.
         //
         // Ideally we'd just use Dataset<Row>.orderBy() and rely on AQE to make the partitioning
-        // reasonable, but AQE doesn't seem to work with cached data:
+        // reasonable, but it seems that caching can trip up AQE:
         //   https://community.databricks.com/s/question/0D53f00001tDGYHCA4/spark-3-aqe-and-cache
         // and the toLocalIterator() docs say it should be used on cached data.
+        //
+        // (Similarly, above we explicitly coalesced the DF before caching+sorting.)
         val sortedVariantsRDD = allVariantsDF.toJavaRDD()
-            .sortBy(Function<Row, Variant> { row -> Variant(row) }, true, 10)
-            .cache()
+            .map(Function<Row, Variant> { row -> Variant(row) })
+            .sortBy(Function<Variant, Variant> { v -> v }, true, 16)
+            .persist(org.apache.spark.storage.StorageLevel.MEMORY_AND_DISK_SER())
         sortedVariantsRDD.count() // force cache materialization before toLocalIterator()
-        check(sortedVariantsRDD.getNumPartitions() <= 10)
+        check(sortedVariantsRDD.getNumPartitions() <= 16)
+        allVariantsDF.unpersist()
         sortedVariantsRDD
             .toLocalIterator()
-            .forEach { row ->
+            .forEach { vt ->
                 insert.setInt(1, variantId)
-                insert.setInt(2, row.getAs<Int>("rid"))
-                insert.setInt(3, row.getAs<Int>("beg") - 1)
-                insert.setInt(4, row.getAs<Int>("end"))
-                insert.setString(5, row.getAs<String>("ref"))
-                insert.setString(6, row.getAs<String>("alt"))
+                insert.setInt(2, vt.range.rid.toInt())
+                insert.setInt(3, vt.range.beg - 1)
+                insert.setInt(4, vt.range.end)
+                insert.setString(5, vt.ref)
+                insert.setString(6, vt.alt)
                 insert.executeUpdate()
                 variantId += 1
             }
         dbc.commit()
+        sortedVariantsRDD.unpersist()
     }
 
     val crc = fileCRC32C(tempFilename)

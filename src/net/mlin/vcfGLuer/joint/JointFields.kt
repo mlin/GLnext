@@ -169,7 +169,7 @@ class OL_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFie
     }
 }
 
-class JointFieldsGenerator(val cfg: JointConfig, aggHeader: AggVcfHeader) : Serializable {
+class JointFieldsGenerator(val cfg: JointConfig, aggHeader: AggVcfHeader) {
     val formatImpls: List<JointFormatFieldImpl>
 
     init {

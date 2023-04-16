@@ -68,29 +68,41 @@ class CLI : CliktCommand() {
             effInputFiles = inputFiles.flatMap { java.io.File(it).readLines() }.distinct()
         }
 
-        var sparkBuilder = org.apache.spark.sql.SparkSession.builder()
-            .appName("vcfGLuer")
-            .config("io.compression.codecs", compressionCodecsWithBGZF())
+        val sparkConf = org.apache.spark.SparkConf()
+        sparkConf.let {
+            it.setAppName("vcfGLuer")
+            it.set("io.compression.codecs", compressionCodecsWithBGZF())
             // Disabling some Spark optimizations that seem to cause OOM problems for our usage
             // patterns.
-            .config("spark.sql.join.preferSortMergeJoin", true)
-            .config("spark.sql.autoBroadcastJoinThreshold", -1)
-            .config("spark.sql.execution.useObjectHashAggregateExec", false)
-            .config("spark.sql.inMemoryColumnarStorage.compressed", false)
+            it.set("spark.sql.join.preferSortMergeJoin", "true")
+            it.set("spark.sql.autoBroadcastJoinThreshold", "-1")
+            it.set("spark.sql.execution.useObjectHashAggregateExec", "false")
+            it.set("spark.sql.inMemoryColumnarStorage.compressed", "false")
+
+            // set up Kryo; mostly we use Dataset<Row> but we do use JavaRDD for certain
+            // specific purposes e.g. when we need low-level control of shuffle partitioning.
+            it.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+            it.set("spark.kryo.registrationRequired", "true")
+            it.set("spark.kryoserializer.buffer.max", "2047m")
+            // https://github.com/EsotericSoftware/kryo#reference-limits
+            it.set("spark.kryo.referenceTracking", "false")
+            it.registerKryoClasses(_classesForKryo)
+        }
 
         if (cfg.spark.compressTempFiles) {
-            sparkBuilder = sparkBuilder
-                .config("spark.shuffle.compress", true)
-                .config("spark.shuffle.spill.compress", true)
-                .config("spark.broadcast.compress", true)
-                .config("spark.checkpoint.compress", true)
-                .config("spark.rdd.compress", true)
-                .config("spark.io.compression.codec", "lz4")
-                .config("spark.io.compression.lz4.blockSize", "262144")
+            sparkConf.let {
+                it.set("spark.shuffle.compress", "true")
+                it.set("spark.shuffle.spill.compress", "true")
+                it.set("spark.broadcast.compress", "true")
+                it.set("spark.checkpoint.compress", "true")
+                it.set("spark.rdd.compress", "true")
+                it.set("spark.io.compression.codec", "lz4")
+                it.set("spark.io.compression.lz4.blockSize", "262144")
+            }
         }
 
         withSpark(
-            builder = sparkBuilder,
+            sparkConf = sparkConf,
             logLevel = SparkLogLevel.ERROR
         ) {
             val defaultParallelism = spark.sparkContext.defaultParallelism()
@@ -229,3 +241,58 @@ fun getProjectVersion(): String {
     )
     return props.getProperty("version")
 }
+
+val _classesForKryo = arrayOf(
+    java.lang.Comparable::class.java,
+    java.util.ArrayList::class.java,
+    java.util.LinkedHashMap::class.java,
+    kotlin.Pair::class.java,
+    ByteArray::class.java,
+    Array<ByteArray>::class.java,
+    IntArray::class.java,
+    Array<IntArray>::class.java,
+    Class.forName("java.util.Collections\$SingletonList"),
+    Class.forName("scala.reflect.ClassTag\$GenericClassTag"),
+    org.apache.spark.sql.catalyst.InternalRow::class.java,
+    Array<org.apache.spark.sql.catalyst.InternalRow>::class.java,
+    org.apache.spark.sql.catalyst.expressions.GenericInternalRow::class.java,
+    /*
+     WARNING: non-Internal Row classes MUST NOT appear here; they're extremely inefficient to
+     serialize, even with Kryo, because they ship the schema with every row. Instead of registering
+     them here, we must make Spark use its SerDe framework on them instead.
+     `git blame` this comment to find a commit including an example workaround.
+     */
+    org.apache.spark.sql.types.StructType::class.java,
+    org.apache.spark.sql.types.StructField::class.java,
+    Array<org.apache.spark.sql.types.StructField>::class.java,
+    Class.forName("org.apache.spark.sql.types.ShortType$"),
+    Class.forName("org.apache.spark.sql.types.IntegerType$"),
+    Class.forName("org.apache.spark.sql.types.StringType$"),
+    org.apache.spark.sql.types.Metadata::class.java,
+    org.apache.spark.sql.execution.columnar.DefaultCachedBatch::class.java,
+    org.apache.hadoop.fs.Path::class.java,
+    _DigestedHeader::class.java,
+    _FilenamesWithSameHeader::class.java,
+    _CallsetDetailsPre::class.java,
+    CallsetDetails::class.java,
+    Array<CallsetDetails>::class.java,
+    VcfHeaderLine::class.java,
+    VcfHeaderLineKind::class.java,
+    AggVcfHeader::class.java,
+    GRange::class.java,
+    BedRanges::class.java,
+    net.mlin.iitj.IntegerIntervalTree::class.java,
+    Array<net.mlin.iitj.IntegerIntervalTree>::class.java,
+    Variant::class.java,
+    JointConfig::class.java,
+    JointGenotypeConfig::class.java,
+    JointFieldsGenerator::class.java,
+    JointFormatField::class.java,
+    GT_OverlapMode::class.java,
+    CopiedFormatField::class.java,
+    DP_FormatField::class.java,
+    AD_FormatField::class.java,
+    PL_FormatField::class.java,
+    OL_FormatField::class.java,
+    PartWritten::class.java
+)

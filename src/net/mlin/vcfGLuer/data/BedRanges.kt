@@ -7,7 +7,7 @@ import net.mlin.iitj.IntegerIntervalTree
  */
 class BedRanges : java.io.Serializable {
     private val iit: Array<IntegerIntervalTree>
-    private val totalCounts: Array<Int> // cumulative interval count, for id offset
+    private val totalCounts: IntArray // cumulative interval count, for id offset
 
     constructor(contigId: Map<String, Short>, ranges: Iterator<GRange>) {
         val rangesByRid = Array<MutableList<Pair<Int, Int>>>(contigId.size) { mutableListOf() }
@@ -31,7 +31,7 @@ class BedRanges : java.io.Serializable {
             totCounts.add(counter)
             builder.build()
         }.toTypedArray()
-        totalCounts = totCounts.toTypedArray()
+        totalCounts = totCounts.toIntArray()
     }
 
     constructor(contigId: Map<String, Short>, bed: java.io.Reader) :

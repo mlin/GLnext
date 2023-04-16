@@ -11,7 +11,7 @@ import org.apache.spark.sql.types.StructType
  * Elementary variant
  */
 data class Variant(val range: GRange, val ref: String, val alt: String) :
-    Comparable<Variant>, java.io.Serializable {
+    Comparable<Variant> {
     constructor(row: Row) :
         this(
             GRange(

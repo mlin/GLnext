@@ -6,7 +6,6 @@
  * identifier(s) on the #CHROM line) comprise one callset.
  */
 package net.mlin.vcfGLuer.data
-import java.io.Serializable
 import net.mlin.vcfGLuer.util.*
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
@@ -24,14 +23,14 @@ import org.jetbrains.kotlinx.spark.api.*
 /**
  * VCF header contig/FILTER/INFO/FORMAT lines
  */
-enum class VcfHeaderLineKind : Serializable { FILTER, INFO, FORMAT, CONTIG }
+enum class VcfHeaderLineKind { FILTER, INFO, FORMAT, CONTIG }
 data class VcfHeaderLine(
     val kind: VcfHeaderLineKind,
     val id: String,
     val lineText: String,
     val ord: Int = -1
 ) :
-    Serializable, Comparable<VcfHeaderLine> {
+    Comparable<VcfHeaderLine> {
     override fun compareTo(other: VcfHeaderLine) = compareValuesBy(
         this,
         other,
@@ -47,8 +46,7 @@ typealias VcfHeaderLineIndex = Map<Pair<VcfHeaderLineKind, String>, VcfHeaderLin
  * Details specific to one callset: for each sample in the original callset, its index in the
  * aggregated sample list
  */
-data class CallsetDetails(val callsetFilenames: List<String>, val callsetSamples: IntArray) :
-    Serializable
+data class CallsetDetails(val callsetFilenames: List<String>, val callsetSamples: IntArray)
 
 /**
  * Meta header aggregated from all input VCF files (header lines deduplicated & checked for
@@ -68,7 +66,16 @@ data class AggVcfHeader(
     val filenameCallsetId: Map<String, Int>,
     // Info about each logical callset
     val callsetsDetails: Array<CallsetDetails>
-) : Serializable
+)
+
+// intermediates used within aggregateVcfHeaders (Kryo-serializable)
+data class _DigestedHeader(val filename: String, val headerDigest: String, val header: String)
+data class _FilenamesWithSameHeader(val header: String, val filenames: List<String>)
+data class _CallsetDetailsPre(
+    val callsetId: Int,
+    val filenames: List<String>,
+    val samples: List<String>
+)
 
 /**
  * Use Spark to load all VCF headers and aggregate them
@@ -86,11 +93,7 @@ fun aggregateVcfHeaders(
     }
 
     // read the headers of all VCFs, and group the filenames by common header
-    data class _DigestedHeader(val filename: String, val headerDigest: String, val header: String) :
-        Serializable
-    data class _FilenamesWithSameHeader(val header: String, val filenames: List<String>) :
-        Serializable
-    val filenamesByHeader = jsc.parallelize(filenames)
+    val filenamesByHeader = jsc.parallelizeEvenly(filenames)
         .mapPartitions(
             FlatMapFunction<Iterator<String>, _DigestedHeader> {
                     filenamesPart ->
@@ -129,11 +132,6 @@ fun aggregateVcfHeaders(
         )
 
         // collect CallsetDetails (precursor)
-        data class _CallsetDetailsPre(
-            val callsetId: Int,
-            val filenames: List<String>,
-            val samples: List<String>
-        ) : Serializable
         val callsetsDetailsPre = filenamesByHeader.map(
             Function<scala.Tuple2<String, _FilenamesWithSameHeader>, _CallsetDetailsPre> {
                 val callsetId = digestToCallsetId.value.get(it._1)!!
@@ -369,10 +367,10 @@ class HtsJdkLineIteratorImpl(val inner: Iterator<String>) : htsjdk.tribble.reade
 fun AggVcfHeader.vcfFilenamesDF(spark: SparkSession): Dataset<Row> {
     return spark.createDataFrame(
         JavaSparkContext(spark.sparkContext).parallelizeEvenly(
-            this.filenameCallsetId.map { (filename, callsetId) ->
-                RowFactory.create(filename, callsetId)
-            }
-        ),
+            this.filenameCallsetId.toList()
+        ).map { (filename, callsetId) ->
+            RowFactory.create(filename, callsetId)
+        },
         StructType()
             .add("vcfFilename", DataTypes.StringType, false)
             .add("callsetId", DataTypes.IntegerType, false)
