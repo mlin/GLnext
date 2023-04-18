@@ -48,11 +48,14 @@ if [ "$DX_CLUSTER_NODE_ID" -eq 0 ]; then
   /cluster/hadoop/bin/hdfs dfs -copyToLocal /eventlogs /cluster/logger/
 fi
 
+# WARNING: SparkContext.addFile copies the file into $SPARK_WORK_DIR which is being collected
+# below! Using --exclude case-by-case for now (and only in COMPRESS mode).
+
 echo  "Collecting logs $ITER"
 if [ $COMPRESS -ne 0 ]; then
   tar_code=0
   tar_name="$NODE_NAME.$DX_CLUSTER_HOSTNAME.tar.gz"
-  tar -czvf "$tar_name" --warning=no-file-changed --exclude="*.jar" \
+  tar -czvf "$tar_name" --warning=no-file-changed --exclude='*.jar' --exclude='*.db' \
     /cluster/logger/eventlogs \
     "$SPARK_LOG_DIR" \
     "$SPARK_WORK_DIR" \
