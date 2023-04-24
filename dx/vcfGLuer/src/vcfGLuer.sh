@@ -58,11 +58,12 @@ main() {
     fi
     # NOTE: other obscure spark tuning settings are set in prebootstrap.sh
     dx-spark-submit --log-level WARN \
+        --executor-cores 10 \
         --conf spark.driver.defaultJavaOptions="$all_java_options" \
         --conf spark.executor.defaultJavaOptions="$all_java_options" \
-        --conf spark.executor.memory=72g \
-        --conf spark.memory.fraction=0.7 \
-        --conf spark.memory.storageFraction=0.3 \
+        --conf spark.executor.memory=88g \
+        --conf spark.memory.fraction=0.75 \
+        --conf spark.memory.storageFraction=0.3333 \
         --conf spark.driver.maxResultSize=0 \
         --conf spark.task.maxFailures=3 \
         --conf spark.stage.maxConsecutiveAttempts=2 \

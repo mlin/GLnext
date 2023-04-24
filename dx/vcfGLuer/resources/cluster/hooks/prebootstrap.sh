@@ -19,19 +19,20 @@ find / -name spark-defaults.conf -type f || true
 echo '
 
 spark.network.timeout                         300s
-spark.rpc.netty.dispatcher.numThreads         24
-spark.rpc.io.clientThreads                    24
-spark.rpc.io.serverThreads                    24
-spark.shuffle.io.clientThreads                24
-spark.shuffle.io.serverThreads                24
+spark.executor.heartbeatInterval              60s
+spark.rpc.netty.dispatcher.numThreads         8
+spark.rpc.io.clientThreads                    8
+spark.rpc.io.serverThreads                    16
+spark.shuffle.io.clientThreads                8
+spark.shuffle.io.serverThreads                16
 spark.shuffle.io.maxRetries                   8
 spark.shuffle.io.retryWait                    10s
-spark.shuffle.io.numConnectionsPerPeer        4
+spark.shuffle.io.numConnectionsPerPeer        1
 spark.shuffle.io.backLog                      4096
 spark.shuffle.file.buffer                     1m
 spark.unsafe.sorter.spill.reader.buffer.size  1m
 spark.shuffle.service.enabled                 true
-spark.shuffle.service.index.cache.size        1g
+spark.shuffle.service.index.cache.size        2047m
 spark.local.dir                               /tmp
 ' >> /cluster/spark/conf/spark-defaults.conf
 cat /cluster/spark/conf/spark-defaults.conf
