@@ -29,7 +29,7 @@ for fn in glob.glob("/home/dnanexus/in/vcf_manifest/*"):
 print(f"copying {len(dxid_list)}*{multiply} dxfiles to hdfs:///vcfGLuer/in/", file=sys.stderr)
 spark = pyspark.sql.SparkSession.builder.getOrCreate()
 dxid_rdd = spark.sparkContext.parallelize(
-    dxid_list, min(spark.sparkContext.defaultParallelism, 256)
+    dxid_list, min(spark.sparkContext.defaultParallelism, 1024)
 )
 subprocess.run("$HADOOP_HOME/bin/hadoop fs -mkdir -p /vcfGLuer/in", shell=True, check=True)
 

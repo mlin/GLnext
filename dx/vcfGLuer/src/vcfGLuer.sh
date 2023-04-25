@@ -40,6 +40,7 @@ main() {
     #   https://www.oracle.com/technical-resources/articles/java/g1gc.html
     #   https://databricks.com/blog/2015/05/28/tuning-java-garbage-collection-for-spark-applications.html
     #   https://www.slideshare.net/databricks/tuning-apache-spark-for-largescale-workloads-gaoxiang-liu-and-sital-kedia
+    #   https://aws.amazon.com/blogs/big-data/spark-enhancements-for-elasticity-and-resiliency-on-amazon-emr/
     all_java_options="\
     -Xss16m -XX:InitiatingHeapOccupancyPercent=35 -XX:MaxGCPauseMillis=1000 \
     -XX:+PrintFlagsFinal \
@@ -61,12 +62,12 @@ main() {
         --executor-cores 10 \
         --conf spark.driver.defaultJavaOptions="$all_java_options" \
         --conf spark.executor.defaultJavaOptions="$all_java_options" \
-        --conf spark.executor.memory=88g \
+        --conf spark.executor.memory=84g \
         --conf spark.memory.fraction=0.75 \
         --conf spark.memory.storageFraction=0.3333 \
         --conf spark.driver.maxResultSize=0 \
         --conf spark.task.maxFailures=3 \
-        --conf spark.stage.maxConsecutiveAttempts=2 \
+        --conf spark.stage.maxConsecutiveAttempts=4 \
         --conf spark.speculation=true \
         --conf spark.speculation.interval=1m \
         --conf spark.speculation.multiplier=8 \
