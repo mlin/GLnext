@@ -20,14 +20,8 @@ echo '
 
 spark.network.timeout                         300s
 spark.executor.heartbeatInterval              60s
-spark.rpc.netty.dispatcher.numThreads         8
-spark.rpc.io.clientThreads                    8
-spark.rpc.io.serverThreads                    16
-spark.shuffle.io.clientThreads                8
-spark.shuffle.io.serverThreads                16
 spark.shuffle.io.maxRetries                   8
 spark.shuffle.io.retryWait                    10s
-spark.shuffle.io.numConnectionsPerPeer        1
 spark.shuffle.io.backLog                      4096
 spark.shuffle.file.buffer                     1m
 spark.unsafe.sorter.spill.reader.buffer.size  1m
