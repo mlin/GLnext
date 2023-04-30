@@ -40,7 +40,7 @@ else
 fi
 
 DEST="/$FOLDER/$DX_JOB_ID/$NODE_NAME"
-dx mkdir -p "$DX_PROJECT_CONTEXT_ID:/$DEST/$ITER"
+dx mkdir -p "$DX_PROJECT_CONTEXT_ID:/$DEST"
 mkdir -p /cluster/logger/eventlogs
 
 if [ "$DX_CLUSTER_NODE_ID" -eq 0 ]; then
@@ -52,39 +52,28 @@ fi
 # below! Using --exclude case-by-case for now (and only in COMPRESS mode).
 
 echo  "Collecting logs $ITER"
-if [ $COMPRESS -ne 0 ]; then
-  tar_code=0
-  tar_name="$NODE_NAME.$DX_CLUSTER_HOSTNAME.tar.gz"
-  tar -czvf "$tar_name" --warning=no-file-changed --exclude='*.jar' --exclude='*.db' \
-    /cluster/logger/eventlogs \
-    "$SPARK_LOG_DIR" \
-    "$SPARK_WORK_DIR" \
-    "$HADOOP_LOG_DIR" \
-    ${ERROR_FILE} \
-    ${OUT_FILE} \
-    /cluster/dx-cluster.environment \
-    "$SPARK_CONF_DIR" || tar_code=$?
-  if (( tar_code != 0 )) && (( tar_code != 1 )); then
-    exit $tar_code
-  fi
-  dx upload "$tar_name" --destination "$DX_PROJECT_CONTEXT_ID:/$DEST/$ITER/"
-else
-  dx upload -r \
-    /cluster/logger/eventlogs \
-    "$SPARK_LOG_DIR" \
-    "$SPARK_WORK_DIR" \
-    "$HADOOP_LOG_DIR" \
-    ${ERROR_FILE} \
-    ${OUT_FILE} \
-    /cluster/dx-cluster.environment \
-    "$SPARK_CONF_DIR" \
-    --destination "$DX_PROJECT_CONTEXT_ID:/$DEST/$ITER"
+tar_code=0
+tar_name="$NODE_NAME.$DX_CLUSTER_HOSTNAME.$ITER.tar.gz"
+tar -czvf "$tar_name" --warning=no-file-changed --exclude='*.jar' --exclude='*.db' \
+  /cluster/logger/eventlogs \
+  "$SPARK_LOG_DIR" \
+  "$SPARK_WORK_DIR" \
+  "$HADOOP_LOG_DIR" \
+  ${ERROR_FILE} \
+  ${OUT_FILE} \
+  /cluster/logger/dstat.log \
+  /cluster/dx-cluster.environment \
+  "$SPARK_CONF_DIR" || tar_code=$?
+if (( tar_code != 0 )) && (( tar_code != 1 )); then
+  exit $tar_code
 fi
+dx upload "$tar_name" --destination "$DX_PROJECT_CONTEXT_ID:$DEST/"
 
 if [ $ITER -ne 0 ]; then
   # Clean up previous collection from project
   # shellcheck disable=SC2004
   PREV_ITER=$(($ITER-1))
-  dx rm -r "$DX_PROJECT_CONTEXT_ID:/$DEST/$PREV_ITER"
+  prev_tar_name="$NODE_NAME.$DX_CLUSTER_HOSTNAME.$PREV_ITER.tar.gz"
+  dx rm -f "$DX_PROJECT_CONTEXT_ID:$DEST/$prev_tar_name" || true
 fi
 echo  "Done."

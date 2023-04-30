@@ -33,6 +33,9 @@ case $key in
 esac
 done
 
+# start utilization loggers
+dstat -tcmdn 60 > /cluster/logger/dstat.log &
+
 # Run the log collection after every interval seconds
 while true
 do

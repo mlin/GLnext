@@ -125,7 +125,7 @@ fun collectAllVariantsDb(
             onlyCalled,
             vcfRecordCount,
             vcfRecordBytes
-        ).coalesce(64).persist(org.apache.spark.storage.StorageLevel.MEMORY_AND_DISK())
+        ).coalesce(256).persist(org.apache.spark.storage.StorageLevel.MEMORY_AND_DISK())
         allVariantsDF.count()
         // Drop to RDD<Variant>, sort, and cache before processing on the driver.
         // Using RDD.sortBy() allows us to control the partitioning, which is very important
