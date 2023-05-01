@@ -15,8 +15,7 @@ if multiply:
     multiply = int(multiply)
 else:
     multiply = 1
-# desired HDFS replication factor; perhaps higher than the dxspark apparent default of 2
-DFS_REPLICATION = 3
+DFS_REPLICATION = 2
 
 # load gVCF manifest from in/vcf_manifest/*
 dxid_list = []
