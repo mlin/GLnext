@@ -392,6 +392,8 @@ fun genotypeOverlapSentinel(mode: GT_OverlapMode): Int? = when (mode) {
  * Frequently, we can reuse the "above" genotype & format fields: the context contains exactly one
  * reference band (and no other records), which is the same one we saw above and still contains the
  * focal variant.
+ *
+ * NOTE: this caching assumes that JointFields.kt doesn't fill in AD and PL based on ref bands.
  */
 class ReferenceBandCache {
     var cache: Pair<VcfRecordUnpacked, String>? = null
@@ -453,7 +455,20 @@ fun assembleJointLine(
     // fill entries into lineTsv
     entries.forEach {
         val sampleId = it.getAs<Int>("sampleId")
-        val entry = it.getAs<String>("entry")
+        var entry = it.getAs<String>("entry")
+        if (cfg.keepTrailingFields) {
+            // pad with :. for any missing trailing fields.
+            // we delay doing this until now to avoid inflating the amount of uncompressed data
+            // involved in the big shuffle.
+            val fields = entry.split(":").toMutableList()
+            val trailers = fieldsGen.formatFieldCount - (fields.size - 1/*GT*/)
+            if (trailers > 0) {
+                repeat(trailers) {
+                    fields.add(".")
+                }
+                entry = fields.joinToString(":")
+            }
+        }
         val col = VcfColumn.FIRST_SAMPLE.ordinal + sampleId
         require(
             lineTsv[col] == ".",
