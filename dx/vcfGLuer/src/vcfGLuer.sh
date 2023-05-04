@@ -68,7 +68,7 @@ main() {
         --conf spark.reducer.maxReqsInFlight=8 \
         --conf spark.driver.maxResultSize=0 \
         --conf spark.task.maxFailures=3 \
-        --conf spark.stage.maxConsecutiveAttempts=4 \
+        --conf spark.stage.maxConsecutiveAttempts=5 \
         --conf spark.speculation=true \
         --conf spark.speculation.interval=1m \
         --conf spark.speculation.multiplier=8 \

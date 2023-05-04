@@ -41,7 +41,7 @@ print(f"copying {len(hdfs_parts)} files to dx", file=sys.stderr)
 spark = pyspark.sql.SparkSession.builder.getOrCreate()
 hdfs_parts_rdd = spark.sparkContext.parallelize(
     hdfs_parts,
-    min(spark.sparkContext.defaultParallelism, 256),
+    min(spark.sparkContext.defaultParallelism, 64),
 )
 
 dxfolder = "/" + output_name

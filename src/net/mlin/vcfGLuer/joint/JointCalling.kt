@@ -157,24 +157,26 @@ fun generateJointCalls(
             }
         }
         scanVcfRecords(aggHeader.contigId, vcfFilename).use { records ->
+            val callsetSamples = aggHeader.callsetsDetails[callsetId].callsetSamples
+            val cache = Array(callsetSamples.size) { ReferenceBandCache() }
             // collate the two sequences to generate GenotypingContexts with each variant and the
             // overlapping VCF records
             generateGenotypingContexts(variants, records).forEach { ctx ->
-                aggHeader.callsetsDetails[callsetId].callsetSamples
-                    .forEachIndexed { sampleIndex, sampleId ->
-                        yield(
-                            Triple(
-                                ctx.variantId,
-                                sampleId,
-                                generateGenotypeAndFormatFields(
-                                    cfg,
-                                    fieldsGen,
-                                    ctx,
-                                    sampleIndex
-                                )
+                callsetSamples.forEachIndexed { sampleIndex, sampleId ->
+                    yield(
+                        Triple(
+                            ctx.variantId,
+                            sampleId,
+                            generateGenotypeAndFormatFields(
+                                cfg,
+                                fieldsGen,
+                                ctx,
+                                sampleIndex,
+                                cache
                             )
                         )
-                    }
+                    )
+                }
             }
         }
     }
@@ -192,7 +194,7 @@ class GenotypingContext(
     val otherVariantRecords: List<VcfRecordUnpacked>
 
     init {
-        callsetRecords.forEach { check(it.record.range.overlaps(variant.range)) }
+        // callsetRecords.forEach { check(it.record.range.overlaps(variant.range)) }
         // reference bands have no (non-symbolic) ALT alleles
         var parts = callsetRecords.partition { it.altVariants.filterNotNull().isEmpty() }
         referenceBands = parts.first
@@ -278,10 +280,11 @@ fun generateGenotypeAndFormatFields(
     cfg: JointConfig,
     fieldsGen: JointFieldsGenerator,
     data: GenotypingContext,
-    sampleIndex: Int
+    sampleIndex: Int,
+    cache: Array<ReferenceBandCache>
 ): String {
     if (data.variantRecords.isEmpty()) {
-        return generateRefGenotypeAndFormatFields(cfg, fieldsGen, data, sampleIndex)
+        return generateRefGenotypeAndFormatFields(cfg, fieldsGen, data, sampleIndex, cache)
     }
 
     val record = if (data.variantRecords.size == 1) {
@@ -334,19 +337,25 @@ fun generateRefGenotypeAndFormatFields(
     cfg: JointConfig,
     fieldsGen: JointFieldsGenerator,
     data: GenotypingContext,
-    sampleIndex: Int
+    sampleIndex: Int,
+    cache: Array<ReferenceBandCache>
 ): String {
+    cache[sampleIndex].query(data)?.let {
+        return it
+    }
     check(data.variantRecords.isEmpty())
 
     // count copies of other overlapping variants
     var otherOverlaps = countAltCopies(data.otherVariantRecords, sampleIndex)
     var refRanges = data.otherVariantRecords.map {
+        check(it.record.range.overlaps(data.variant.range))
         val gt = it.getDiploidGenotype(sampleIndex)
         if (gt.allele1 != null && gt.allele2 != null) it.record.range else null
     }.filterNotNull()
 
     // check if overlapping records and reference bands completely covered the focal variant range
     refRanges += data.referenceBands.filter {
+        check(it.record.range.overlaps(data.variant.range))
         val gt = it.getDiploidGenotype(sampleIndex)
         gt.allele1 == 0 && gt.allele2 == 0
     }.map { it.record.range }
@@ -357,7 +366,9 @@ fun generateRefGenotypeAndFormatFields(
     val allele2 = if (otherOverlaps > 1) genotypeOverlapSentinel(cfg.gt.overlapMode) else refCall
 
     val gtOut = DiploidGenotype(allele1, allele2, false).normalize()
-    return gtOut.toString() + fieldsGen.generateFormatFields(data, sampleIndex, gtOut, null)
+    val entry = gtOut.toString() + fieldsGen.generateFormatFields(data, sampleIndex, gtOut, null)
+    cache[sampleIndex].update(data, entry)
+    return entry
 }
 
 fun countAltCopies(records: List<VcfRecordUnpacked>, sampleIndex: Int): Int {
@@ -375,6 +386,42 @@ fun genotypeOverlapSentinel(mode: GT_OverlapMode): Int? = when (mode) {
     GT_OverlapMode.MISSING -> null
     GT_OverlapMode.SYMBOLIC -> 2
     GT_OverlapMode.REF -> 0
+}
+
+/**
+ * Frequently, we can reuse the "above" genotype & format fields: the context contains exactly one
+ * reference band (and no other records), which is the same one we saw above and still contains the
+ * focal variant.
+ */
+class ReferenceBandCache {
+    var cache: Pair<VcfRecordUnpacked, String>? = null
+
+    fun query(data: GenotypingContext): String? {
+        cache?.let {
+            if (data.variantRecords.isEmpty() && data.otherVariantRecords.isEmpty() &&
+                data.referenceBands.size == 1
+            ) {
+                val band = data.referenceBands.first()
+                if (band === it.first && band.record.range.contains(data.variant.range)) {
+                    return it.second
+                }
+            }
+            cache = null
+        }
+        return null
+    }
+
+    fun update(data: GenotypingContext, entry: String) {
+        cache = null
+        if (data.variantRecords.isEmpty() && data.otherVariantRecords.isEmpty() &&
+            data.referenceBands.size == 1
+        ) {
+            val band = data.referenceBands.first()
+            if (band.record.range.contains(data.variant.range)) {
+                cache = (band to entry)
+            }
+        }
+    }
 }
 
 /**
