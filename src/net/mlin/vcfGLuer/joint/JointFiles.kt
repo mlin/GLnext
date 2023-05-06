@@ -20,6 +20,7 @@ data class PartWritten(
 )
 
 // Write the sorted pVCF Dataset to an output p.vcf.gz file for each splitBed region
+// NOTE: pvcfLines will be unpersist-ed by side-effect
 fun writeJointFiles(
     logger: Logger,
     contigs: Array<String>,
@@ -56,6 +57,7 @@ fun writeJointFiles(
 
     // concatenate the parts from each splitBed region into a well-formed p.vcf.gz file
     val jsc = JavaSparkContext(pvcfLines.sparkSession().sparkContext())
+    pvcfLines.unpersist()
     val pvcfFiles = jsc.parallelizeEvenly(partsPerSplit).map { pvcfFileParts ->
         check(pvcfFileParts.sortedBy { it.path } == pvcfFileParts)
         val pvcfPath = Path(

@@ -16,6 +16,7 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.types.DataTypes
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.util.LongAccumulator
 import org.jetbrains.kotlinx.spark.api.*
 import org.xerial.snappy.Snappy
 
@@ -42,7 +43,9 @@ fun jointCall(
     aggHeader: AggVcfHeader,
     variantsDbSparkFile: String,
     vcfFilenamesDF: Dataset<Row>,
-    pvcfHeaderMetaLines: List<String> = emptyList()
+    pvcfHeaderMetaLines: List<String> = emptyList(),
+    refBandCacheQueries: LongAccumulator? = null,
+    refBandCacheHits: LongAccumulator? = null
 ): Triple<String, Long, Dataset<Row>> {
     // broadcast supporting data for joint calling; using JavaSparkContext to sidestep
     // kotlin-spark-api overrides
@@ -59,10 +62,10 @@ fun jointCall(
                 fieldsGenB.value,
                 SparkFiles.get(variantsDbSparkFile),
                 it.getAs<Int>("callsetId"),
-                it.getAs<String>("vcfFilename")
-            )
-                .map { RowFactory.create(it.first, it.second, it.third) }
-                .iterator()
+                it.getAs<String>("vcfFilename"),
+                refBandCacheQueries,
+                refBandCacheHits
+            ).iterator()
         },
         RowEncoder.apply(
             StructType()
@@ -118,14 +121,17 @@ fun jointCall(
             )
             // persist before sorting: https://stackoverflow.com/a/56310076
         ).persist(org.apache.spark.storage.StorageLevel.DISK_ONLY())
+
+    val pvcfLinesSortedDF = pvcfLinesDF
         .sort("variantId").persist(org.apache.spark.storage.StorageLevel.DISK_ONLY())
 
     // Perform a count() to force pvcfLinesDF, ensuring it registers as an SQL query in the history
     // server before subsequent steps that will drop to RDD. This provides useful diagnostic info
     // that would otherwise go missing at RDD level.
-    val pvcfLineCount = pvcfLinesDF.count()
+    val pvcfLineCount = pvcfLinesSortedDF.count()
+    pvcfLinesDF.unpersist()
     val pvcfHeader = jointVcfHeader(cfg, aggHeader, pvcfHeaderMetaLines, fieldsGenB.value)
-    return Triple(pvcfHeader, pvcfLineCount, pvcfLinesDF)
+    return Triple(pvcfHeader, pvcfLineCount, pvcfLinesSortedDF)
 }
 
 /**
@@ -137,8 +143,10 @@ fun generateJointCalls(
     fieldsGen: JointFieldsGenerator,
     variantsDbFilename: String,
     callsetId: Int,
-    vcfFilename: String
-): Sequence<Triple<Int, Int, String>> = // [(variantId, sampleId, pvcfEntry)]
+    vcfFilename: String,
+    refBandCacheQueries: LongAccumulator? = null,
+    refBandCacheHits: LongAccumulator? = null
+): Sequence<Row> = // [(variantId, sampleId, pvcfEntry)]
     sequence {
         // variants sequence (read from broadcast database file)
         val variants = sequence {
@@ -164,7 +172,7 @@ fun generateJointCalls(
             generateGenotypingContexts(variants, records).forEach { ctx ->
                 callsetSamples.forEachIndexed { sampleIndex, sampleId ->
                     yield(
-                        Triple(
+                        RowFactory.create(
                             ctx.variantId,
                             sampleId,
                             generateGenotypeAndFormatFields(
@@ -176,6 +184,16 @@ fun generateJointCalls(
                             )
                         )
                     )
+                }
+            }
+            refBandCacheQueries?.let { counter ->
+                cache.forEach {
+                    counter.add(it.queries)
+                }
+            }
+            refBandCacheHits?.let { counter ->
+                cache.forEach {
+                    counter.add(it.hits)
                 }
             }
         }
@@ -395,16 +413,18 @@ fun genotypeOverlapSentinel(mode: GT_OverlapMode): Int? = when (mode) {
  *
  * NOTE: this caching assumes that JointFields.kt doesn't fill in AD and PL based on ref bands.
  */
-class ReferenceBandCache {
+class ReferenceBandCache(var queries: Long = 0L, var hits: Long = 0L) {
     var cache: Pair<VcfRecordUnpacked, String>? = null
 
     fun query(data: GenotypingContext): String? {
+        queries += 1
         cache?.let {
             if (data.variantRecords.isEmpty() && data.otherVariantRecords.isEmpty() &&
                 data.referenceBands.size == 1
             ) {
                 val band = data.referenceBands.first()
                 if (band === it.first && band.record.range.contains(data.variant.range)) {
+                    hits += 1
                     return it.second
                 }
             }

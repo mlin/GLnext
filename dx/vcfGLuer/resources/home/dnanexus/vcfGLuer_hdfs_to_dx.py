@@ -41,7 +41,7 @@ print(f"copying {len(hdfs_parts)} files to dx", file=sys.stderr)
 spark = pyspark.sql.SparkSession.builder.getOrCreate()
 hdfs_parts_rdd = spark.sparkContext.parallelize(
     hdfs_parts,
-    min(spark.sparkContext.defaultParallelism, 64),
+    min(spark.sparkContext.defaultParallelism, 100),
 )
 
 dxfolder = "/" + output_name
@@ -69,7 +69,7 @@ def process_part(hdfs_part):
             os.path.join(tmpdir, os.path.basename(hdfs_part)),
             folder=dxfolder,
             parents=True,
-            write_buffer_size=1073741824,
+            write_buffer_size=268435456,
         )
         dx_time_accumulator += time.time() - t1
         return dxfile.get_id()

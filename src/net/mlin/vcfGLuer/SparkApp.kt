@@ -171,6 +171,8 @@ class CLI : CliktCommand() {
             // accumulators
             val vcfRecordCount = spark.sparkContext.longAccumulator("input VCF records")
             val vcfRecordBytes = spark.sparkContext.longAccumulator("input VCF bytes)")
+            val refBandCacheQueries = spark.sparkContext.longAccumulator("ref band cache queries")
+            val refBandCacheHits = spark.sparkContext.longAccumulator("ref band cache hits")
 
             /*
               Discover all variants & collect them to a database file local to the driver.
@@ -214,9 +216,13 @@ class CLI : CliktCommand() {
                 aggHeader,
                 variantsDbSparkFile,
                 vcfFilenamesDF,
-                pvcfHeaderMetaLines
+                pvcfHeaderMetaLines,
+                refBandCacheQueries,
+                refBandCacheHits
             )
             check(pvcfLineCount == variantCount.toLong())
+            logger.info("ref band cache queries: ${refBandCacheQueries.sum().pretty()}")
+            logger.info("ref band cache hits: ${refBandCacheHits.sum().pretty()}")
             logger.info("writing ${pvcfLineCount.pretty()} pVCF lines...")
 
             // write output pVCF files
