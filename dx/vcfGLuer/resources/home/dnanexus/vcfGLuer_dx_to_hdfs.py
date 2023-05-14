@@ -1,7 +1,9 @@
-# PySpark script to "localize" gVCF files from DNAnexus project to the apachespark cluster's HDFS
+# PySpark script to "localize" gVCF files from DNAnexus project to the apachespark
+# cluster's HDFS
 
 import glob
 import os
+import random
 import subprocess
 import sys
 import tempfile
@@ -22,15 +24,24 @@ dxid_list = []
 for fn in glob.glob("/home/dnanexus/in/vcf_manifest/*"):
     with open(fn) as infile:
         for line in infile:
-            assert "file-" in line, "manifest should contain file-xxxx IDs, one ID per line"
+            assert (
+                "file-" in line
+            ), "manifest should contain file-xxxx IDs, one ID per line"
             dxid_list.append(line.strip())
 
-print(f"copying {len(dxid_list)}*{multiply} dxfiles to hdfs:///vcfGLuer/in/", file=sys.stderr)
+print(
+    f"copying {len(dxid_list)}*{multiply} dxfiles to hdfs:///vcfGLuer/in/",
+    file=sys.stderr,
+)
 spark = pyspark.sql.SparkSession.builder.getOrCreate()
 dxid_rdd = spark.sparkContext.parallelize(
     dxid_list, min(spark.sparkContext.defaultParallelism, 1024)
 )
-subprocess.run("$HADOOP_HOME/bin/hadoop fs -mkdir -p /vcfGLuer/in", shell=True, check=True)
+hdfs_dirs = [f"/vcfGLuer/in/{subd:02x}" for subd in range(0xFF)]
+for hdfs_dir in hdfs_dirs:
+    subprocess.run(
+        "$HADOOP_HOME/bin/hadoop fs -mkdir -p " + hdfs_dir, shell=True, check=True
+    )
 
 dx_time_accumulator = spark.sparkContext.accumulator(0.0)
 hdfs_time_accumulator = spark.sparkContext.accumulator(0.0)
@@ -58,8 +69,9 @@ def process_dxfile(dxid):
         dx_time_accumulator += t1 - t0
         ans = []
         for i in range(multiply):
+            hdfs_dir = random.choice(hdfs_dirs)
             prefix = f"_x{i+1}_" if multiply > 1 else ""
-            dest = f"/vcfGLuer/in/{prefix}{fn}"
+            dest = f"{hdfs_dir}/{prefix}{fn}"
             hdfs_put(os.path.join(tmpdir, fn), dest)
             ans.append("hdfs://" + dest)
         hdfs_time_accumulator += time.time() - t1
@@ -87,8 +99,14 @@ def hdfs_put(local_path, hdfs_path):
 hdfs_paths = dxid_rdd.flatMap(process_dxfile).collect()
 assert len(hdfs_paths) == len(dxid_list) * multiply
 
-print(f"cumulative seconds downloading dxfiles: {dx_time_accumulator.value}", file=sys.stderr)
-print(f"cumulative seconds putting to HDFS: {hdfs_time_accumulator.value}", file=sys.stderr)
+print(
+    f"cumulative seconds downloading dxfiles: {dx_time_accumulator.value}",
+    file=sys.stderr,
+)
+print(
+    f"cumulative seconds putting to HDFS: {hdfs_time_accumulator.value}",
+    file=sys.stderr,
+)
 
 # write hdfs paths to vcfGLuer_in.hdfs.manifest
 manifest_out = "/home/dnanexus/vcfGLuer_in.hdfs.manifest"
