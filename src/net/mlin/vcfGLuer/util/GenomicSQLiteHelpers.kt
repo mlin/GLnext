@@ -59,6 +59,7 @@ class GenomicSQLiteReadOnlyPool {
         @Volatile
         private var INSTANCE: BasicDataSource? = null
         private var dbFilename: String? = null
+        private var consCount: Long = 0
 
         @Synchronized
         fun get(dbFilename: String): BasicDataSource {
@@ -83,7 +84,11 @@ class GenomicSQLiteReadOnlyPool {
             ans.setMaxIdle(ncpu)
             ans.setMaxTotal(ncpu)
             ans.setPoolPreparedStatements(true)
+            consCount += 1
             return ans
         }
+
+        @Synchronized
+        fun distinctConnections(): Long = consCount
     }
 }

@@ -69,8 +69,10 @@ class BedRanges : java.io.Serializable {
 fun parseBed(contigId: Map<String, Short>, bed: java.io.Reader): Sequence<GRange> {
     return sequence {
         bed.useLines { lines ->
+            // nb: BED is whitespace-delimited, not tab-delimited!
+            val delim = "\\s+".toRegex()
             lines.forEach {
-                val tsv = it.splitToSequence('\t').take(3).toList().toTypedArray()
+                val tsv = it.splitToSequence(delim).take(3).toList().toTypedArray()
                 check(tsv.size == 3, { "[BED] invalid line: $it" })
                 val rid = contigId.get(tsv[0])
                 check(rid != null, { "[BED] unknown chromosome: ${tsv[0]}" })

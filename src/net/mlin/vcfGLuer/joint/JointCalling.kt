@@ -87,6 +87,7 @@ fun jointCall(
                             .get(SparkFiles.get(variantsDbSparkFile))
                             .getConnection()
                     )
+                    check(GenomicSQLiteReadOnlyPool.distinctConnections() < 1000)
                     val getVariant = cleanup.add(
                         variants.prepareStatement("SELECT * from Variant WHERE variantId = ?")
                     )
@@ -196,6 +197,7 @@ fun generateJointCalls(
                     counter.add(it.hits)
                 }
             }
+            check(GenomicSQLiteReadOnlyPool.distinctConnections() < 1000)
         }
     }
 
