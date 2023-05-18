@@ -72,14 +72,16 @@ fun parseBed(contigId: Map<String, Short>, bed: java.io.Reader): Sequence<GRange
             // nb: BED is whitespace-delimited, not tab-delimited!
             val delim = "\\s+".toRegex()
             lines.forEach {
-                val tsv = it.splitToSequence(delim).take(3).toList().toTypedArray()
-                check(tsv.size == 3, { "[BED] invalid line: $it" })
-                val rid = contigId.get(tsv[0])
-                check(rid != null, { "[BED] unknown chromosome: ${tsv[0]}" })
-                val beg = tsv[1].toInt()
-                val end = tsv[2].toInt()
-                check(end >= beg, { "[BED] invalid range: $it" })
-                yield(GRange(rid, beg + 1, end))
+                if (it.trim().isNotEmpty() && !it.startsWith("#")) {
+                    val tsv = it.splitToSequence(delim).take(3).toList().toTypedArray()
+                    check(tsv.size == 3, { "[BED] invalid line: $it" })
+                    val rid = contigId.get(tsv[0])
+                    check(rid != null, { "[BED] unknown chromosome: ${tsv[0]}" })
+                    val beg = tsv[1].toInt()
+                    val end = tsv[2].toInt()
+                    check(end >= beg, { "[BED] invalid range: $it" })
+                    yield(GRange(rid, beg + 1, end))
+                }
             }
         }
     }
