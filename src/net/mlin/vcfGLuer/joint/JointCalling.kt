@@ -55,7 +55,7 @@ fun jointCall(
     val fieldsGenB = jsc.broadcast(JointFieldsGenerator(cfg, aggHeader))
 
     // make big DataFrame of sparse joint genotypes for each sample and "frame" of variants.
-    // the frame to which each variant belongs is: (variantId/sparseFrameSize)
+    // the frameno to which each variant belongs is: (variantId/sparseFrameSize)
     val sparseGenotypesDF = vcfFilenamesDF.flatMap(
         FlatMapFunction<Row, Row> {
             generateJointCalls(
@@ -77,7 +77,7 @@ fun jointCall(
         )
     )
 
-    // group the sparse genotypes by frameno to generate pVCF text lines (Snappy-compressed)
+    // group the sparse genotypes by frameno & generate pVCF text lines (Snappy-compressed)
     val pvcfLinesDF = sparseGenotypesDF
         .groupByKey(MapFunction<Row, Int> { it.getAs<Int>(0) }, Encoders.INT())
         .flatMapGroups(
@@ -86,7 +86,7 @@ fun jointCall(
                     cfg,
                     aggHeaderB.value,
                     fieldsGenB.value,
-                    variantsDbSparkFile,
+                    SparkFiles.get(variantsDbSparkFile),
                     frameno,
                     sparseFrameSize,
                     sparseGenotypeFrames
@@ -103,7 +103,6 @@ fun jointCall(
             // persist before sorting: https://stackoverflow.com/a/56310076
         ).persist(org.apache.spark.storage.StorageLevel.DISK_ONLY())
 
-    // TODO: sortedGroupByKey instead of ex post facto sort
     val pvcfLinesSortedDF = pvcfLinesDF
         .sort("variantId").persist(org.apache.spark.storage.StorageLevel.DISK_ONLY())
 
@@ -150,27 +149,27 @@ fun generateJointCalls(
         scanVcfRecords(aggHeader.contigId, vcfFilename).use { records ->
             val callsetSamples = aggHeader.callsetsDetails[callsetId].callsetSamples
             val frameEncoders = Array(callsetSamples.size) { SparseGenotypeFrameEncoder() }
-            var frameno = -1
+            var lastFrameno = -1
 
             // collate the two sequences to generate GenotypingContexts with each variant and the
             // overlapping VCF records
             generateGenotypingContexts(variants, records).forEach { ctx ->
-                val frameno2 = ctx.variantId / sparseFrameSize
-                if (frameno2 != frameno) {
-                    if (frameno >= 0) {
-                        check(frameno2 == frameno + 1)
+                val frameno = ctx.variantId / sparseFrameSize
+                if (frameno != lastFrameno) {
+                    if (lastFrameno >= 0) {
+                        check(frameno == lastFrameno + 1)
                         // moving on to new frame: complete the previous frame
                         frameEncoders.forEachIndexed { sampleIndex, encoder ->
                             yield(
                                 RowFactory.create(
-                                    frameno,
+                                    lastFrameno,
                                     callsetSamples[sampleIndex], // sampleId
                                     encoder.completeFrame()
                                 )
                             )
                         }
                     }
-                    frameno = frameno2
+                    lastFrameno = frameno
                 }
                 // add to the current frame, repeating the prior ref-band-derived entry if
                 // possible; otherwise generate the appropriate entry.
@@ -188,12 +187,12 @@ fun generateJointCalls(
                     }
                 }
             }
-            if (frameno >= 0) {
+            if (lastFrameno >= 0) {
                 // complete the final frame
                 frameEncoders.forEachIndexed { sampleIndex, encoder ->
                     yield(
                         RowFactory.create(
-                            frameno,
+                            lastFrameno,
                             callsetSamples[sampleIndex], // sampleId
                             encoder.completeFrame()
                         )
@@ -326,7 +325,7 @@ fun decodeSparseGenotypeFramesToVcfLines(
     cfg: JointConfig,
     aggHeader: AggVcfHeader,
     fieldsGen: JointFieldsGenerator,
-    variantsDbSparkFile: String,
+    variantsDbFilename: String,
     frameno: Int,
     sparseFrameSize: Int,
     sparseGenotypeFrames: Iterator<Row> // [(frameno, sampleId, sparseGenotypes)]
@@ -335,7 +334,7 @@ fun decodeSparseGenotypeFramesToVcfLines(
     val variants = ExitStack().use { cleanup ->
         val dbc = cleanup.add(
             GenomicSQLiteReadOnlyPool
-                .get(SparkFiles.get(variantsDbSparkFile))
+                .get(variantsDbFilename)
                 .getConnection()
         )
         check(GenomicSQLiteReadOnlyPool.distinctConnections() < 1000)

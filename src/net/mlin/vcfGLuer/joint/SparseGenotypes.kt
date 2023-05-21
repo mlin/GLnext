@@ -5,17 +5,17 @@ import net.mlin.vcfGLuer.data.*
 import net.mlin.vcfGLuer.util.*
 
 /* Intermediate sparse representation for the joint-called genotypes from one sample. By this we
- * mean we've taken the sample gVCF and "projected" it onto the jointly discovered variants.
+ * mean we've taken the sample gVCF and "projected" it onto the jointly-discovered variant list.
  *
- * It's simply a series of String pVCF entries interleaved with delimiters that may also indicate
- * repetition of the previous pVCF entry. The repetition arises when that previous pVCF entry was
- * derived from a single gVCF reference band, and the following joint variants are covered by that
- * same reference band. (Assumes that only GT and DP are filled in from reference bands.)
+ * The sparse genotypes for the joint variants are a series of String pVCF entries interleaved with
+ * delimiters that may also indicate repetition of the previous pVCF entry. The repetition arises
+ * when that previous pVCF entry was derived from a single gVCF reference band, and the following
+ * joint variants are covered by that same reference band. (Assumes that only GT and DP are filled
+ * in from reference bands.)
  *
- * The series of these elements is essentially one spVCF column, with a cute binary encoding for
- * the delimiters (since this is an internal-only representation). The joint-calling process
- * generates these for "frames" of 128 variants at a time, then groups by frame across all samples
- * to generate the pVCF lines for each frame.
+ * This series effectively conveys part of a pVCF column. The joint-calling process generates these
+ * for "frames" of 128 variants at a time, then groups corresponding frames across all samples to
+ * generate the pVCF lines for each frame.
  */
 
 class SparseGenotypeFrameEncoder {

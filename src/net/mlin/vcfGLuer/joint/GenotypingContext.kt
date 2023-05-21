@@ -45,9 +45,6 @@ class GenotypingContext(
  *
  * The streaming algorithm assumes that the variants aren't too large and the VCF records aren't
  * too overlapping. These assumptions match up with small-variant gVCF inputs, of course.
- *
- * TODO: hot-path optimization -- reuse the last GenotypingContext object (mutate variant) if
- * possible.
  */
 fun generateGenotypingContexts(
     variants: Sequence<Pair<Int, Variant>>, // (variantId, variant)
@@ -64,7 +61,7 @@ fun generateGenotypingContexts(
     var lastRecordRange: GRange? = null
 
     // for each variant
-    return variants.mapNotNull { (variantId, variant) ->
+    return variants.map { (variantId, variant) ->
         val vr = variant.range
         lastVariantRange?.let { require(it <= vr) }
         lastVariantRange = vr
@@ -106,6 +103,6 @@ fun generateGenotypingContexts(
         //   focal variant                  |------|
         // retained record                                     |----|
         val hits = workingSet.filter { it.record.range.overlaps(variant.range) }
-        if (hits.isNotEmpty()) { GenotypingContext(variantId, variant, hits) } else { null }
+        GenotypingContext(variantId, variant, hits)
     }
 }
