@@ -32,6 +32,7 @@ class SparseGenotypeFrameEncoder {
      * pVCF entry for this variant to addGenotype().
      */
     fun addRepeatIfPossible(ctx: GenotypingContext): Boolean {
+        check(!prevEmpty || prevRefBand == null)
         if ((prevEmpty && ctx.callsetRecords.isEmpty()) ||
             (prevRefBand != null && ctx.soleReferenceBand === prevRefBand)
         ) {
@@ -73,6 +74,7 @@ class SparseGenotypeFrameEncoder {
         }
         val ans = buffer.toByteArray()
         buffer.reset()
+        prevEmpty = false
         prevRefBand = null
         repeat = 0
         return ans
