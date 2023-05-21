@@ -172,8 +172,7 @@ class CLI : CliktCommand() {
             // accumulators
             val vcfRecordCount = spark.sparkContext.longAccumulator("input VCF records")
             val vcfRecordBytes = spark.sparkContext.longAccumulator("input VCF bytes)")
-            val refBandCacheQueries = spark.sparkContext.longAccumulator("ref band cache queries")
-            val refBandCacheHits = spark.sparkContext.longAccumulator("ref band cache hits")
+            val sparseEntryCount = spark.sparkContext.longAccumulator("sparse genotype entries")
 
             /*
               Discover all variants & collect them to a database file local to the driver.
@@ -218,12 +217,11 @@ class CLI : CliktCommand() {
                 variantsDbSparkFile,
                 vcfFilenamesDF,
                 pvcfHeaderMetaLines,
-                refBandCacheQueries,
-                refBandCacheHits
+                128, // TODO: configurable sparseFrameSize
+                sparseEntryCount
             )
             check(pvcfLineCount == variantCount.toLong())
-            logger.info("ref band cache queries: ${refBandCacheQueries.sum().pretty()}")
-            logger.info("ref band cache hits: ${refBandCacheHits.sum().pretty()}")
+            logger.info("sparse genotype entries: ${sparseEntryCount.sum().pretty()}")
             logger.info("writing ${pvcfLineCount.pretty()} pVCF lines...")
 
             // write output pVCF files
