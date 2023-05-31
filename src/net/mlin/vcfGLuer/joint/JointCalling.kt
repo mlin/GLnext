@@ -154,13 +154,17 @@ fun generateJointCalls(
                     check(frameno == lastFrameno + 1)
                     // moving on to new frame: complete the previous frame
                     frameEncoders.forEachIndexed { sampleIndex, encoder ->
-                        yield(
-                            RowFactory.create(
-                                lastFrameno,
-                                callsetSamples[sampleIndex], // sampleId
-                                encoder.completeFrame()
+                        if (!encoder.vacuous) {
+                            yield(
+                                RowFactory.create(
+                                    lastFrameno,
+                                    callsetSamples[sampleIndex], // sampleId
+                                    encoder.completeFrame()
+                                )
                             )
-                        )
+                        } else {
+                            encoder.completeFrame()
+                        }
                     }
                 }
                 lastFrameno = frameno
@@ -183,14 +187,16 @@ fun generateJointCalls(
             if (lastFrameno >= 0) {
                 // complete the final frame
                 frameEncoders.forEachIndexed { sampleIndex, encoder ->
-                    yield(
-                        RowFactory.create(
-                            lastFrameno,
-                            callsetSamples[sampleIndex], // sampleId
-                            encoder.completeFrame()
+                    if (!encoder.vacuous) {
+                        yield(
+                            RowFactory.create(
+                                lastFrameno,
+                                callsetSamples[sampleIndex], // sampleId
+                                encoder.completeFrame()
+                            )
                         )
-                    )
-                    sparseEntryCount?.let { it.add(encoder.totalRepeats) }
+                        sparseEntryCount?.let { it.add(encoder.totalRepeats) }
+                    }
                 }
             }
             check(GenomicSQLiteReadOnlyPool.distinctConnections() < 1000)
@@ -336,7 +342,12 @@ fun transposeSparseGenotypeFrames(
         )
         check(GenomicSQLiteReadOnlyPool.distinctConnections() < 1000)
         val getVariants = cleanup.add(
-            dbc.prepareStatement("SELECT * from Variant WHERE frameno = ? ORDER BY variantId")
+            dbc.prepareStatement(
+                """
+                SELECT * FROM Variant INDEXED BY VariantFrameno
+                WHERE frameno = ? ORDER BY variantId
+                """
+            )
         )
         getVariants.setInt(1, frameno)
         val rs = cleanup.add(getVariants.executeQuery())
@@ -352,15 +363,22 @@ fun transposeSparseGenotypeFrames(
     }
 
     // initialize decoders for each sample from sparseGenotypeFrames
+    var totalFrameCount = 0
     val framesBySampleId = sparseGenotypeFrames.asSequence().associateBy(
         {
             check(it.getAs<Int>("frameno") == frameno)
+            totalFrameCount += 1
             it.getAs<Int>("sampleId")
         },
         { it.getAs<ByteArray>("sparseGenotypes") }
     )
+    require(
+        totalFrameCount == framesBySampleId.size,
+        { "colliding sparse genotype frames; check input files for duplication/overlap" }
+    )
+    val vacuousFrame = vacuousSparseGenotypeFrame(variants.size)
     val decoders = Array(aggHeader.samples.size) {
-        decodeSparseGenotypeFrame(framesBySampleId.get(it)!!).iterator()
+        decodeSparseGenotypeFrame(framesBySampleId.getOrDefault(it, vacuousFrame)).iterator()
     }
 
     // for each variant, decode all the genotypes & assemble the spVCF line

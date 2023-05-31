@@ -24,6 +24,7 @@ class SparseGenotypeFrameEncoder {
     private var prevRefBand: VcfRecordUnpacked? = null
     private var repeat: Int = 0
     private var totalRepeatCounter: Long = 0
+    private var vacuous_: Boolean = true
 
     /**
      * Peek at the GenotypingContext for the next variant. If it just has the last-seen reference
@@ -61,6 +62,9 @@ class SparseGenotypeFrameEncoder {
         prevEmpty = ctx.callsetRecords.isEmpty()
         prevRefBand = ctx.soleReferenceBand
         check(!prevEmpty || prevRefBand == null)
+        if (!prevEmpty) {
+            vacuous_ = false
+        }
         repeat = 0
     }
 
@@ -77,11 +81,33 @@ class SparseGenotypeFrameEncoder {
         prevEmpty = false
         prevRefBand = null
         repeat = 0
+        vacuous_ = true
         return ans
     }
 
+    /**
+     * True iff the frame is empty or contains exclusively "." entries
+     */
+    val vacuous: Boolean
+        get() = vacuous_
+
     val totalRepeats: Long
         get() = totalRepeatCounter
+}
+
+/**
+ * Generate frame of `size` missing genotypes (.)
+ */
+fun vacuousSparseGenotypeFrame(size: Int): ByteArray {
+    require(0 <= size && size <= 128)
+    val buf = ByteArrayOutputStream()
+    if (size > 0) {
+        buf.write('.'.toInt())
+        if (size > 1) {
+            buf.write(127 + size)
+        }
+    }
+    return buf.toByteArray()
 }
 
 /**
