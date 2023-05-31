@@ -27,11 +27,11 @@ fun writeJointFiles(
     splitRanges: BedRanges,
     spvcfHeader: String,
     spvcfLines: Dataset<Row>,
-    pvcfDir: String,
+    outputDir: String,
     variantCount: Int
 ) {
-    val fs = getFileSystem(pvcfDir)
-    require(fs.mkdirs(Path(pvcfDir)), { "output directory $pvcfDir mustn't already exist" })
+    val fs = getFileSystem(outputDir)
+    require(fs.mkdirs(Path(outputDir)), { "output directory $outputDir mustn't already exist" })
 
     // write file parts (split by both spark partition and splitBed)
     val (headerPath, eofPath, partsWritten) = writeAllJointFileParts(
@@ -39,7 +39,7 @@ fun writeJointFiles(
         splitRanges,
         spvcfHeader,
         spvcfLines,
-        Path(pvcfDir, "_parts").toString(),
+        Path(outputDir, "_parts").toString(),
         variantCount,
         fs
     )
@@ -61,13 +61,13 @@ fun writeJointFiles(
     val spvcfFiles = jsc.parallelizeEvenly(partsPerSplit).map { spvcfFileParts ->
         check(spvcfFileParts.sortedBy { it.path } == spvcfFileParts)
         val spvcfPath = Path(
-            pvcfDir,
-            Path(pvcfDir).getName() + "_" +
+            outputDir,
+            Path(outputDir).getName() + "_" +
                 Path(spvcfFileParts.first().path).getParent().getName() +
                 ".spvcf.gz"
         )
         val plan = listOf(headerPath) + spvcfFileParts.map { it.path } + listOf(eofPath)
-        getFileSystem(pvcfDir).concatNaive(spvcfPath, plan.map { Path(it) }.toTypedArray())
+        getFileSystem(outputDir).concatNaive(spvcfPath, plan.map { Path(it) }.toTypedArray())
         spvcfPath to spvcfFileParts.map { it.lineCount }.sum()
     }.collect()
 
@@ -75,9 +75,9 @@ fun writeJointFiles(
     check(spvcfFiles.map { it.second }.sum() == variantCount)
 
     // mark _SUCCESS
-    fs.create(Path(pvcfDir, "_SUCCESS"), false).use {}
+    fs.create(Path(outputDir, "_SUCCESS"), false).use {}
 
-    logger.info("created ${spvcfFiles.size} output spVCF files under $pvcfDir")
+    logger.info("created ${spvcfFiles.size} output spVCF files under $outputDir")
 
     // TODO: clean up _parts?
 }
@@ -140,9 +140,9 @@ fun writeJointFileParts(
     splitRanges: BedRanges,
     partIndex: Int,
     rows: Iterator<Row>,
-    pvcfDir: String
+    outputDir: String
 ): List<PartWritten> {
-    val fs = getFileSystem(pvcfDir)
+    val fs = getFileSystem(outputDir)
     val partsWritten: HashMap<String, PartWritten> = hashMapOf()
 
     // current open file
@@ -180,7 +180,7 @@ fun writeJointFileParts(
                 // ourselves (which could only happen if the rows aren't sorted).
                 val partPath = jointPartPath(
                     contigs,
-                    pvcfDir,
+                    outputDir,
                     splitHit.id,
                     GRange(range.rid, splitHit.beg, splitHit.end),
                     splitRanges.size,
@@ -215,10 +215,10 @@ fun writeJointFileParts(
     return partsWritten.values.toList()
 }
 
-// Derive individual output filename given pvcfDir, split region, and Spark partition index.
+// Derive individual output filename given outputDir, split region, and Spark partition index.
 fun jointPartPath(
     contigs: Array<String>,
-    pvcfDir: String,
+    outputDir: String,
     splitId: Int,
     splitRange: GRange,
     totalSplits: Int,
@@ -237,7 +237,7 @@ fun jointPartPath(
         )
 
     val partIndexPadded = (partIndex + 1).toString().padStart(7, '0') // FIXME not to hardcode 7
-    return Path(Path(pvcfDir, splitSubdir), partIndexPadded)
+    return Path(Path(outputDir, splitSubdir), partIndexPadded)
 }
 
 // Load the split BED file into BedRanges. If no BED file specified, then synthesize one range per

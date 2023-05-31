@@ -34,8 +34,8 @@ class CLI : CliktCommand() {
     val inputFiles: List<String> by
         argument(help = "Input VCF filenames (or manifest(s) with --manifest)")
             .multiple(required = true)
-    val pvcfDir: String by
-        argument(help = "Output directory for pVCF parts (mustn't already exist)")
+    val outputDir: String by
+        argument(help = "Output directory for spVCF parts (mustn't already exist)")
     val manifest by
         option(help = "Input files are manifest(s) containing one VCF filename per line")
             .flag(default = false)
@@ -47,7 +47,7 @@ class CLI : CliktCommand() {
             help = "Contigs to process, comma-separated (intersect with BED regions, if any)"
         )
     val splitBed: String? by
-        option(help = "Guide pVCF part splitting using non-overlapping regions from this BED file")
+        option(help = "Guide spVCF part splitting using non-overlapping regions from this BED file")
     val tmpDir: String? by
         option(
             help = "Shared (HDFS) temporary directory"
@@ -231,7 +231,7 @@ class CLI : CliktCommand() {
                 splitRanges,
                 spvcfHeader,
                 spvcfLines,
-                pvcfDir,
+                outputDir,
                 variantCount
             )
         }
