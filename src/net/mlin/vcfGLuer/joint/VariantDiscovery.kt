@@ -104,8 +104,8 @@ fun collectAllVariantsDb(
 
     ExitStack().use { cleanup ->
         val dbc = cleanup.add(createGenomicSQLiteForBulkLoad(tempFilename, threads = 8))
-        val adhoc = cleanup.add(dbc.createStatement())
-        adhoc.executeUpdate(
+        val stmt = cleanup.add(dbc.createStatement())
+        stmt.executeUpdate(
             """
             CREATE TABLE Variant(
                 variantId INTEGER PRIMARY KEY,
@@ -188,6 +188,8 @@ fun collectAllVariantsDb(
                 variantId += 1
                 lastSplitId = splitId
             }
+        // index frameno & commit
+        stmt.executeUpdate("CREATE INDEX VariantFrameno ON Variant(frameno,variantId)")
         dbc.commit()
         sortedVariantsRDD.unpersist()
     }

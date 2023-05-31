@@ -80,7 +80,7 @@ class DP_FormatField(hdr: AggVcfHeader, spec: JointFormatField) :
             }
         }
         if (minDP >= 0 && minDP < Int.MAX_VALUE &&
-            data.variant.range.subtract(dpRanges).isEmpty()
+            data.variantRow.variant.range.subtract(dpRanges).isEmpty()
         ) {
             return minDP.toString()
         }
@@ -99,7 +99,7 @@ class AD_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFie
             return null
         }
         val parsedAD = variantRecord.getSampleFieldInts(sampleIndex, "AD")
-        val varIdx = variantRecord.getAltIndex(data.variant)
+        val varIdx = variantRecord.getAltIndex(data.variantRow.variant)
         check(varIdx > 0)
         // TODO: third field if OverlapMode is symbolic
         val refAD = parsedAD.get(0)?.toString()
@@ -120,7 +120,7 @@ class PL_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFie
     ): String? {
         var ans: String? = null
         if (variantRecord != null) {
-            val varIdx = variantRecord.getAltIndex(data.variant)
+            val varIdx = variantRecord.getAltIndex(data.variantRow.variant)
             check(varIdx > 0)
             val parsedPL = variantRecord.getSampleFieldInts(sampleIndex, "PL")
             val i11 = varIdx * (varIdx + 1) / 2 + varIdx // parsedPL index of varIdx/varIdx
@@ -155,12 +155,12 @@ class OL_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFie
         (data.variantRecords + data.otherVariantRecords).forEach {
             val recGT = it.getDiploidGenotype(sampleIndex)
             if (recGT.allele1 != null && recGT.allele1 > 0 &&
-                it.altVariants[recGT.allele1 - 1] != data.variant
+                it.altVariants[recGT.allele1 - 1] != data.variantRow.variant
             ) {
                 overlapCount++
             }
             if (recGT.allele2 != null && recGT.allele2 > 0 &&
-                it.altVariants[recGT.allele2 - 1] != data.variant
+                it.altVariants[recGT.allele2 - 1] != data.variantRow.variant
             ) {
                 overlapCount++
             }

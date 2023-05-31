@@ -44,10 +44,8 @@ fun jointCall(
     variantsDbSparkFile: String,
     vcfFilenamesDF: Dataset<Row>,
     pvcfHeaderMetaLines: List<String>,
-    sparseFrameSize: Int = 128,
     sparseEntryCount: LongAccumulator? = null
 ): Triple<String, Long, Dataset<Row>> {
-    check(sparseFrameSize >= 1 && sparseFrameSize <= 128)
     // broadcast supporting data for joint calling; using JavaSparkContext to sidestep
     // kotlin-spark-api overrides
     val jsc = JavaSparkContext(spark.sparkContext)
@@ -55,7 +53,7 @@ fun jointCall(
     val fieldsGenB = jsc.broadcast(JointFieldsGenerator(cfg, aggHeader))
 
     // make big DataFrame of sparse joint genotypes for each sample and "frame" of variants.
-    // the frameno to which each variant belongs is: (variantId/sparseFrameSize)
+    // variant discovery already assigned each variant to a frame number (frameno).
     val sparseGenotypesDF = vcfFilenamesDF.flatMap(
         FlatMapFunction<Row, Row> {
             generateJointCalls(
@@ -65,7 +63,6 @@ fun jointCall(
                 SparkFiles.get(variantsDbSparkFile),
                 it.getAs<Int>("callsetId"),
                 it.getAs<String>("vcfFilename"),
-                sparseFrameSize,
                 sparseEntryCount
             ).iterator()
         },
@@ -88,7 +85,6 @@ fun jointCall(
                     fieldsGenB.value,
                     SparkFiles.get(variantsDbSparkFile),
                     frameno,
-                    sparseFrameSize,
                     sparseGenotypeFrames
                 ).iterator()
             },
@@ -125,7 +121,6 @@ fun generateJointCalls(
     variantsDbFilename: String,
     callsetId: Int,
     vcfFilename: String,
-    sparseFrameSize: Int,
     sparseEntryCount: LongAccumulator? = null
 ): Sequence<Row> = // [(frameno, sampleId, sparseGenotypes)]
     sequence {
@@ -139,9 +134,7 @@ fun generateJointCalls(
                     "SELECT * FROM Variant ORDER BY variantId"
                 )
                 while (rs.next()) {
-                    val variantId = rs.getInt("variantId")
-                    val variant = Variant(rs)
-                    yield(variantId to variant)
+                    yield(VariantsDbRow(rs))
                 }
             }
         }
@@ -154,23 +147,21 @@ fun generateJointCalls(
             // collate the two sequences to generate GenotypingContexts with each variant and the
             // overlapping VCF records
             generateGenotypingContexts(variants, records).forEach { ctx ->
-                val frameno = ctx.variantId / sparseFrameSize
-                if (frameno != lastFrameno) {
-                    if (lastFrameno >= 0) {
-                        check(frameno == lastFrameno + 1)
-                        // moving on to new frame: complete the previous frame
-                        frameEncoders.forEachIndexed { sampleIndex, encoder ->
-                            yield(
-                                RowFactory.create(
-                                    lastFrameno,
-                                    callsetSamples[sampleIndex], // sampleId
-                                    encoder.completeFrame()
-                                )
+                val frameno = ctx.variantRow.frameno
+                if (frameno != lastFrameno && lastFrameno >= 0) {
+                    check(frameno == lastFrameno + 1)
+                    // moving on to new frame: complete the previous frame
+                    frameEncoders.forEachIndexed { sampleIndex, encoder ->
+                        yield(
+                            RowFactory.create(
+                                lastFrameno,
+                                callsetSamples[sampleIndex], // sampleId
+                                encoder.completeFrame()
                             )
-                        }
+                        )
                     }
-                    lastFrameno = frameno
                 }
+                lastFrameno = frameno
                 // add to the current frame, repeating the prior ref-band-derived entry if
                 // possible; otherwise generate the appropriate entry.
                 frameEncoders.forEachIndexed { sampleIndex, encoder ->
@@ -223,7 +214,7 @@ fun generateGenotypeAndFormatFields(
         // choose one of variantRecords to work from
         // TODO: should we instead just no-call this unusual case?
         data.variantRecords.sortedByDescending {
-            val altIdx = it.getAltIndex(data.variant)
+            val altIdx = it.getAltIndex(data.variantRow.variant)
             check(altIdx > 0)
             val gt = it.getDiploidGenotype(sampleIndex)
             // copy number
@@ -237,7 +228,7 @@ fun generateGenotypeAndFormatFields(
         }.first()
     }
 
-    val altIdx = record.getAltIndex(data.variant)
+    val altIdx = record.getAltIndex(data.variantRow.variant)
     check(altIdx > 0)
     val gtIn = record.getDiploidGenotype(sampleIndex)
 
@@ -278,18 +269,18 @@ fun generateRefGenotypeAndFormatFields(
     // count copies of other overlapping variants
     var otherOverlaps = countAltCopies(data.otherVariantRecords, sampleIndex)
     var refRanges = data.otherVariantRecords.map {
-        check(it.record.range.overlaps(data.variant.range))
+        check(it.record.range.overlaps(data.variantRow.variant.range))
         val gt = it.getDiploidGenotype(sampleIndex)
         if (gt.allele1 != null && gt.allele2 != null) it.record.range else null
     }.filterNotNull()
 
     // check if overlapping records and reference bands completely covered the focal variant range
     refRanges += data.referenceBands.filter {
-        check(it.record.range.overlaps(data.variant.range))
+        check(it.record.range.overlaps(data.variantRow.variant.range))
         val gt = it.getDiploidGenotype(sampleIndex)
         gt.allele1 == 0 && gt.allele2 == 0
     }.map { it.record.range }
-    val refCoverage = data.variant.range.subtract(refRanges).isEmpty()
+    val refCoverage = data.variantRow.variant.range.subtract(refRanges).isEmpty()
     val refCall = if (refCoverage) 0 else null
 
     val allele1 = if (otherOverlaps > 0) genotypeOverlapSentinel(cfg.gt.overlapMode) else refCall
@@ -327,10 +318,9 @@ fun decodeSparseGenotypeFramesToVcfLines(
     fieldsGen: JointFieldsGenerator,
     variantsDbFilename: String,
     frameno: Int,
-    sparseFrameSize: Int,
     sparseGenotypeFrames: Iterator<Row> // [(frameno, sampleId, sparseGenotypes)]
 ): Sequence<Row> { // [(variantId, rid, beg, end, snappyLine)]
-    // fetch this frame's variants from the broadcast database file
+    // load this frame's variants from the broadcast database file
     val variants = ExitStack().use { cleanup ->
         val dbc = cleanup.add(
             GenomicSQLiteReadOnlyPool
@@ -339,20 +329,17 @@ fun decodeSparseGenotypeFramesToVcfLines(
         )
         check(GenomicSQLiteReadOnlyPool.distinctConnections() < 1000)
         val getVariants = cleanup.add(
-            dbc.prepareStatement("SELECT * from Variant WHERE variantId >= ?")
+            dbc.prepareStatement("SELECT * from Variant WHERE frameno = ? ORDER BY variantId")
         )
-        var variantId = frameno * sparseFrameSize
-        getVariants.setInt(1, variantId)
+        getVariants.setInt(1, frameno)
         val rs = cleanup.add(getVariants.executeQuery())
-        val lst = mutableListOf<Variant>()
-        for (i in 0 until sparseFrameSize) {
-            if (!rs.next()) {
-                break
-            }
-            val v = Variant(rs)
-            check(rs.getInt("variantId") == variantId)
-            lst.add(v)
-            variantId += 1
+        val lst = mutableListOf<VariantsDbRow>()
+        var lastVariantId = -1
+        while (rs.next()) {
+            val row = VariantsDbRow(rs)
+            check(lastVariantId < 0 || row.variantId == lastVariantId + 1)
+            lastVariantId = row.variantId
+            lst.add(row)
         }
         lst
     }
@@ -371,16 +358,15 @@ fun decodeSparseGenotypeFramesToVcfLines(
 
     // for each variant, decode all the genotypes & assemble the pVCF line
     return sequence {
-        variants.forEachIndexed { ofs, variant ->
-            val variantId = frameno * sparseFrameSize + ofs
-            val entries = decoders.asSequence().map { it.next()!! }
-            val snappyLine = assembleJointLine(cfg, aggHeader, fieldsGen, variant, entries)
+        variants.forEach { vdbrow ->
+            val entries = decoders.asSequence().map { it.next() }
+            val snappyLine = assembleJointLine(cfg, aggHeader, fieldsGen, vdbrow.variant, entries)
             yield(
                 RowFactory.create(
-                    variantId,
-                    variant.range.rid,
-                    variant.range.beg,
-                    variant.range.end,
+                    vdbrow.variantId,
+                    vdbrow.variant.range.rid,
+                    vdbrow.variant.range.beg,
+                    vdbrow.variant.range.end,
                     snappyLine
                 )
             )

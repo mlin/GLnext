@@ -13,9 +13,9 @@ import net.mlin.vcfGLuer.util.*
  * joint variants are covered by that same reference band. (Assumes that only GT and DP are filled
  * in from reference bands.)
  *
- * This series effectively conveys part of a pVCF column. The joint-calling process generates these
- * for "frames" of 128 variants at a time, then groups corresponding frames across all samples to
- * generate the pVCF lines for each frame.
+ * This series effectively represents part of a spVCF column. The joint-calling process generates
+ * these for "frames" of up to 128 variants at a time, then groups corresponding frames from all
+ * samples to generate spVCF for each frame.
  */
 
 class SparseGenotypeFrameEncoder {
@@ -101,7 +101,7 @@ fun decodeSparseGenotypeFrame(input: ByteArray): Sequence<String> {
                     yield(entry)
                 }
             } else { // one character of a pVCF entry
-                entryBuffer.append(byte.toChar())
+                entryBuffer.append(ubyte.toChar())
             }
         }
         if (entryBuffer.isNotEmpty()) {

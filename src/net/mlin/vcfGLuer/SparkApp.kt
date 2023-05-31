@@ -218,7 +218,6 @@ class CLI : CliktCommand() {
                 variantsDbSparkFile,
                 vcfFilenamesDF,
                 pvcfHeaderMetaLines,
-                128, // TODO: configurable sparseFrameSize
                 sparseEntryCount
             )
             check(pvcfLineCount == variantCount.toLong())
