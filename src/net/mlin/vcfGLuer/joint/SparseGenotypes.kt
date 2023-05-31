@@ -69,7 +69,7 @@ class SparseGenotypeFrameEncoder {
     }
 
     /**
-     * Return the encoded genotypes at the end of the frame. The encoder may then be reused.
+     * Return the encoded genotypes at the end of the frame, and reset()
      */
     fun completeFrame(): ByteArray {
         if (buffer.size() > 0 && repeat > 0) {
@@ -77,12 +77,19 @@ class SparseGenotypeFrameEncoder {
             totalRepeatCounter += repeat
         }
         val ans = buffer.toByteArray()
+        reset()
+        return ans
+    }
+
+    /**
+     * Reset encoder to its initial state
+     */
+    fun reset() {
         buffer.reset()
         prevEmpty = false
         prevRefBand = null
         repeat = 0
         vacuous_ = true
-        return ans
     }
 
     /**

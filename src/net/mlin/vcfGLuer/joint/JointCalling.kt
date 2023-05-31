@@ -163,7 +163,7 @@ fun generateJointCalls(
                                 )
                             )
                         } else {
-                            encoder.completeFrame()
+                            encoder.reset()
                         }
                     }
                 }
