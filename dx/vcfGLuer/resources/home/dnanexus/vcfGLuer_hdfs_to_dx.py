@@ -27,7 +27,7 @@ ls = subprocess.run(
     check=True,
 )
 hdfs_parts = []
-vcf_re = re.compile(r"/vcfGLuer/.*\.vcf\.gz")
+vcf_re = re.compile(r"/vcfGLuer/.*vcf\.gz")
 success = False
 for line in ls.stdout.splitlines():
     m = vcf_re.search(line)
