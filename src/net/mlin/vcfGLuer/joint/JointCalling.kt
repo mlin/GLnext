@@ -315,7 +315,9 @@ fun genotypeOverlapSentinel(mode: GT_OverlapMode): Int? = when (mode) {
  * spVCF text lines (Snappy-compressed).
  *
  * Although we could easily generate complete spVCF frames instead of individual lines, doing so
- * might conveivably approach a 2G JVM limit and/or severely skew the Spark partitions.
+ * might conveivably approach a 2G JVM limit and/or severely skew the Spark partitions. And in
+ * variant discovery, we designed the framenos to ensure each split range will contain complete
+ * frames (beginning with a spVCF checkpoint) after reassembling the individual lines.
  */
 fun transposeSparseGenotypeFrames(
     cfg: JointConfig,

@@ -170,9 +170,9 @@ fun collectAllVariantsDb(
                     it.first().id
                 }
                 // start a new frame (for sparse genotype encoding) every 128 variants or whenever
-                // we advance to the next split range
+                // we advance to a new split range
                 if ((variantId + 1) % 128 == 0 || splitId != lastSplitId) {
-                    check(splitId == lastSplitId || splitId == lastSplitId + 1)
+                    check(splitId >= lastSplitId)
                     frameno += 1
                 }
                 // insert into GenomicSQLite
