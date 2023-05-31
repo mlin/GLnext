@@ -34,8 +34,8 @@ data class JointConfig(
 ) : Serializable
 
 /**
- * From local databases of variants & VCF records, generate pVCF header, pVCF line count, and
- * sorted DataFrame of Snappy-compressed pVCF lines
+ * From local databases of variants & VCF records, generate spVCF header, pVCF line count, and
+ * sorted DataFrame of Snappy-compressed spVCF lines
  */
 fun jointCall(
     cfg: JointConfig,
@@ -74,12 +74,12 @@ fun jointCall(
         )
     )
 
-    // group the sparse genotypes by frameno & generate pVCF text lines (Snappy-compressed)
-    val pvcfLinesDF = sparseGenotypesDF
+    // group the sparse genotypes by frameno & generate spVCF text lines (Snappy-compressed)
+    val spvcfLinesDF = sparseGenotypesDF
         .groupByKey(MapFunction<Row, Int> { it.getAs<Int>(0) }, Encoders.INT())
         .flatMapGroups(
             FlatMapGroupsFunction<Int, Row, Row> { frameno, sparseGenotypeFrames ->
-                decodeSparseGenotypeFramesToVcfLines(
+                transposeSparseGenotypeFrames(
                     cfg,
                     aggHeaderB.value,
                     fieldsGenB.value,
@@ -94,21 +94,23 @@ fun jointCall(
                     .add("rid", DataTypes.ShortType, false)
                     .add("beg", DataTypes.IntegerType, false)
                     .add("end", DataTypes.IntegerType, false)
+                    .add("splitId", DataTypes.IntegerType, false)
+                    .add("frameno", DataTypes.IntegerType, false)
                     .add("snappyLine", DataTypes.BinaryType, false)
             )
             // persist before sorting: https://stackoverflow.com/a/56310076
         ).persist(org.apache.spark.storage.StorageLevel.DISK_ONLY())
 
-    val pvcfLinesSortedDF = pvcfLinesDF
+    val spvcfLinesSortedDF = spvcfLinesDF
         .sort("variantId").persist(org.apache.spark.storage.StorageLevel.DISK_ONLY())
 
     // Perform a count() to force pvcfLinesDF, ensuring it registers as an SQL query in the history
     // server before subsequent steps that will drop to RDD. This provides useful diagnostic info
     // that would otherwise go missing at RDD level.
-    val pvcfLineCount = pvcfLinesSortedDF.count()
-    pvcfLinesDF.unpersist()
-    val pvcfHeader = jointVcfHeader(cfg, aggHeader, pvcfHeaderMetaLines, fieldsGenB.value)
-    return Triple(pvcfHeader, pvcfLineCount, pvcfLinesSortedDF)
+    val spvcfLineCount = spvcfLinesSortedDF.count()
+    spvcfLinesDF.unpersist()
+    val spvcfHeader = jointHeader(cfg, aggHeader, pvcfHeaderMetaLines, fieldsGenB.value)
+    return Triple(spvcfHeader, spvcfLineCount, spvcfLinesSortedDF)
 }
 
 /**
@@ -309,17 +311,20 @@ fun genotypeOverlapSentinel(mode: GT_OverlapMode): Int? = when (mode) {
 }
 
 /**
- * Given the sparseGenotypeFrames gathered from all samples for this frameno, generate the dense
- * pVCF text lines (Snappy-compressed)
+ * Given the sparseGenotypeFrames gathered from all samples for this frameno, transpose them into
+ * spVCF text lines (Snappy-compressed).
+ *
+ * Although we could easily generate complete spVCF frames instead of individual lines, doing so
+ * might conveivably approach a 2G JVM limit and/or severely skew the Spark partitions.
  */
-fun decodeSparseGenotypeFramesToVcfLines(
+fun transposeSparseGenotypeFrames(
     cfg: JointConfig,
     aggHeader: AggVcfHeader,
     fieldsGen: JointFieldsGenerator,
     variantsDbFilename: String,
     frameno: Int,
     sparseGenotypeFrames: Iterator<Row> // [(frameno, sampleId, sparseGenotypes)]
-): Sequence<Row> { // [(variantId, rid, beg, end, snappyLine)]
+): Sequence<Row> { // [(variantId, rid, beg, end, splitId, frameno, snappyLine)]
     // load this frame's variants from the broadcast database file
     val variants = ExitStack().use { cleanup ->
         val dbc = cleanup.add(
@@ -356,37 +361,55 @@ fun decodeSparseGenotypeFramesToVcfLines(
         decodeSparseGenotypeFrame(framesBySampleId.get(it)!!).iterator()
     }
 
-    // for each variant, decode all the genotypes & assemble the pVCF line
+    // for each variant, decode all the genotypes & assemble the spVCF line
     return sequence {
-        variants.forEach { vdbrow ->
-            val entries = decoders.asSequence().map { it.next() }
-            val snappyLine = assembleJointLine(cfg, aggHeader, fieldsGen, vdbrow.variant, entries)
-            yield(
-                RowFactory.create(
-                    vdbrow.variantId,
-                    vdbrow.variant.range.rid,
-                    vdbrow.variant.range.beg,
-                    vdbrow.variant.range.end,
-                    snappyLine
+        if (variants.isNotEmpty()) {
+            val checkpointVariant = variants.first().variant
+            variants.forEach { vdbrow ->
+                val entries = decoders.asSequence().map { it.next() }
+                val snappyLine = assembleJointLine(
+                    cfg,
+                    aggHeader,
+                    fieldsGen,
+                    checkpointVariant,
+                    vdbrow.variant,
+                    entries
                 )
-            )
+                yield(
+                    RowFactory.create(
+                        vdbrow.variantId,
+                        vdbrow.variant.range.rid,
+                        vdbrow.variant.range.beg,
+                        vdbrow.variant.range.end,
+                        vdbrow.splitId,
+                        vdbrow.frameno,
+                        snappyLine
+                    )
+                )
+            }
         }
-        decoders.forEach { check(!it.hasNext()) }
+        decoders.forEach {
+            check(!it.hasNext(), {
+                "BUG: sparse genotype frames aren't consistent across samples"
+            })
+        }
     }
 }
 
 /**
- * Given all the genotype entries for a specific variant, assemble the pVCF line as a compressed
- * buffer. The Snappy compression is just to reduce the amount of data Spark has to shuffle around
- * to sort the lines afterwards.
+ * Given the sparse genotype entries for a specific variant, assemble the spVCF line as a
+ * compressed buffer. The Snappy compression is just to reduce the amount of data Spark has to
+ * shuffle around to sort the lines afterwards.
  */
 fun assembleJointLine(
     cfg: JointConfig,
     aggHeader: AggVcfHeader,
     fieldsGen: JointFieldsGenerator,
+    checkpointVariant: Variant,
     variant: Variant,
-    entries: Sequence<String>
+    entries: Sequence<String?>
 ): ByteArray {
+    val checkpoint = variant.compareTo(checkpointVariant) == 0
     val buf = StringBuilder()
 
     buf.append(aggHeader.contigs[variant.range.rid.toInt()]) // CHROM
@@ -398,48 +421,73 @@ fun assembleJointLine(
     buf.append(variant.alt) // ALT
     buf.append("\t.\t") // QUAL
     buf.append("PASS") // FILTER
-    buf.append("\t.\t") // fieldsGen.generateInfoFields()      INFO
+    buf.append('\t')
+    if (checkpoint) { // INFO; TODO: fieldsGen.generateInfoFields()
+        buf.append('.')
+    } else {
+        buf.append("spVCF_checkpointPOS=${checkpointVariant.range.beg}")
+    }
+    buf.append('\t')
     buf.append( // FORMAT
         (listOf("GT") + cfg.formatFields.map { it.name }).joinToString(":")
     )
 
     var entryCount = 0
+    var sparseRun = 0
     entries.forEach {
         var entry = it
-        if (cfg.keepTrailingFields) {
-            // pad with :. for any missing trailing fields.
-            // we delay doing this until now to avoid inflating the amount of uncompressed data
-            // involved in the big shuffle.
-            val fields = entry.split(":").toMutableList()
-            val trailers = fieldsGen.formatFieldCount - (fields.size - 1/*GT*/)
-            if (trailers > 0) {
-                repeat(trailers) {
-                    fields.add(".")
+        if (entry != null) {
+            if (sparseRun > 0) {
+                buf.append("\t\"")
+                if (sparseRun > 1) {
+                    buf.append(sparseRun.toString())
                 }
-                entry = fields.joinToString(":")
+                sparseRun = 0
             }
+            if (cfg.keepTrailingFields) {
+                // pad with :. for any missing trailing fields.
+                // we delay doing this until now to avoid inflating the amount of uncompressed data
+                // involved in the big shuffle.
+                val fields = entry.split(":").toMutableList()
+                val trailers = fieldsGen.formatFieldCount - (fields.size - 1/*GT*/)
+                if (trailers > 0) {
+                    repeat(trailers) {
+                        fields.add(".")
+                    }
+                    entry = fields.joinToString(":")
+                }
+            }
+            buf.append('\t')
+            buf.append(entry)
+        } else {
+            check(!checkpoint, { "BUG: checkpoint row should be fully dense" })
+            sparseRun += 1
         }
-        buf.append('\t')
-        buf.append(entry)
         entryCount += 1
     }
     check(entryCount == aggHeader.samples.size)
+    if (sparseRun > 0) {
+        buf.append("\t\"")
+        if (sparseRun > 1) {
+            buf.append(sparseRun.toString())
+        }
+    }
 
     // generate compressed line for pVCF sorting
     return Snappy.compress(buf.toString().toByteArray())
 }
 
 /**
- * Write pVCF header
+ * Write spVCF header
  */
-fun jointVcfHeader(
+fun jointHeader(
     cfg: JointConfig,
     aggHeader: AggVcfHeader,
     pvcfHeaderMetaLines: List<String>,
     fieldsGen: JointFieldsGenerator
 ): String {
     val ans = StringBuilder()
-    ans.appendLine("##fileformat=VCFv4.3")
+    ans.appendLine("##fileformat=spVCFv1;VCFv4.3")
 
     pvcfHeaderMetaLines.forEach {
         ans.append("##")

@@ -85,9 +85,10 @@ class SparseGenotypeFrameEncoder {
 }
 
 /**
- * Decode the sparse genotypes, yielding a (dense) sequence of pVCF entries.
+ * Decode the sparse genotypes, yielding a sequence of pVCF entries interleaved with nulls which
+ * mean to repeat the last non-null entry.
  */
-fun decodeSparseGenotypeFrame(input: ByteArray): Sequence<String> {
+fun decodeSparseGenotypeFrame(input: ByteArray): Sequence<String?> {
     return sequence {
         val entryBuffer = StringBuilder()
         for (byte in input) {
@@ -97,8 +98,9 @@ fun decodeSparseGenotypeFrame(input: ByteArray): Sequence<String> {
                 require(entryBuffer.isNotEmpty(), { "sparse genotypes corrupt" })
                 val entry = entryBuffer.toString()
                 entryBuffer.clear()
-                repeat(ubyte - 127) { // 1 if repeats = 0 / ubyte = 128
-                    yield(entry)
+                yield(entry)
+                repeat(ubyte - 128) {
+                    yield(null)
                 }
             } else { // one character of a pVCF entry
                 entryBuffer.append(ubyte.toChar())

@@ -211,7 +211,7 @@ class CLI : CliktCommand() {
                 "vcfGLuer_version=${getProjectVersion()}",
                 "vcfGLuer_config=$cfg"
             )
-            val (pvcfHeader, pvcfLineCount, pvcfLines) = jointCall(
+            val (spvcfHeader, pvcfLineCount, spvcfLines) = jointCall(
                 cfg.joint,
                 spark,
                 aggHeader,
@@ -222,15 +222,15 @@ class CLI : CliktCommand() {
             )
             check(pvcfLineCount == variantCount.toLong())
             logger.info("sparse genotype entries: ${sparseEntryCount.sum().pretty()}")
-            logger.info("writing ${pvcfLineCount.pretty()} pVCF lines...")
+            logger.info("writing ${pvcfLineCount.pretty()} spVCF lines...")
 
-            // write output pVCF files
+            // write output spVCF files
             writeJointFiles(
                 logger,
                 aggHeader.contigs,
                 splitRanges,
-                pvcfHeader,
-                pvcfLines,
+                spvcfHeader,
+                spvcfLines,
                 pvcfDir,
                 variantCount
             )

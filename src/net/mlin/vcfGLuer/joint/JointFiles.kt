@@ -64,7 +64,7 @@ fun writeJointFiles(
             pvcfDir,
             Path(pvcfDir).getName() + "_" +
                 Path(pvcfFileParts.first().path).getParent().getName() +
-                ".vcf.gz"
+                ".spvcf.gz"
         )
         val plan = listOf(headerPath) + pvcfFileParts.map { it.path } + listOf(eofPath)
         getFileSystem(pvcfDir).concatNaive(pvcfPath, plan.map { Path(it) }.toTypedArray())
