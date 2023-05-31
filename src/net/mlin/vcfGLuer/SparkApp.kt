@@ -167,7 +167,7 @@ class CLI : CliktCommand() {
                     ans
                 }.toSet()
             }
-            val splitBedData = readSplitBed(aggHeader.contigId, splitBed)
+            val splitRanges = readSplitBed(aggHeader.contigId, splitBed)
 
             // accumulators
             val vcfRecordCount = spark.sparkContext.longAccumulator("input VCF records")
@@ -187,6 +187,7 @@ class CLI : CliktCommand() {
             val (variantCount, variantsDbLocalFilename) = collectAllVariantsDb(
                 aggHeader.contigId,
                 vcfFilenamesDF,
+                splitRanges,
                 filterRids,
                 filterRangesB,
                 onlyCalled = cfg.discovery.minCopies > 0,
@@ -228,7 +229,7 @@ class CLI : CliktCommand() {
             writeJointFiles(
                 logger,
                 aggHeader.contigs,
-                splitBedData,
+                splitRanges,
                 pvcfHeader,
                 pvcfLines,
                 pvcfDir,

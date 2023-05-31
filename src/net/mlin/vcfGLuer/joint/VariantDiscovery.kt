@@ -16,7 +16,7 @@ import org.apache.spark.util.LongAccumulator
  */
 fun discoverVariants(
     it: VcfRecord,
-    filterRanges: org.apache.spark.broadcast.Broadcast<BedRanges>? = null,
+    filterRanges: Broadcast<BedRanges>? = null,
     onlyCalled: Boolean = false
 ): List<Variant> {
     val vcfRecord = VcfRecordUnpacked(it)
@@ -89,6 +89,7 @@ fun discoverAllVariants(
 fun collectAllVariantsDb(
     contigId: Map<String, Short>,
     vcfPathsDF: Dataset<Row>,
+    splitRanges: BedRanges,
     filterRids: Set<Short>? = null,
     filterRanges: Broadcast<BedRanges>? = null,
     onlyCalled: Boolean = false,
@@ -112,11 +113,15 @@ fun collectAllVariantsDb(
                 beg INTEGER NOT NULL,
                 end INTEGER NOT NULL,
                 ref TEXT NOT NULL,
-                alt TEXT NOT NULL
+                alt TEXT NOT NULL,
+                splitId INTEGER NOT NULL,
+                frameno INTEGER NOT NULL
             )
             """
         )
-        val insert = cleanup.add(dbc.prepareStatement("INSERT INTO Variant VALUES(?,?,?,?,?,?)"))
+        val insert = cleanup.add(
+            dbc.prepareStatement("INSERT INTO Variant VALUES(?,?,?,?,?,?,?,?)")
+        )
         val allVariantsDF = discoverAllVariants(
             contigId,
             vcfPathsDF,
@@ -147,17 +152,41 @@ fun collectAllVariantsDb(
         sortedVariantsRDD.count() // force cache materialization before toLocalIterator()
         check(sortedVariantsRDD.getNumPartitions() <= 16)
         allVariantsDF.unpersist()
+
+        // for each variant (locally on the driver)
+        var lastSplitId = -1
+        var frameno = 0
         sortedVariantsRDD
             .toLocalIterator()
             .forEach { vt ->
+                // find the output file splitting range this variant belongs to
+                val splitId = splitRanges.queryOverlapping(
+                    GRange(vt.range.rid, vt.range.beg, vt.range.beg)
+                ).let {
+                    require(
+                        it.size == 1,
+                        { "--split-bed regions overlap or don't cover @ ${vt.range}" }
+                    )
+                    it.first().id
+                }
+                // start a new frame (for sparse genotype encoding) every 128 variants or whenever
+                // we advance to the next split range
+                if ((variantId + 1) % 128 == 0 || splitId != lastSplitId) {
+                    check(splitId == lastSplitId || splitId == lastSplitId + 1)
+                    frameno += 1
+                }
+                // insert into GenomicSQLite
                 insert.setInt(1, variantId)
                 insert.setInt(2, vt.range.rid.toInt())
                 insert.setInt(3, vt.range.beg - 1)
                 insert.setInt(4, vt.range.end)
                 insert.setString(5, vt.ref)
                 insert.setString(6, vt.alt)
+                insert.setInt(7, splitId)
+                insert.setInt(8, frameno)
                 insert.executeUpdate()
                 variantId += 1
+                lastSplitId = splitId
             }
         dbc.commit()
         sortedVariantsRDD.unpersist()
