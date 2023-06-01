@@ -8,6 +8,10 @@ fi
 if ! [[ -f /tmp/dv1KGP_ALDH2_gvcf.tar ]]; then
     (curl -LSs https://raw.githubusercontent.com/wiki/mlin/spVCF/dv1KGP_ALDH2_gvcf.tar > /tmp/dv1KGP_ALDH2_gvcf.tar) || exit 1
 fi
+if ! [[ -f /tmp/spvcf ]]; then
+    (curl -LSs https://github.com/mlin/spVCF/releases/download/v1.2.0/spvcf > /tmp/spvcf) || exit 1
+fi
+chmod +x /tmp/spvcf || exit 1
 
 cd "$(dirname $0)/.."
 SOURCE_DIR="$(pwd)"
@@ -50,17 +54,18 @@ time "${SPARK_HOME}/bin/spark-submit" \
 
 ls -l dv1KGP.out
 
-test -f dv1KGP.out/dv1KGP.out_12_GRCh38.chr12.vcf.gz
+test -f dv1KGP.out/dv1KGP.out_12_GRCh38.chr12.spvcf.gz && test -f dv1KGP.out/_SUCCESS
 is "$?" "0" "vcfGLuer"
-bcftools view dv1KGP.out/dv1KGP.out_12_GRCh38.chr12.vcf.gz > dv1KGP.vcf
+
+zcat dv1KGP.out/dv1KGP.out_12_GRCh38.chr12.spvcf.gz | /tmp/spvcf decode - | bcftools view - > dv1KGP.vcf
 is "$?" "0" "bcftools view"
-tabix dv1KGP.out/dv1KGP.out_12_GRCh38.chr12.vcf.gz
+tabix -p vcf dv1KGP.out/dv1KGP.out_12_GRCh38.chr12.spvcf.gz
 is "$?" "0" "tabix"
-test -f dv1KGP.out/dv1KGP.out_12_GRCh38.chr12.vcf.gz.tbi
+test -f dv1KGP.out/dv1KGP.out_12_GRCh38.chr12.spvcf.gz.tbi
 is "$?" "0" "tbi"
 
 # regression test - merging config files
-zgrep 'minCopies=1' dv1KGP.out/dv1KGP.out_12_GRCh38.chr12.vcf.gz
+zgrep 'minCopies=1' dv1KGP.out/dv1KGP.out_12_GRCh38.chr12.spvcf.gz
 is "$?" "0" "config merging"
 
 echo "$DN"
