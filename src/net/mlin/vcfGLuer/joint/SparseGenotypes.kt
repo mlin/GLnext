@@ -13,9 +13,9 @@ import net.mlin.vcfGLuer.util.*
  * joint variants are covered by that same reference band. (Assumes that only GT and DP are filled
  * in from reference bands.)
  *
- * This series effectively conveys part of a pVCF column. The joint-calling process generates these
- * for "frames" of 128 variants at a time, then groups corresponding frames across all samples to
- * generate the pVCF lines for each frame.
+ * This series effectively represents part of a spVCF column. The joint-calling process generates
+ * these for "frames" of up to 128 variants at a time, then groups corresponding frames from all
+ * samples to generate spVCF for each frame.
  */
 
 class SparseGenotypeFrameEncoder {
@@ -24,6 +24,7 @@ class SparseGenotypeFrameEncoder {
     private var prevRefBand: VcfRecordUnpacked? = null
     private var repeat: Int = 0
     private var totalRepeatCounter: Long = 0
+    private var vacuous_: Boolean = true
 
     /**
      * Peek at the GenotypingContext for the next variant. If it just has the last-seen reference
@@ -61,11 +62,14 @@ class SparseGenotypeFrameEncoder {
         prevEmpty = ctx.callsetRecords.isEmpty()
         prevRefBand = ctx.soleReferenceBand
         check(!prevEmpty || prevRefBand == null)
+        if (!prevEmpty) {
+            vacuous_ = false
+        }
         repeat = 0
     }
 
     /**
-     * Return the encoded genotypes at the end of the frame. The encoder may then be reused.
+     * Return the encoded genotypes at the end of the frame, and reset()
      */
     fun completeFrame(): ByteArray {
         if (buffer.size() > 0 && repeat > 0) {
@@ -73,21 +77,51 @@ class SparseGenotypeFrameEncoder {
             totalRepeatCounter += repeat
         }
         val ans = buffer.toByteArray()
+        reset()
+        return ans
+    }
+
+    /**
+     * Reset encoder to its initial state
+     */
+    fun reset() {
         buffer.reset()
         prevEmpty = false
         prevRefBand = null
         repeat = 0
-        return ans
+        vacuous_ = true
     }
+
+    /**
+     * True iff the frame is empty or contains exclusively "." entries
+     */
+    val vacuous: Boolean
+        get() = vacuous_
 
     val totalRepeats: Long
         get() = totalRepeatCounter
 }
 
 /**
- * Decode the sparse genotypes, yielding a (dense) sequence of pVCF entries.
+ * Generate frame of `size` missing genotypes (.)
  */
-fun decodeSparseGenotypeFrame(input: ByteArray): Sequence<String> {
+fun vacuousSparseGenotypeFrame(size: Int): ByteArray {
+    require(0 <= size && size <= 128)
+    val buf = ByteArrayOutputStream()
+    if (size > 0) {
+        buf.write('.'.toInt())
+        if (size > 1) {
+            buf.write(127 + size)
+        }
+    }
+    return buf.toByteArray()
+}
+
+/**
+ * Decode the sparse genotypes, yielding a sequence of pVCF entries interleaved with nulls which
+ * mean to repeat the last non-null entry.
+ */
+fun decodeSparseGenotypeFrame(input: ByteArray): Sequence<String?> {
     return sequence {
         val entryBuffer = StringBuilder()
         for (byte in input) {
@@ -97,11 +131,12 @@ fun decodeSparseGenotypeFrame(input: ByteArray): Sequence<String> {
                 require(entryBuffer.isNotEmpty(), { "sparse genotypes corrupt" })
                 val entry = entryBuffer.toString()
                 entryBuffer.clear()
-                repeat(ubyte - 127) { // 1 if repeats = 0 / ubyte = 128
-                    yield(entry)
+                yield(entry)
+                repeat(ubyte - 128) {
+                    yield(null)
                 }
             } else { // one character of a pVCF entry
-                entryBuffer.append(byte.toChar())
+                entryBuffer.append(ubyte.toChar())
             }
         }
         if (entryBuffer.isNotEmpty()) {

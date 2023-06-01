@@ -34,8 +34,8 @@ class CLI : CliktCommand() {
     val inputFiles: List<String> by
         argument(help = "Input VCF filenames (or manifest(s) with --manifest)")
             .multiple(required = true)
-    val pvcfDir: String by
-        argument(help = "Output directory for pVCF parts (mustn't already exist)")
+    val outputDir: String by
+        argument(help = "Output directory for spVCF parts (mustn't already exist)")
     val manifest by
         option(help = "Input files are manifest(s) containing one VCF filename per line")
             .flag(default = false)
@@ -47,7 +47,7 @@ class CLI : CliktCommand() {
             help = "Contigs to process, comma-separated (intersect with BED regions, if any)"
         )
     val splitBed: String? by
-        option(help = "Guide pVCF part splitting using non-overlapping regions from this BED file")
+        option(help = "Guide spVCF part splitting using non-overlapping regions from this BED file")
     val tmpDir: String? by
         option(
             help = "Shared (HDFS) temporary directory"
@@ -167,7 +167,7 @@ class CLI : CliktCommand() {
                     ans
                 }.toSet()
             }
-            val splitBedData = readSplitBed(aggHeader.contigId, splitBed)
+            val splitRanges = readSplitBed(aggHeader.contigId, splitBed)
 
             // accumulators
             val vcfRecordCount = spark.sparkContext.longAccumulator("input VCF records")
@@ -187,6 +187,7 @@ class CLI : CliktCommand() {
             val (variantCount, variantsDbLocalFilename) = collectAllVariantsDb(
                 aggHeader.contigId,
                 vcfFilenamesDF,
+                splitRanges,
                 filterRids,
                 filterRangesB,
                 onlyCalled = cfg.discovery.minCopies > 0,
@@ -210,28 +211,27 @@ class CLI : CliktCommand() {
                 "vcfGLuer_version=${getProjectVersion()}",
                 "vcfGLuer_config=$cfg"
             )
-            val (pvcfHeader, pvcfLineCount, pvcfLines) = jointCall(
+            val (spvcfHeader, pvcfLineCount, spvcfLines) = jointCall(
                 cfg.joint,
                 spark,
                 aggHeader,
                 variantsDbSparkFile,
                 vcfFilenamesDF,
                 pvcfHeaderMetaLines,
-                128, // TODO: configurable sparseFrameSize
                 sparseEntryCount
             )
             check(pvcfLineCount == variantCount.toLong())
             logger.info("sparse genotype entries: ${sparseEntryCount.sum().pretty()}")
-            logger.info("writing ${pvcfLineCount.pretty()} pVCF lines...")
+            logger.info("writing ${pvcfLineCount.pretty()} spVCF lines...")
 
-            // write output pVCF files
+            // write output spVCF files
             writeJointFiles(
                 logger,
                 aggHeader.contigs,
-                splitBedData,
-                pvcfHeader,
-                pvcfLines,
-                pvcfDir,
+                splitRanges,
+                spvcfHeader,
+                spvcfLines,
+                outputDir,
                 variantCount
             )
         }

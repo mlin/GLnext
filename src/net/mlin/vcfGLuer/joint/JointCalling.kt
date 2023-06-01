@@ -34,8 +34,8 @@ data class JointConfig(
 ) : Serializable
 
 /**
- * From local databases of variants & VCF records, generate pVCF header, pVCF line count, and
- * sorted DataFrame of Snappy-compressed pVCF lines
+ * From local databases of variants & VCF records, generate spVCF header, pVCF line count, and
+ * sorted DataFrame of Snappy-compressed spVCF lines
  */
 fun jointCall(
     cfg: JointConfig,
@@ -44,10 +44,8 @@ fun jointCall(
     variantsDbSparkFile: String,
     vcfFilenamesDF: Dataset<Row>,
     pvcfHeaderMetaLines: List<String>,
-    sparseFrameSize: Int = 128,
     sparseEntryCount: LongAccumulator? = null
 ): Triple<String, Long, Dataset<Row>> {
-    check(sparseFrameSize >= 1 && sparseFrameSize <= 128)
     // broadcast supporting data for joint calling; using JavaSparkContext to sidestep
     // kotlin-spark-api overrides
     val jsc = JavaSparkContext(spark.sparkContext)
@@ -55,7 +53,7 @@ fun jointCall(
     val fieldsGenB = jsc.broadcast(JointFieldsGenerator(cfg, aggHeader))
 
     // make big DataFrame of sparse joint genotypes for each sample and "frame" of variants.
-    // the frameno to which each variant belongs is: (variantId/sparseFrameSize)
+    // variant discovery already assigned each variant to a frame number (frameno).
     val sparseGenotypesDF = vcfFilenamesDF.flatMap(
         FlatMapFunction<Row, Row> {
             generateJointCalls(
@@ -65,7 +63,6 @@ fun jointCall(
                 SparkFiles.get(variantsDbSparkFile),
                 it.getAs<Int>("callsetId"),
                 it.getAs<String>("vcfFilename"),
-                sparseFrameSize,
                 sparseEntryCount
             ).iterator()
         },
@@ -77,18 +74,17 @@ fun jointCall(
         )
     )
 
-    // group the sparse genotypes by frameno & generate pVCF text lines (Snappy-compressed)
-    val pvcfLinesDF = sparseGenotypesDF
+    // group the sparse genotypes by frameno & generate spVCF text lines (Snappy-compressed)
+    val spvcfLinesDF = sparseGenotypesDF
         .groupByKey(MapFunction<Row, Int> { it.getAs<Int>(0) }, Encoders.INT())
         .flatMapGroups(
             FlatMapGroupsFunction<Int, Row, Row> { frameno, sparseGenotypeFrames ->
-                decodeSparseGenotypeFramesToVcfLines(
+                transposeSparseGenotypeFrames(
                     cfg,
                     aggHeaderB.value,
                     fieldsGenB.value,
                     SparkFiles.get(variantsDbSparkFile),
                     frameno,
-                    sparseFrameSize,
                     sparseGenotypeFrames
                 ).iterator()
             },
@@ -98,21 +94,23 @@ fun jointCall(
                     .add("rid", DataTypes.ShortType, false)
                     .add("beg", DataTypes.IntegerType, false)
                     .add("end", DataTypes.IntegerType, false)
+                    .add("splitId", DataTypes.IntegerType, false)
+                    .add("frameno", DataTypes.IntegerType, false)
                     .add("snappyLine", DataTypes.BinaryType, false)
             )
             // persist before sorting: https://stackoverflow.com/a/56310076
         ).persist(org.apache.spark.storage.StorageLevel.DISK_ONLY())
 
-    val pvcfLinesSortedDF = pvcfLinesDF
+    val spvcfLinesSortedDF = spvcfLinesDF
         .sort("variantId").persist(org.apache.spark.storage.StorageLevel.DISK_ONLY())
 
     // Perform a count() to force pvcfLinesDF, ensuring it registers as an SQL query in the history
     // server before subsequent steps that will drop to RDD. This provides useful diagnostic info
     // that would otherwise go missing at RDD level.
-    val pvcfLineCount = pvcfLinesSortedDF.count()
-    pvcfLinesDF.unpersist()
-    val pvcfHeader = jointVcfHeader(cfg, aggHeader, pvcfHeaderMetaLines, fieldsGenB.value)
-    return Triple(pvcfHeader, pvcfLineCount, pvcfLinesSortedDF)
+    val spvcfLineCount = spvcfLinesSortedDF.count()
+    spvcfLinesDF.unpersist()
+    val spvcfHeader = jointHeader(cfg, aggHeader, pvcfHeaderMetaLines, fieldsGenB.value)
+    return Triple(spvcfHeader, spvcfLineCount, spvcfLinesSortedDF)
 }
 
 /**
@@ -125,7 +123,6 @@ fun generateJointCalls(
     variantsDbFilename: String,
     callsetId: Int,
     vcfFilename: String,
-    sparseFrameSize: Int,
     sparseEntryCount: LongAccumulator? = null
 ): Sequence<Row> = // [(frameno, sampleId, sparseGenotypes)]
     sequence {
@@ -139,9 +136,7 @@ fun generateJointCalls(
                     "SELECT * FROM Variant ORDER BY variantId"
                 )
                 while (rs.next()) {
-                    val variantId = rs.getInt("variantId")
-                    val variant = Variant(rs)
-                    yield(variantId to variant)
+                    yield(VariantsDbRow(rs))
                 }
             }
         }
@@ -154,12 +149,12 @@ fun generateJointCalls(
             // collate the two sequences to generate GenotypingContexts with each variant and the
             // overlapping VCF records
             generateGenotypingContexts(variants, records).forEach { ctx ->
-                val frameno = ctx.variantId / sparseFrameSize
-                if (frameno != lastFrameno) {
-                    if (lastFrameno >= 0) {
-                        check(frameno == lastFrameno + 1)
-                        // moving on to new frame: complete the previous frame
-                        frameEncoders.forEachIndexed { sampleIndex, encoder ->
+                val frameno = ctx.variantRow.frameno
+                if (frameno != lastFrameno && lastFrameno >= 0) {
+                    check(frameno == lastFrameno + 1)
+                    // moving on to new frame: complete the previous frame
+                    frameEncoders.forEachIndexed { sampleIndex, encoder ->
+                        if (!encoder.vacuous) {
                             yield(
                                 RowFactory.create(
                                     lastFrameno,
@@ -167,10 +162,12 @@ fun generateJointCalls(
                                     encoder.completeFrame()
                                 )
                             )
+                        } else {
+                            encoder.reset()
                         }
                     }
-                    lastFrameno = frameno
                 }
+                lastFrameno = frameno
                 // add to the current frame, repeating the prior ref-band-derived entry if
                 // possible; otherwise generate the appropriate entry.
                 frameEncoders.forEachIndexed { sampleIndex, encoder ->
@@ -190,14 +187,16 @@ fun generateJointCalls(
             if (lastFrameno >= 0) {
                 // complete the final frame
                 frameEncoders.forEachIndexed { sampleIndex, encoder ->
-                    yield(
-                        RowFactory.create(
-                            lastFrameno,
-                            callsetSamples[sampleIndex], // sampleId
-                            encoder.completeFrame()
+                    if (!encoder.vacuous) {
+                        yield(
+                            RowFactory.create(
+                                lastFrameno,
+                                callsetSamples[sampleIndex], // sampleId
+                                encoder.completeFrame()
+                            )
                         )
-                    )
-                    sparseEntryCount?.let { it.add(encoder.totalRepeats) }
+                        sparseEntryCount?.let { it.add(encoder.totalRepeats) }
+                    }
                 }
             }
             check(GenomicSQLiteReadOnlyPool.distinctConnections() < 1000)
@@ -223,7 +222,7 @@ fun generateGenotypeAndFormatFields(
         // choose one of variantRecords to work from
         // TODO: should we instead just no-call this unusual case?
         data.variantRecords.sortedByDescending {
-            val altIdx = it.getAltIndex(data.variant)
+            val altIdx = it.getAltIndex(data.variantRow.variant)
             check(altIdx > 0)
             val gt = it.getDiploidGenotype(sampleIndex)
             // copy number
@@ -237,7 +236,7 @@ fun generateGenotypeAndFormatFields(
         }.first()
     }
 
-    val altIdx = record.getAltIndex(data.variant)
+    val altIdx = record.getAltIndex(data.variantRow.variant)
     check(altIdx > 0)
     val gtIn = record.getDiploidGenotype(sampleIndex)
 
@@ -278,18 +277,18 @@ fun generateRefGenotypeAndFormatFields(
     // count copies of other overlapping variants
     var otherOverlaps = countAltCopies(data.otherVariantRecords, sampleIndex)
     var refRanges = data.otherVariantRecords.map {
-        check(it.record.range.overlaps(data.variant.range))
+        check(it.record.range.overlaps(data.variantRow.variant.range))
         val gt = it.getDiploidGenotype(sampleIndex)
         if (gt.allele1 != null && gt.allele2 != null) it.record.range else null
     }.filterNotNull()
 
     // check if overlapping records and reference bands completely covered the focal variant range
     refRanges += data.referenceBands.filter {
-        check(it.record.range.overlaps(data.variant.range))
+        check(it.record.range.overlaps(data.variantRow.variant.range))
         val gt = it.getDiploidGenotype(sampleIndex)
         gt.allele1 == 0 && gt.allele2 == 0
     }.map { it.record.range }
-    val refCoverage = data.variant.range.subtract(refRanges).isEmpty()
+    val refCoverage = data.variantRow.variant.range.subtract(refRanges).isEmpty()
     val refCall = if (refCoverage) 0 else null
 
     val allele1 = if (otherOverlaps > 0) genotypeOverlapSentinel(cfg.gt.overlapMode) else refCall
@@ -318,19 +317,23 @@ fun genotypeOverlapSentinel(mode: GT_OverlapMode): Int? = when (mode) {
 }
 
 /**
- * Given the sparseGenotypeFrames gathered from all samples for this frameno, generate the dense
- * pVCF text lines (Snappy-compressed)
+ * Given the sparseGenotypeFrames gathered from all samples for this frameno, transpose them into
+ * spVCF text lines (Snappy-compressed).
+ *
+ * Although we could easily generate complete spVCF frames instead of individual lines, doing so
+ * might conveivably approach a 2G JVM limit and/or severely skew the Spark partitions. And in
+ * variant discovery, we designed the framenos to ensure each split range will contain complete
+ * frames (beginning with a spVCF checkpoint) after reassembling the individual lines.
  */
-fun decodeSparseGenotypeFramesToVcfLines(
+fun transposeSparseGenotypeFrames(
     cfg: JointConfig,
     aggHeader: AggVcfHeader,
     fieldsGen: JointFieldsGenerator,
     variantsDbFilename: String,
     frameno: Int,
-    sparseFrameSize: Int,
     sparseGenotypeFrames: Iterator<Row> // [(frameno, sampleId, sparseGenotypes)]
-): Sequence<Row> { // [(variantId, rid, beg, end, snappyLine)]
-    // fetch this frame's variants from the broadcast database file
+): Sequence<Row> { // [(variantId, rid, beg, end, splitId, frameno, snappyLine)]
+    // load this frame's variants from the broadcast database file
     val variants = ExitStack().use { cleanup ->
         val dbc = cleanup.add(
             GenomicSQLiteReadOnlyPool
@@ -339,68 +342,94 @@ fun decodeSparseGenotypeFramesToVcfLines(
         )
         check(GenomicSQLiteReadOnlyPool.distinctConnections() < 1000)
         val getVariants = cleanup.add(
-            dbc.prepareStatement("SELECT * from Variant WHERE variantId >= ?")
+            dbc.prepareStatement(
+                """
+                SELECT * FROM Variant INDEXED BY VariantFrameno
+                WHERE frameno = ? ORDER BY variantId
+                """
+            )
         )
-        var variantId = frameno * sparseFrameSize
-        getVariants.setInt(1, variantId)
+        getVariants.setInt(1, frameno)
         val rs = cleanup.add(getVariants.executeQuery())
-        val lst = mutableListOf<Variant>()
-        for (i in 0 until sparseFrameSize) {
-            if (!rs.next()) {
-                break
-            }
-            val v = Variant(rs)
-            check(rs.getInt("variantId") == variantId)
-            lst.add(v)
-            variantId += 1
+        val lst = mutableListOf<VariantsDbRow>()
+        var lastVariantId = -1
+        while (rs.next()) {
+            val row = VariantsDbRow(rs)
+            check(lastVariantId < 0 || row.variantId == lastVariantId + 1)
+            lastVariantId = row.variantId
+            lst.add(row)
         }
         lst
     }
 
     // initialize decoders for each sample from sparseGenotypeFrames
+    var totalFrameCount = 0
     val framesBySampleId = sparseGenotypeFrames.asSequence().associateBy(
         {
             check(it.getAs<Int>("frameno") == frameno)
+            totalFrameCount += 1
             it.getAs<Int>("sampleId")
         },
         { it.getAs<ByteArray>("sparseGenotypes") }
     )
+    require(
+        totalFrameCount == framesBySampleId.size,
+        { "colliding sparse genotype frames; check input files for duplication/overlap" }
+    )
+    val vacuousFrame = vacuousSparseGenotypeFrame(variants.size)
     val decoders = Array(aggHeader.samples.size) {
-        decodeSparseGenotypeFrame(framesBySampleId.get(it)!!).iterator()
+        decodeSparseGenotypeFrame(framesBySampleId.getOrDefault(it, vacuousFrame)).iterator()
     }
 
-    // for each variant, decode all the genotypes & assemble the pVCF line
+    // for each variant, decode all the genotypes & assemble the spVCF line
     return sequence {
-        variants.forEachIndexed { ofs, variant ->
-            val variantId = frameno * sparseFrameSize + ofs
-            val entries = decoders.asSequence().map { it.next()!! }
-            val snappyLine = assembleJointLine(cfg, aggHeader, fieldsGen, variant, entries)
-            yield(
-                RowFactory.create(
-                    variantId,
-                    variant.range.rid,
-                    variant.range.beg,
-                    variant.range.end,
-                    snappyLine
+        if (variants.isNotEmpty()) {
+            val checkpointVariant = variants.first().variant
+            variants.forEach { vdbrow ->
+                val entries = decoders.asSequence().map { it.next() }
+                val snappyLine = assembleJointLine(
+                    cfg,
+                    aggHeader,
+                    fieldsGen,
+                    checkpointVariant,
+                    vdbrow.variant,
+                    entries
                 )
-            )
+                yield(
+                    RowFactory.create(
+                        vdbrow.variantId,
+                        vdbrow.variant.range.rid,
+                        vdbrow.variant.range.beg,
+                        vdbrow.variant.range.end,
+                        vdbrow.splitId,
+                        vdbrow.frameno,
+                        snappyLine
+                    )
+                )
+            }
         }
-        decoders.forEach { check(!it.hasNext()) }
+        decoders.forEach {
+            check(!it.hasNext(), {
+                "BUG: sparse genotype frames aren't consistent across samples"
+            })
+        }
     }
 }
 
 /**
- * Given all the genotype entries for a specific variant, assemble the pVCF line as a compressed
- * buffer. The Snappy compression is just to reduce the amount of data Spark has to shuffle around
- * to sort the lines afterwards.
+ * Given the sparse genotype entries for a specific variant, assemble the spVCF line as a
+ * compressed buffer. The Snappy compression is just to reduce the amount of data Spark has to
+ * shuffle around to sort the lines afterwards.
  */
 fun assembleJointLine(
     cfg: JointConfig,
     aggHeader: AggVcfHeader,
     fieldsGen: JointFieldsGenerator,
+    checkpointVariant: Variant,
     variant: Variant,
-    entries: Sequence<String>
+    entries: Sequence<String?>
 ): ByteArray {
+    val checkpoint = variant.compareTo(checkpointVariant) == 0
     val buf = StringBuilder()
 
     buf.append(aggHeader.contigs[variant.range.rid.toInt()]) // CHROM
@@ -412,48 +441,73 @@ fun assembleJointLine(
     buf.append(variant.alt) // ALT
     buf.append("\t.\t") // QUAL
     buf.append("PASS") // FILTER
-    buf.append("\t.\t") // fieldsGen.generateInfoFields()      INFO
+    buf.append('\t')
+    if (checkpoint) { // INFO; TODO: fieldsGen.generateInfoFields()
+        buf.append('.')
+    } else {
+        buf.append("spVCF_checkpointPOS=${checkpointVariant.range.beg}")
+    }
+    buf.append('\t')
     buf.append( // FORMAT
         (listOf("GT") + cfg.formatFields.map { it.name }).joinToString(":")
     )
 
     var entryCount = 0
+    var sparseRun = 0
     entries.forEach {
         var entry = it
-        if (cfg.keepTrailingFields) {
-            // pad with :. for any missing trailing fields.
-            // we delay doing this until now to avoid inflating the amount of uncompressed data
-            // involved in the big shuffle.
-            val fields = entry.split(":").toMutableList()
-            val trailers = fieldsGen.formatFieldCount - (fields.size - 1/*GT*/)
-            if (trailers > 0) {
-                repeat(trailers) {
-                    fields.add(".")
+        if (entry != null) {
+            if (sparseRun > 0) {
+                buf.append("\t\"")
+                if (sparseRun > 1) {
+                    buf.append(sparseRun.toString())
                 }
-                entry = fields.joinToString(":")
+                sparseRun = 0
             }
+            if (cfg.keepTrailingFields) {
+                // pad with :. for any missing trailing fields.
+                // we delay doing this until now to avoid inflating the amount of uncompressed data
+                // involved in the big shuffle.
+                val fields = entry.split(":").toMutableList()
+                val trailers = fieldsGen.formatFieldCount - (fields.size - 1/*GT*/)
+                if (trailers > 0) {
+                    repeat(trailers) {
+                        fields.add(".")
+                    }
+                    entry = fields.joinToString(":")
+                }
+            }
+            buf.append('\t')
+            buf.append(entry)
+        } else {
+            check(!checkpoint, { "BUG: checkpoint row should be fully dense" })
+            sparseRun += 1
         }
-        buf.append('\t')
-        buf.append(entry)
         entryCount += 1
     }
     check(entryCount == aggHeader.samples.size)
+    if (sparseRun > 0) {
+        buf.append("\t\"")
+        if (sparseRun > 1) {
+            buf.append(sparseRun.toString())
+        }
+    }
 
     // generate compressed line for pVCF sorting
     return Snappy.compress(buf.toString().toByteArray())
 }
 
 /**
- * Write pVCF header
+ * Write spVCF header
  */
-fun jointVcfHeader(
+fun jointHeader(
     cfg: JointConfig,
     aggHeader: AggVcfHeader,
     pvcfHeaderMetaLines: List<String>,
     fieldsGen: JointFieldsGenerator
 ): String {
     val ans = StringBuilder()
-    ans.appendLine("##fileformat=VCFv4.3")
+    ans.appendLine("##fileformat=spVCFv1;VCFv4.3")
 
     pvcfHeaderMetaLines.forEach {
         ans.append("##")

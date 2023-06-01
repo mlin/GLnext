@@ -3,11 +3,28 @@ import net.mlin.vcfGLuer.data.*
 import net.mlin.vcfGLuer.util.*
 
 /**
+ * one row of the variants GenomicSQLite database
+ */
+data class VariantsDbRow(
+    val variantId: Int,
+    val splitId: Int,
+    val frameno: Int,
+    val variant: Variant
+) {
+    constructor(rs: java.sql.ResultSet) :
+        this(
+            rs.getInt("variantId"),
+            rs.getInt("splitId"),
+            rs.getInt("frameno"),
+            Variant(rs)
+        ) {}
+}
+
+/**
  * Callset records assorted into reference bands, records containing the focal variant, and others
  */
 class GenotypingContext(
-    val variantId: Int,
-    val variant: Variant,
+    val variantRow: VariantsDbRow,
     val callsetRecords: List<VcfRecordUnpacked>
 ) {
     val referenceBands: List<VcfRecordUnpacked>
@@ -24,14 +41,14 @@ class GenotypingContext(
         var parts = callsetRecords.partition { it.altVariants.filterNotNull().isEmpty() }
         referenceBands = parts.first
         // partition variant records based on whether they include the focal variant
-        parts = parts.second.partition { it.altVariants.contains(variant) }
+        parts = parts.second.partition { it.altVariants.contains(variantRow.variant) }
         variantRecords = parts.first
         otherVariantRecords = parts.second
 
         var band: VcfRecordUnpacked? = null
         if (referenceBands.size == 1 && variantRecords.isEmpty() && otherVariantRecords.isEmpty()) {
             val band2 = referenceBands.first()
-            if (band2.record.range.contains(variant.range)) {
+            if (band2.record.range.contains(variantRow.variant.range)) {
                 band = band2
             }
         }
@@ -47,7 +64,7 @@ class GenotypingContext(
  * too overlapping. These assumptions match up with small-variant gVCF inputs, of course.
  */
 fun generateGenotypingContexts(
-    variants: Sequence<Pair<Int, Variant>>, // (variantId, variant)
+    variants: Sequence<VariantsDbRow>,
     recordsIter: Iterator<VcfRecord>
 ): Sequence<GenotypingContext> {
     // buffer of records whose ranges don't strictly precede (<<) the last-processed variant, nor
@@ -61,8 +78,8 @@ fun generateGenotypingContexts(
     var lastRecordRange: GRange? = null
 
     // for each variant
-    return variants.map { (variantId, variant) ->
-        val vr = variant.range
+    return variants.map { vdbrow ->
+        val vr = vdbrow.variant.range
         lastVariantRange?.let { require(it <= vr) }
         lastVariantRange = vr
 
@@ -102,7 +119,7 @@ fun generateGenotypingContexts(
         //   prior variant   |-----------------------------------|
         //   focal variant                  |------|
         // retained record                                     |----|
-        val hits = workingSet.filter { it.record.range.overlaps(variant.range) }
-        GenotypingContext(variantId, variant, hits)
+        val hits = workingSet.filter { it.record.range.overlaps(vdbrow.variant.range) }
+        GenotypingContext(vdbrow, hits)
     }
 }
