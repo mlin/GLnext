@@ -188,6 +188,42 @@ class VcfRecordUnpacked(val record: VcfRecord) {
             if (vt == variant) (idx + 1) else null
         }.firstNotNullOfOrNull { it } ?: -1
     }
+
+    fun getSampleAltQualities(sampleIndex: Int): Array<Int?> {
+        // Compute the quality score for existence of each ALT allele in the given sample.
+        // We define this as:
+        //     min(PL of genotypes with no copies of the allele)
+        //   - min(PL of genotypes with at least one copy of the allele)
+        //   (but not less than zero)
+        val PL = getSampleFieldInts(sampleIndex, "PL")
+        val genotypeCount = diploidGenotypeCount(altVariants.size + 1)
+
+        return altVariants.mapIndexed { i, vt ->
+            val altIndex = i + 1
+
+            var score_with = Int.MAX_VALUE
+            var score_without = Int.MAX_VALUE
+            for (genotypeIndex in 0 until genotypeCount) {
+                val score = if (PL.size > genotypeIndex) {
+                    PL[genotypeIndex]
+                } else { null } ?: Int.MAX_VALUE
+                val (allele1, allele2) = diploidGenotypeAlleles(genotypeIndex)
+                if (allele1 == altIndex || allele2 == altIndex) {
+                    score_with = kotlin.math.min(score_with, score)
+                } else {
+                    score_without = kotlin.math.min(score_without, score)
+                }
+            }
+
+            if (score_without == Int.MAX_VALUE || score_with == Int.MAX_VALUE) {
+                null
+            } else if (score_without < score_with) {
+                0
+            } else {
+                score_without - score_with
+            }
+        }.toTypedArray()
+    }
 }
 
 /**
@@ -215,4 +251,24 @@ data class DiploidGenotype(val allele1: Int?, val allele2: Int?, val phased: Boo
             (if (phased) "|" else "/") +
             (if (allele2 == null) "." else allele2.toString())
     }
+}
+
+fun diploidGenotypeCount(alleleCount: Int): Int {
+    return (alleleCount + 1) * alleleCount / 2
+}
+
+fun diploidGenotypeIndex(allele1: Int, allele2: Int): Int {
+    require(allele1 >= 0 && allele2 >= 0)
+    if (allele2 < allele2) {
+        return (allele1 * (allele1 + 1) / 2) + allele2
+    }
+    return (allele2 * (allele2 + 1) / 2) + allele1
+}
+
+fun diploidGenotypeAlleles(genotypeIndex: Int): Pair<Int, Int> {
+    val allele2 = ((kotlin.math.sqrt((8 * genotypeIndex + 1).toDouble()) - 1.0) / 2.0).toInt()
+    val allele1 = genotypeIndex - allele2 * (allele2 + 1) / 2
+    check(diploidGenotypeIndex(allele1, allele2) == genotypeIndex)
+    check(diploidGenotypeIndex(allele2, allele1) == genotypeIndex)
+    return (allele1 to allele2)
 }

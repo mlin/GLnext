@@ -7,51 +7,65 @@ import org.apache.spark.api.java.function.Function
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.Dataset
 import org.apache.spark.sql.Row
+import org.apache.spark.sql.functions.*
 import org.apache.spark.util.LongAccumulator
 
-/**
- * Harvest variants from a VCF record
- * filterRanges: only include variants contained within one of these ranges
- * onlyCalled: only include variants with at least one copy called in a sample GT
- */
-fun discoverVariants(
-    it: VcfRecord,
-    filterRanges: Broadcast<BedRanges>? = null,
-    onlyCalled: Boolean = false
-): List<Variant> {
-    val vcfRecord = VcfRecordUnpacked(it)
-    val variants = vcfRecord.altVariants.copyOf()
-    if (!onlyCalled) {
-        return variants.filterNotNull()
-            .filter {
-                    vt ->
-                filterRanges?.let {
-                    it.value!!.hasContaining(vt.range)
-                } ?: true
-            }
-    }
-    val copies = variants.map { 0 }.toTypedArray()
-    for (sampleIndex in 0 until vcfRecord.sampleCount) {
-        val gt = vcfRecord.getDiploidGenotype(sampleIndex)
-        if (gt.allele1 != null && gt.allele1 > 0) {
-            copies[gt.allele1 - 1]++
-        }
-        if (gt.allele2 != null && gt.allele2 > 0) {
-            copies[gt.allele2 - 1]++
-        }
-    }
-    return variants.filterIndexed { i, _ -> copies[i] > 0 }
-        .filterNotNull()
-        .filter {
-                vt ->
-            filterRanges?.let {
-                it.value!!.hasContaining(vt.range)
-            } ?: true
-        }
+data class VariantStats(val copies: Int, val qual: Int?, val qual2: Int?) {
+    constructor(row: Row) :
+        this(
+            row.getAs<Int>("copies"),
+            row.getAs<Int>("qual"),
+            row.getAs<Int>("qual2")
+        )
+    constructor(rs: java.sql.ResultSet) :
+        this(
+            rs.getInt("copies"),
+            rs.getInt("qual"),
+            rs.getInt("qual2")
+        )
+}
+data class DiscoveredVariant(val variant: Variant, val stats: VariantStats) {
+    constructor(row: Row) : this(Variant(row), VariantStats(row))
+    constructor(rs: java.sql.ResultSet) : this(Variant(rs), VariantStats(rs))
 }
 
 /**
- * Harvest all distinct Variants from the input VCF files
+ * Harvest variants from a VCF record, yielding one DiscoveredVariant per ALT allele per sample
+ * filterRanges: only include variants contained within one of these ranges
+ */
+fun discoverVariants(
+    it: VcfRecord,
+    filterRanges: Broadcast<BedRanges>? = null
+): Sequence<DiscoveredVariant> {
+    return sequence {
+        val vcfRecord = VcfRecordUnpacked(it)
+        for (sampleIndex in 0 until vcfRecord.sampleCount) {
+            val qualities = vcfRecord.getSampleAltQualities(sampleIndex)
+            val copies = vcfRecord.altVariants.map { 0 }.toTypedArray()
+            val gt = vcfRecord.getDiploidGenotype(sampleIndex)
+            if (gt.allele1 != null && gt.allele1 > 0) {
+                copies[gt.allele1 - 1]++
+            }
+            if (gt.allele2 != null && gt.allele2 > 0) {
+                copies[gt.allele2 - 1]++
+            }
+
+            vcfRecord.altVariants.forEachIndexed { i, vt ->
+                if (vt != null &&
+                    (filterRanges?.let { it.value!!.hasContaining(vt.range) } ?: true)
+                ) {
+                    yield(
+                        DiscoveredVariant(vt, VariantStats(copies[i - 1], qualities[i - 1], null))
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Harvest all Variants from the input VCF files, along with total copies, max quality score, and
+ * second-ranked quality score.
  */
 fun discoverAllVariants(
     contigId: Map<String, Short>,
@@ -62,7 +76,7 @@ fun discoverAllVariants(
     vcfRecordCount: LongAccumulator? = null,
     vcfRecordBytes: LongAccumulator? = null
 ): Dataset<Row> {
-    return vcfFilenamesDF.flatMap(
+    val variants = vcfFilenamesDF.flatMap(
         FlatMapFunction<Row, Row> { row ->
             sequence {
                 scanVcfRecords(contigId, row.getAs<String>("vcfFilename")).use { records ->
@@ -71,8 +85,14 @@ fun discoverAllVariants(
                             vcfRecordCount?.add(1L)
                             vcfRecordBytes?.add(rec.line.length.toLong() + 1L)
                             yieldAll(
-                                discoverVariants(rec, filterRanges, onlyCalled)
-                                    .map { it.toRow() }
+                                discoverVariants(rec, filterRanges)
+                                    .map {
+                                        check(it.stats.qual2 == null)
+                                        it.variant.toRow(
+                                            copies = it.stats.copies,
+                                            qual = it.stats.qual
+                                        )
+                                    }
                             )
                         }
                     }
@@ -80,7 +100,20 @@ fun discoverAllVariants(
             }.iterator()
         },
         VariantRowEncoder()
-    ).distinct() // TODO: accumulate instead of distinct() to collect summary stats
+    ).groupBy("rid", "beg", "end", "ref", "alt")
+        .agg(
+            sum("copies").`as`("copies"),
+            max("qual").`as`("qual"),
+            udaf(
+                NthLargestInt(2),
+                org.apache.spark.sql.Encoders.INT()
+            ).apply(col("qual")).`as`("qual2")
+        )
+
+    if (onlyCalled) {
+        return variants.filter("copies > 0")
+    }
+    return variants
 }
 
 /**
@@ -114,13 +147,16 @@ fun collectAllVariantsDb(
                 end INTEGER NOT NULL,
                 ref TEXT NOT NULL,
                 alt TEXT NOT NULL,
+                copies INTEGER NOT NULL,
+                qual INTEGER,
+                qual2 INTEGER,
                 splitId INTEGER NOT NULL,
                 frameno INTEGER NOT NULL
             )
             """
         )
         val insert = cleanup.add(
-            dbc.prepareStatement("INSERT INTO Variant VALUES(?,?,?,?,?,?,?,?)")
+            dbc.prepareStatement("INSERT INTO Variant VALUES(?,?,?,?,?,?,?,?,?,?,?)")
         )
         val allVariantsDF = discoverAllVariants(
             contigId,
@@ -146,8 +182,8 @@ fun collectAllVariantsDb(
         //
         // (Similarly, above we explicitly coalesced the DF before caching+sorting.)
         val sortedVariantsRDD = allVariantsDF.toJavaRDD()
-            .map(Function<Row, Variant> { row -> Variant(row) })
-            .sortBy(Function<Variant, Variant> { v -> v }, true, 16)
+            .map(Function<Row, DiscoveredVariant> { row -> DiscoveredVariant(row) })
+            .sortBy(Function<DiscoveredVariant, Variant> { it.variant }, true, 16)
             .persist(org.apache.spark.storage.StorageLevel.MEMORY_AND_DISK_SER())
         sortedVariantsRDD.count() // force cache materialization before toLocalIterator()
         check(sortedVariantsRDD.getNumPartitions() <= 16)
@@ -158,7 +194,8 @@ fun collectAllVariantsDb(
         var frameno = 0
         sortedVariantsRDD
             .toLocalIterator()
-            .forEach { vt ->
+            .forEach { dv ->
+                val vt = dv.variant
                 // find the output file splitting range this variant belongs to
                 val splitId = splitRanges.queryOverlapping(
                     GRange(vt.range.rid, vt.range.beg, vt.range.beg)
@@ -182,8 +219,19 @@ fun collectAllVariantsDb(
                 insert.setInt(4, vt.range.end)
                 insert.setString(5, vt.ref)
                 insert.setString(6, vt.alt)
-                insert.setInt(7, splitId)
-                insert.setInt(8, frameno)
+                insert.setInt(7, dv.stats.copies)
+                if (dv.stats.qual != null) {
+                    insert.setInt(8, dv.stats.qual)
+                } else {
+                    insert.setNull(8, java.sql.Types.INTEGER)
+                }
+                if (dv.stats.qual2 != null) {
+                    insert.setInt(9, dv.stats.qual2)
+                } else {
+                    insert.setNull(9, java.sql.Types.INTEGER)
+                }
+                insert.setInt(10, splitId)
+                insert.setInt(11, frameno)
                 insert.executeUpdate()
                 variantId += 1
                 lastSplitId = splitId

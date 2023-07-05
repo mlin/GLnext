@@ -251,6 +251,8 @@ val _classesForKryo = arrayOf(
     java.lang.Comparable::class.java,
     java.util.ArrayList::class.java,
     java.util.LinkedHashMap::class.java,
+    java.util.PriorityQueue::class.java,
+    IntPriorityQueue::class.java,
     kotlin.Pair::class.java,
     ByteArray::class.java,
     Array<ByteArray>::class.java,
@@ -299,5 +301,8 @@ val _classesForKryo = arrayOf(
     AD_FormatField::class.java,
     PL_FormatField::class.java,
     OL_FormatField::class.java,
-    PartWritten::class.java
+    PartWritten::class.java,
+    NthLargestInt::class.java,
+    VariantStats::class.java,
+    DiscoveredVariant::class.java
 )

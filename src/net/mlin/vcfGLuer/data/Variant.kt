@@ -43,8 +43,8 @@ data class Variant(val range: GRange, val ref: String, val alt: String) :
         val contigName = contigs[range.rid.toInt()]
         return "$contigName:${range.beg}/$ref/$alt"
     }
-    fun toRow(): Row {
-        return RowFactory.create(range.rid, range.beg, range.end, ref, alt)
+    fun toRow(copies: Int = 0, qual: Int? = null): Row {
+        return RowFactory.create(range.rid, range.beg, range.end, ref, alt, copies, qual)
     }
 }
 
@@ -59,6 +59,8 @@ fun VariantRowEncoder(): ExpressionEncoder<Row> {
             .add("end", DataTypes.IntegerType, false)
             .add("ref", DataTypes.StringType, false)
             .add("alt", DataTypes.StringType, false)
+            .add("copies", DataTypes.IntegerType, false)
+            .add("qual", DataTypes.IntegerType, true)
     )
 }
 
