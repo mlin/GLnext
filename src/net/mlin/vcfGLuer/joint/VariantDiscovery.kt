@@ -55,7 +55,7 @@ fun discoverVariants(
                     (filterRanges?.let { it.value!!.hasContaining(vt.range) } ?: true)
                 ) {
                     yield(
-                        DiscoveredVariant(vt, VariantStats(copies[i - 1], qualities[i - 1], null))
+                        DiscoveredVariant(vt, VariantStats(copies[i], qualities[i], null))
                     )
                 }
             }

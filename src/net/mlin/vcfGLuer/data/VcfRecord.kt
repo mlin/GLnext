@@ -259,7 +259,7 @@ fun diploidGenotypeCount(alleleCount: Int): Int {
 
 fun diploidGenotypeIndex(allele1: Int, allele2: Int): Int {
     require(allele1 >= 0 && allele2 >= 0)
-    if (allele2 < allele2) {
+    if (allele2 < allele1) {
         return (allele1 * (allele1 + 1) / 2) + allele2
     }
     return (allele2 * (allele2 + 1) / 2) + allele1
