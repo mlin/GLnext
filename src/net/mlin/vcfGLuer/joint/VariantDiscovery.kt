@@ -14,14 +14,14 @@ data class VariantStats(val copies: Int, val qual: Int?, val qual2: Int?) {
     constructor(row: Row) :
         this(
             row.getAs<Int>("copies"),
-            row.getAs<Int>("qual"),
-            row.getAs<Int>("qual2")
+            row.getAs<Int?>("qual"),
+            row.getAs<Int?>("qual2")
         )
     constructor(rs: java.sql.ResultSet) :
         this(
             rs.getInt("copies"),
-            rs.getInt("qual"),
-            rs.getInt("qual2")
+            rs.getIntOrNull("qual"),
+            rs.getIntOrNull("qual2")
         )
 }
 data class DiscoveredVariant(val variant: Variant, val stats: VariantStats) {
@@ -101,6 +101,7 @@ fun discoverAllVariants(
         },
         VariantRowEncoder()
     ).groupBy("rid", "beg", "end", "ref", "alt")
+        // aggregate each variant's copy number and top two quality scores
         .agg(
             sum("copies").`as`("copies"),
             max("qual").`as`("qual"),
@@ -226,6 +227,7 @@ fun collectAllVariantsDb(
                     insert.setNull(8, java.sql.Types.INTEGER)
                 }
                 if (dv.stats.qual2 != null) {
+                    check(dv.stats.qual2 <= (dv.stats.qual ?: Int.MAX_VALUE))
                     insert.setInt(9, dv.stats.qual2)
                 } else {
                     insert.setNull(9, java.sql.Types.INTEGER)

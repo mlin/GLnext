@@ -89,6 +89,8 @@ class NthLargestInt(private val n: Int) : Aggregator<Int, IntPriorityQueue, Int?
     }
 
     override fun finish(reduction: IntPriorityQueue): Int? =
+        // although we have all N top ints handy, there doesn't seem to be a clean way for
+        // Aggregator to output an IntArray (only as a binary-serialized object)
         if (reduction.size >= n) {
             reduction.peek()
         } else {
@@ -103,3 +105,11 @@ class NthLargestInt(private val n: Int) : Aggregator<Int, IntPriorityQueue, Int?
 
 // this is needed just to overcome issues with type erasure in bufferEncoder() above
 class IntPriorityQueue() : PriorityQueue<Int>()
+
+fun java.sql.ResultSet.getIntOrNull(col: String): Int? {
+    val ans = this.getInt(col)
+    if (this.wasNull()) {
+        return null
+    }
+    return ans
+}

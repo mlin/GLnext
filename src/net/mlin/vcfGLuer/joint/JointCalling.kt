@@ -393,6 +393,7 @@ fun transposeSparseGenotypeFrames(
                     fieldsGen,
                     checkpointVariant,
                     vdbrow.variant,
+                    vdbrow.stats,
                     entries
                 )
                 yield(
@@ -427,6 +428,7 @@ fun assembleJointLine(
     fieldsGen: JointFieldsGenerator,
     checkpointVariant: Variant,
     variant: Variant,
+    stats: VariantStats,
     entries: Sequence<String?>
 ): ByteArray {
     val checkpoint = variant.compareTo(checkpointVariant) == 0
@@ -439,7 +441,9 @@ fun assembleJointLine(
     buf.append(variant.ref) // REF
     buf.append('\t')
     buf.append(variant.alt) // ALT
-    buf.append("\t.\t") // QUAL
+    buf.append('\t')
+    buf.append(stats.qual?.toString() ?: ".")
+    buf.append('\t')
     buf.append("PASS") // FILTER
     buf.append('\t')
     if (checkpoint) { // INFO; TODO: fieldsGen.generateInfoFields()
