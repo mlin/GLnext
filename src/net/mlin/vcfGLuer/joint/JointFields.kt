@@ -123,11 +123,12 @@ class PL_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFie
             val varIdx = variantRecord.getAltIndex(data.variantRow.variant)
             check(varIdx > 0)
             val parsedPL = variantRecord.getSampleFieldInts(sampleIndex, "PL")
-            val i11 = varIdx * (varIdx + 1) / 2 + varIdx // parsedPL index of varIdx/varIdx
+            var i01 = diploidGenotypeIndex(0, varIdx)
+            val i11 = diploidGenotypeIndex(varIdx, varIdx)
             if (parsedPL.size > i11) {
                 val ansPL = listOf(
                     parsedPL.get(0)?.toString(), // 0/0
-                    parsedPL.get(varIdx)?.toString(), // 0/1
+                    parsedPL.get(i01)?.toString(), // 0/1
                     parsedPL.get(i11)?.toString() // 1/1
                 )
                 // require 0 to be among the lifted values
