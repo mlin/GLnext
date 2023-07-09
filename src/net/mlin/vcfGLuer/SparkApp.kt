@@ -61,8 +61,8 @@ class CLI : CliktCommand() {
             .loadConfigOrThrow<MainConfig>()
 
         require(
-            cfg.discovery.minAQ1 >= cfg.discovery.minAQ2,
-            { "minAQ1 should be at least minAQ2" }
+            cfg.discovery.minQUAL1 >= cfg.discovery.minQUAL2,
+            { "minQUAL1 should be at least minQUAL2" }
         )
 
         var effInputFiles = inputFiles

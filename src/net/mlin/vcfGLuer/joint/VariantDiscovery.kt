@@ -13,8 +13,8 @@ import org.apache.spark.util.LongAccumulator
 data class DiscoveryConfig(
     val allowDuplicateSamples: Boolean,
     val minCopies: Int,
-    val minAQ1: Int,
-    val minAQ2: Int
+    val minQUAL1: Int,
+    val minQUAL2: Int
 )
 
 data class VariantStats(val copies: Int, val qual: Int?, val qual2: Int?) {
@@ -122,10 +122,10 @@ fun discoverAllVariants(
     if (cfg.minCopies > 0) {
         variants = variants.filter("copies >= ${cfg.minCopies}")
     }
-    if (cfg.minAQ1 > 0 || cfg.minAQ2 > 0) {
+    if (cfg.minQUAL1 > 0 || cfg.minQUAL2 > 0) {
         variants = variants.filter(
-            "(qual IS NOT NULL AND qual >= ${cfg.minAQ1})" +
-                " OR (qual2 IS NOT NULL AND qual2 >= ${cfg.minAQ2})"
+            "(qual IS NOT NULL AND qual >= ${cfg.minQUAL1})" +
+                " OR (qual2 IS NOT NULL AND qual2 >= ${cfg.minQUAL2})"
         )
     }
     return variants
