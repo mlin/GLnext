@@ -63,19 +63,21 @@ fun <T> JavaSparkContext.parallelizeEvenly(items: List<T>): JavaRDD<T> {
 }
 
 /**
- * SparkSQL Aggregator for the Nth largest int in a [group] column
+ * SparkSQL Aggregator for the Nth largest int in a [group] column, ignoring nulls
  */
-class NthLargestInt(private val n: Int) : Aggregator<Int, IntPriorityQueue, Int?>() {
+class NthLargestInt(private val n: Int) : Aggregator<Int?, IntPriorityQueue, Int?>() {
     init {
         require(n > 0)
     }
 
     override fun zero(): IntPriorityQueue = IntPriorityQueue()
 
-    override fun reduce(buffer: IntPriorityQueue, input: Int): IntPriorityQueue {
-        buffer.add(input)
-        while (buffer.size > n) {
-            buffer.poll()
+    override fun reduce(buffer: IntPriorityQueue, input: Int?): IntPriorityQueue {
+        if (input != null) {
+            buffer.add(input)
+            while (buffer.size > n) {
+                buffer.poll()
+            }
         }
         return buffer
     }

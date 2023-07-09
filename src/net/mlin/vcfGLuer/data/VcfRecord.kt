@@ -215,10 +215,8 @@ class VcfRecordUnpacked(val record: VcfRecord) {
                 }
             }
 
-            if (score_without == Int.MAX_VALUE || score_with == Int.MAX_VALUE) {
+            if (score_without == Int.MAX_VALUE || score_without < score_with) {
                 null
-            } else if (score_without < score_with) {
-                0
             } else {
                 score_without - score_with
             }

@@ -529,6 +529,10 @@ fun jointHeader(
         ans.append("##")
         ans.appendLine(it)
     }
+    ans.appendLine(
+        "##INFO=<ID=QUAL2,Number=1,Type=Integer,Description=" +
+            "\"Second-rank variant quality score (after the first in the QUAL column)\">"
+    )
 
     // contig
     aggHeader.contigs.forEach {
