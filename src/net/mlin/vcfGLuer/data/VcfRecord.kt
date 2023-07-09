@@ -265,6 +265,13 @@ fun diploidGenotypeIndex(allele1: Int, allele2: Int): Int {
     return (allele2 * (allele2 + 1) / 2) + allele1
 }
 
+fun diploidGenotypes(alleleCount: Int): List<Pair<Int, Int>> {
+    val ans = (0 until alleleCount).map { b -> (0..b).map { a -> a to b } }.flatten()
+    check(ans.size == diploidGenotypeCount(alleleCount))
+    ans.forEachIndexed { i, (a, b) -> check(diploidGenotypeIndex(a, b) == i) }
+    return ans
+}
+
 fun diploidGenotypeAlleles(genotypeIndex: Int): Pair<Int, Int> {
     val allele2 = ((kotlin.math.sqrt((8 * genotypeIndex + 1).toDouble()) - 1.0) / 2.0).toInt()
     val allele1 = genotypeIndex - allele2 * (allele2 + 1) / 2

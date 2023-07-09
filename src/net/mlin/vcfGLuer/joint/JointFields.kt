@@ -122,16 +122,35 @@ class PL_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFie
         if (variantRecord != null) {
             val varIdx = variantRecord.getAltIndex(data.variantRow.variant)
             check(varIdx > 0)
+            val genotypeCount = diploidGenotypeCount(variantRecord.altVariants.size + 1)
             val parsedPL = variantRecord.getSampleFieldInts(sampleIndex, "PL")
-            var i01 = diploidGenotypeIndex(0, varIdx)
-            val i11 = diploidGenotypeIndex(varIdx, varIdx)
-            if (parsedPL.size > i11) {
+            if (parsedPL.size == genotypeCount) {
+                // pVCF PL for zero copies: min gVCF PL of any genotype with zero copies
+                // (min serving as an approximation of marginalizing over their likelihoods)
+                val pl0 = diploidGenotypes(variantRecord.altVariants.size + 1)
+                    .filter { (a, b) -> a != varIdx && b != varIdx }
+                    .map { (a, b) -> parsedPL.get(diploidGenotypeIndex(a, b)) }
+                // pVCF PL for one copy: min gVCF PL of any genotype with one copy
+                val pl1 = (0..variantRecord.altVariants.size)
+                    .filter { it != varIdx }
+                    .map { parsedPL.get(diploidGenotypeIndex(it, varIdx)) }
+                // pVCF PL for two copies
+                val pl2 = parsedPL.get(diploidGenotypeIndex(varIdx, varIdx))
+
                 val ansPL = listOf(
-                    parsedPL.get(0)?.toString(), // 0/0
-                    parsedPL.get(i01)?.toString(), // 0/1
-                    parsedPL.get(i11)?.toString() // 1/1
+                    if (pl0.any { it == null }) {
+                        null
+                    } else {
+                        pl0.filterNotNull().minOrNull()?.toString()
+                    },
+                    if (pl1.any { it == null }) {
+                        null
+                    } else {
+                        pl1.filterNotNull().minOrNull()?.toString()
+                    },
+                    pl2?.toString()
                 )
-                // require 0 to be among the lifted values
+                // output PL vector if all entries are non-null and at least one entry equals zero
                 if (ansPL.filterNotNull().size > 0 && ansPL.contains("0")) {
                     ans = ansPL.map { it ?: "." }.joinToString(",")
                 }
