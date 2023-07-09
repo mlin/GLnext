@@ -19,7 +19,6 @@ import org.apache.spark.api.java.JavaSparkContext
 import org.jetbrains.kotlinx.spark.api.*
 
 data class SparkConfig(val compressTempFiles: Boolean)
-data class DiscoveryConfig(val allowDuplicateSamples: Boolean, val minCopies: Int)
 data class MainConfig(
     val spark: SparkConfig,
     val discovery: DiscoveryConfig,
@@ -61,7 +60,11 @@ class CLI : CliktCommand() {
             .build()
             .loadConfigOrThrow<MainConfig>()
 
-        require(cfg.discovery.minCopies <= 1, { "unsupported discovery.minCopies" })
+        require(
+            cfg.discovery.minQUAL1 >= cfg.discovery.minQUAL2,
+            { "minQUAL1 should be at least minQUAL2" }
+        )
+        testDiploidSubroutines()
 
         var effInputFiles = inputFiles
         if (manifest) {
@@ -185,12 +188,12 @@ class CLI : CliktCommand() {
             */
             val vcfFilenamesDF = aggHeader.vcfFilenamesDF(spark)
             val (variantCount, variantsDbLocalFilename) = collectAllVariantsDb(
+                cfg.discovery,
                 aggHeader.contigId,
                 vcfFilenamesDF,
                 splitRanges,
                 filterRids,
                 filterRangesB,
-                onlyCalled = cfg.discovery.minCopies > 0,
                 vcfRecordCount,
                 vcfRecordBytes
             )
@@ -251,6 +254,8 @@ val _classesForKryo = arrayOf(
     java.lang.Comparable::class.java,
     java.util.ArrayList::class.java,
     java.util.LinkedHashMap::class.java,
+    java.util.PriorityQueue::class.java,
+    IntPriorityQueue::class.java,
     kotlin.Pair::class.java,
     ByteArray::class.java,
     Array<ByteArray>::class.java,
@@ -299,5 +304,8 @@ val _classesForKryo = arrayOf(
     AD_FormatField::class.java,
     PL_FormatField::class.java,
     OL_FormatField::class.java,
-    PartWritten::class.java
+    PartWritten::class.java,
+    NthLargestInt::class.java,
+    VariantStats::class.java,
+    DiscoveredVariant::class.java
 )

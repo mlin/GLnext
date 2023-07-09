@@ -188,31 +188,38 @@ class VcfRecordUnpacked(val record: VcfRecord) {
             if (vt == variant) (idx + 1) else null
         }.firstNotNullOfOrNull { it } ?: -1
     }
-}
 
-/**
- * GT field in a diploid VCF
- */
-data class DiploidGenotype(val allele1: Int?, val allele2: Int?, val phased: Boolean) {
-    fun validate(altAlleleCount: Int): DiploidGenotype {
-        require(
-            (allele1 == null || allele1 <= altAlleleCount) &&
-                (allele2 == null || allele2 <= altAlleleCount),
-            { this.toString() }
-        )
-        return this
-    }
+    fun getSampleAltQualities(sampleIndex: Int): Array<Int?> {
+        // Compute the quality score for existence of each ALT allele in the given sample.
+        // We define this as:
+        //     min(PL of genotypes with no copies of the allele)
+        //   - min(PL of genotypes with at least one copy of the allele)
+        //   (but null instead of any negative value)
+        val PL = getSampleFieldInts(sampleIndex, "PL")
+        val genotypeCount = diploidGenotypeCount(altVariants.size + 1)
 
-    fun normalize(): DiploidGenotype {
-        if (!phased && allele1 != null && (allele2 == null || allele1 > allele2)) {
-            return DiploidGenotype(allele2, allele1, false)
-        }
-        return this
-    }
+        return altVariants.mapIndexed { i, vt ->
+            val altIndex = i + 1
 
-    override fun toString(): String {
-        return (if (allele1 == null) "." else allele1.toString()) +
-            (if (phased) "|" else "/") +
-            (if (allele2 == null) "." else allele2.toString())
+            var score_with = Int.MAX_VALUE
+            var score_without = Int.MAX_VALUE
+            for (genotypeIndex in 0 until genotypeCount) {
+                val score = if (PL.size > genotypeIndex) {
+                    PL[genotypeIndex]
+                } else { null } ?: Int.MAX_VALUE
+                val (allele1, allele2) = diploidGenotypeAlleles(genotypeIndex)
+                if (allele1 == altIndex || allele2 == altIndex) {
+                    score_with = kotlin.math.min(score_with, score)
+                } else {
+                    score_without = kotlin.math.min(score_without, score)
+                }
+            }
+
+            if (score_without == Int.MAX_VALUE || score_without < score_with) {
+                null
+            } else {
+                score_without - score_with
+            }
+        }.toTypedArray()
     }
 }

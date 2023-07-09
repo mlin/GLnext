@@ -393,6 +393,7 @@ fun transposeSparseGenotypeFrames(
                     fieldsGen,
                     checkpointVariant,
                     vdbrow.variant,
+                    vdbrow.stats,
                     entries
                 )
                 yield(
@@ -427,11 +428,18 @@ fun assembleJointLine(
     fieldsGen: JointFieldsGenerator,
     checkpointVariant: Variant,
     variant: Variant,
+    stats: VariantStats,
     entries: Sequence<String?>
 ): ByteArray {
     val checkpoint = variant.compareTo(checkpointVariant) == 0
-    val buf = StringBuilder()
+    val info: MutableList<Pair<String, String>> = mutableListOf()
+    if (!checkpoint) {
+        info.add("spVCF_checkpointPOS" to checkpointVariant.range.beg.toString())
+    }
+    info.add("QUAL2" to (stats.qual2?.toString() ?: "."))
+    // TODO: add fieldsGen.generateInfoFields()
 
+    val buf = StringBuilder()
     buf.append(aggHeader.contigs[variant.range.rid.toInt()]) // CHROM
     buf.append('\t')
     buf.append(variant.range.beg.toString()) // POS
@@ -439,14 +447,12 @@ fun assembleJointLine(
     buf.append(variant.ref) // REF
     buf.append('\t')
     buf.append(variant.alt) // ALT
-    buf.append("\t.\t") // QUAL
-    buf.append("PASS") // FILTER
     buf.append('\t')
-    if (checkpoint) { // INFO; TODO: fieldsGen.generateInfoFields()
-        buf.append('.')
-    } else {
-        buf.append("spVCF_checkpointPOS=${checkpointVariant.range.beg}")
-    }
+    buf.append(stats.qual?.toString() ?: ".")
+    buf.append('\t')
+    buf.append("PASS") // FILTER
+    buf.append('\t') // INFO
+    buf.append(if (info.isEmpty()) "." else info.map { (k, v) -> "$k=$v" }.joinToString(";"))
     buf.append('\t')
     buf.append( // FORMAT
         (listOf("GT") + cfg.formatFields.map { it.name }).joinToString(":")
@@ -523,6 +529,10 @@ fun jointHeader(
         ans.append("##")
         ans.appendLine(it)
     }
+    ans.appendLine(
+        "##INFO=<ID=QUAL2,Number=1,Type=Integer,Description=" +
+            "\"Second-rank variant quality score (after the first in the QUAL column)\">"
+    )
 
     // contig
     aggHeader.contigs.forEach {

@@ -6,17 +6,19 @@ import net.mlin.vcfGLuer.util.*
  * one row of the variants GenomicSQLite database
  */
 data class VariantsDbRow(
+    val variant: Variant,
+    val stats: VariantStats,
     val variantId: Int,
     val splitId: Int,
-    val frameno: Int,
-    val variant: Variant
+    val frameno: Int
 ) {
     constructor(rs: java.sql.ResultSet) :
         this(
+            Variant(rs),
+            VariantStats(rs),
             rs.getInt("variantId"),
             rs.getInt("splitId"),
-            rs.getInt("frameno"),
-            Variant(rs)
+            rs.getInt("frameno")
         ) {}
 }
 
