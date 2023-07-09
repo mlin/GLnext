@@ -120,11 +120,11 @@ class PL_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFie
     ): String? {
         var ans: String? = null
         if (variantRecord != null) {
+            val alleleCount = variantRecord.altVariants.size + 1 // REF
             val varIdx = variantRecord.getAltIndex(data.variantRow.variant)
             check(varIdx > 0)
-            val genotypeCount = diploidGenotypeCount(variantRecord.altVariants.size + 1)
             val parsedPL = variantRecord.getSampleFieldInts(sampleIndex, "PL")
-            if (parsedPL.size == genotypeCount) {
+            if (parsedPL.size == diploidGenotypeCount(alleleCount)) {
                 // pVCF PL for zero copies: min gVCF PL of any genotype with zero copies
                 // (min serving as an approximation of marginalizing over their likelihoods)
                 val pl0 = diploidGenotypes(variantRecord.altVariants.size + 1)
@@ -141,18 +141,18 @@ class PL_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFie
                     if (pl0.any { it == null }) {
                         null
                     } else {
-                        pl0.filterNotNull().minOrNull()?.toString()
+                        pl0.filterNotNull().minOrNull()
                     },
                     if (pl1.any { it == null }) {
                         null
                     } else {
-                        pl1.filterNotNull().minOrNull()?.toString()
+                        pl1.filterNotNull().minOrNull()
                     },
-                    pl2?.toString()
+                    pl2
                 )
                 // output PL vector if all entries are non-null and at least one entry equals zero
-                if (ansPL.filterNotNull().size > 0 && ansPL.contains("0")) {
-                    ans = ansPL.map { it ?: "." }.joinToString(",")
+                if (!ansPL.any { it == null } && ansPL.contains(0)) {
+                    ans = ansPL.map { it?.toString() ?: "." }.joinToString(",")
                 }
             }
         }

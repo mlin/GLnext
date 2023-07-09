@@ -17,20 +17,6 @@ data class DiscoveryConfig(
     val minQUAL2: Int
 )
 
-data class VariantStats(val copies: Int, val qual: Int?, val qual2: Int?) {
-    constructor(row: Row) :
-        this(
-            row.getAs<Int>("copies"),
-            row.getAs<Int?>("qual"),
-            row.getAs<Int?>("qual2")
-        )
-    constructor(rs: java.sql.ResultSet) :
-        this(
-            rs.getInt("copies"),
-            rs.getIntOrNull("qual"),
-            rs.getIntOrNull("qual2")
-        )
-}
 data class DiscoveredVariant(val variant: Variant, val stats: VariantStats) {
     constructor(row: Row) : this(Variant(row), VariantStats(row))
     constructor(rs: java.sql.ResultSet) : this(Variant(rs), VariantStats(rs))
@@ -38,7 +24,7 @@ data class DiscoveredVariant(val variant: Variant, val stats: VariantStats) {
 
 /**
  * Harvest variants from a VCF record, yielding one DiscoveredVariant per ALT allele per sample
- * filterRanges: only include variants contained within one of these ranges
+ * filterRanges: only include variants contained within one of these ranges (after normalization)
  */
 fun discoverVariants(
     it: VcfRecord,
