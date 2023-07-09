@@ -10,6 +10,13 @@ import org.apache.spark.sql.Row
 import org.apache.spark.sql.functions.*
 import org.apache.spark.util.LongAccumulator
 
+data class DiscoveryConfig(
+    val allowDuplicateSamples: Boolean,
+    val minCopies: Int,
+    val minAQ1: Int,
+    val minAQ2: Int
+)
+
 data class VariantStats(val copies: Int, val qual: Int?, val qual2: Int?) {
     constructor(row: Row) :
         this(
@@ -68,15 +75,15 @@ fun discoverVariants(
  * second-ranked quality score.
  */
 fun discoverAllVariants(
+    cfg: DiscoveryConfig,
     contigId: Map<String, Short>,
     vcfFilenamesDF: Dataset<Row>,
     filterRids: Set<Short>? = null,
     filterRanges: Broadcast<BedRanges>? = null,
-    onlyCalled: Boolean = false,
     vcfRecordCount: LongAccumulator? = null,
     vcfRecordBytes: LongAccumulator? = null
 ): Dataset<Row> {
-    val variants = vcfFilenamesDF.flatMap(
+    var variants = vcfFilenamesDF.flatMap(
         FlatMapFunction<Row, Row> { row ->
             sequence {
                 scanVcfRecords(contigId, row.getAs<String>("vcfFilename")).use { records ->
@@ -111,8 +118,15 @@ fun discoverAllVariants(
             ).apply(col("qual")).`as`("qual2")
         )
 
-    if (onlyCalled) {
-        return variants.filter("copies > 0")
+    // apply discovery filters
+    if (cfg.minCopies > 0) {
+        variants = variants.filter("copies >= ${cfg.minCopies}")
+    }
+    if (cfg.minAQ1 > 0 || cfg.minAQ2 > 0) {
+        variants = variants.filter(
+            "(qual IS NOT NULL AND qual >= ${cfg.minAQ1})" +
+                " OR (qual2 IS NOT NULL AND qual2 >= ${cfg.minAQ2})"
+        )
     }
     return variants
 }
@@ -121,12 +135,12 @@ fun discoverAllVariants(
  * Discover all variants & collect them into a GenomicSQLite file local to the driver.
  */
 fun collectAllVariantsDb(
+    cfg: DiscoveryConfig,
     contigId: Map<String, Short>,
     vcfPathsDF: Dataset<Row>,
     splitRanges: BedRanges,
     filterRids: Set<Short>? = null,
     filterRanges: Broadcast<BedRanges>? = null,
-    onlyCalled: Boolean = false,
     vcfRecordCount: LongAccumulator? = null,
     vcfRecordBytes: LongAccumulator? = null
 ): Pair<Int, String> {
@@ -160,11 +174,11 @@ fun collectAllVariantsDb(
             dbc.prepareStatement("INSERT INTO Variant VALUES(?,?,?,?,?,?,?,?,?,?,?)")
         )
         val allVariantsDF = discoverAllVariants(
+            cfg,
             contigId,
             vcfPathsDF,
             filterRids,
             filterRanges,
-            onlyCalled,
             vcfRecordCount,
             vcfRecordBytes
         ).coalesce(256).persist(org.apache.spark.storage.StorageLevel.MEMORY_AND_DISK())

@@ -19,7 +19,6 @@ import org.apache.spark.api.java.JavaSparkContext
 import org.jetbrains.kotlinx.spark.api.*
 
 data class SparkConfig(val compressTempFiles: Boolean)
-data class DiscoveryConfig(val allowDuplicateSamples: Boolean, val minCopies: Int)
 data class MainConfig(
     val spark: SparkConfig,
     val discovery: DiscoveryConfig,
@@ -61,7 +60,10 @@ class CLI : CliktCommand() {
             .build()
             .loadConfigOrThrow<MainConfig>()
 
-        require(cfg.discovery.minCopies <= 1, { "unsupported discovery.minCopies" })
+        require(
+            cfg.discovery.minAQ1 >= cfg.discovery.minAQ2,
+            { "minAQ1 should be at least minAQ2" }
+        )
 
         var effInputFiles = inputFiles
         if (manifest) {
@@ -185,12 +187,12 @@ class CLI : CliktCommand() {
             */
             val vcfFilenamesDF = aggHeader.vcfFilenamesDF(spark)
             val (variantCount, variantsDbLocalFilename) = collectAllVariantsDb(
+                cfg.discovery,
                 aggHeader.contigId,
                 vcfFilenamesDF,
                 splitRanges,
                 filterRids,
                 filterRangesB,
-                onlyCalled = cfg.discovery.minCopies > 0,
                 vcfRecordCount,
                 vcfRecordBytes
             )

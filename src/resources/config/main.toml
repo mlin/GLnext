@@ -9,6 +9,8 @@ compressTempFiles = true
 [discovery]
 allowDuplicateSamples = false
 minCopies = 0
+minAQ1 = 0
+minAQ2 = 0
 
 [joint]
 keepTrailingFields = false
