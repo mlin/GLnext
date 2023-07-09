@@ -28,7 +28,6 @@ enum class GT_OverlapMode {
 
 data class JointGenotypeConfig(val overlapMode: GT_OverlapMode) : Serializable
 data class JointConfig(
-    val keepTrailingFields: Boolean,
     val gt: JointGenotypeConfig,
     val formatFields: List<JointFormatField>
 ) : Serializable
@@ -460,8 +459,7 @@ fun assembleJointLine(
 
     var entryCount = 0
     var sparseRun = 0
-    entries.forEach {
-        var entry = it
+    entries.forEach { entry ->
         if (entry != null) {
             if (sparseRun > 0) {
                 buf.append("\t\"")
@@ -469,19 +467,6 @@ fun assembleJointLine(
                     buf.append(sparseRun.toString())
                 }
                 sparseRun = 0
-            }
-            if (cfg.keepTrailingFields) {
-                // pad with :. for any missing trailing fields.
-                // we delay doing this until now to avoid inflating the amount of uncompressed data
-                // involved in the big shuffle.
-                val fields = entry.split(":").toMutableList()
-                val trailers = fieldsGen.formatFieldCount - (fields.size - 1/*GT*/)
-                if (trailers > 0) {
-                    repeat(trailers) {
-                        fields.add(".")
-                    }
-                    entry = fields.joinToString(":")
-                }
             }
             buf.append('\t')
             buf.append(entry)
