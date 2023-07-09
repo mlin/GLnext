@@ -126,7 +126,7 @@ class PL_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFie
             val parsedPL = variantRecord.getSampleFieldInts(sampleIndex, "PL")
             if (parsedPL.size == diploidGenotypeCount(alleleCount)) {
                 // pVCF PL for zero copies: min gVCF PL of any genotype with zero copies
-                // (min serving as an approximation of marginalizing over their likelihoods)
+                // (min serving as an approximation of marginalizing their likelihoods)
                 val pl0 = diploidGenotypes(variantRecord.altVariants.size + 1)
                     .filter { (a, b) -> a != varIdx && b != varIdx }
                     .map { (a, b) -> parsedPL.get(diploidGenotypeIndex(a, b)) }

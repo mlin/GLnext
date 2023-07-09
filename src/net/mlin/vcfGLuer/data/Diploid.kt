@@ -22,12 +22,8 @@ fun diploidGenotypeIndex(allele1: Int, allele2: Int): Int {
 /**
  * Ordered list of distinct, unphased diploid genotypes for the given total # of alleles.
  */
-fun diploidGenotypes(alleleCount: Int): List<Pair<Int, Int>> {
-    val ans = (0 until alleleCount).map { b -> (0..b).map { a -> a to b } }.flatten()
-    check(ans.size == diploidGenotypeCount(alleleCount))
-    ans.forEachIndexed { i, (a, b) -> check(diploidGenotypeIndex(a, b) == i) }
-    return ans
-}
+fun diploidGenotypes(alleleCount: Int): List<Pair<Int, Int>> =
+    (0 until alleleCount).map { b -> (0..b).map { a -> a to b } }.flatten()
 
 /**
  * Given an unphased diploid genotype index, recover the constituent allele numbers.
@@ -35,9 +31,19 @@ fun diploidGenotypes(alleleCount: Int): List<Pair<Int, Int>> {
 fun diploidGenotypeAlleles(genotypeIndex: Int): Pair<Int, Int> {
     val allele2 = ((kotlin.math.sqrt((8 * genotypeIndex + 1).toDouble()) - 1.0) / 2.0).toInt()
     val allele1 = genotypeIndex - allele2 * (allele2 + 1) / 2
-    check(diploidGenotypeIndex(allele1, allele2) == genotypeIndex)
-    check(diploidGenotypeIndex(allele2, allele1) == genotypeIndex)
     return (allele1 to allele2)
+}
+
+fun testDiploidSubroutines() {
+    for (alleleCount in 2..16) {
+        val genotypes = diploidGenotypes(alleleCount)
+        check(diploidGenotypeCount(alleleCount) == genotypes.size)
+        genotypes.forEachIndexed { gt, (a, b) ->
+            check(diploidGenotypeIndex(a, b) == gt)
+            check(diploidGenotypeIndex(b, a) == gt)
+            check(diploidGenotypeAlleles(gt) == a to b)
+        }
+    }
 }
 
 /**

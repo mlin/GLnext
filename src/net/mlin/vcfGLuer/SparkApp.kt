@@ -64,6 +64,7 @@ class CLI : CliktCommand() {
             cfg.discovery.minQUAL1 >= cfg.discovery.minQUAL2,
             { "minQUAL1 should be at least minQUAL2" }
         )
+        testDiploidSubroutines()
 
         var effInputFiles = inputFiles
         if (manifest) {
