@@ -83,5 +83,5 @@ print(f"cumulative seconds uploading dxfiles: {dx_time_accumulator.value}", file
 
 # write job_output.json
 with open("job_output.json.tmp", "w") as job_output:
-    json.dump({"pvcf_parts": list({"$dnanexus_link": dxid} for dxid in dxfile_ids)}, job_output)
+    json.dump({"spvcf_gz": list({"$dnanexus_link": dxid} for dxid in dxfile_ids)}, job_output)
 os.rename("job_output.json.tmp", "job_output.json")

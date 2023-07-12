@@ -65,7 +65,7 @@
   ],
   "outputSpec": [
     {
-      "name": "pvcf_parts",
+      "name": "spvcf_gz",
       "class": "array:file",
       "help": ""
     },
