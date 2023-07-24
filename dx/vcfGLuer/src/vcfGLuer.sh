@@ -63,8 +63,8 @@ main() {
         --conf spark.driver.defaultJavaOptions="$all_java_options" \
         --conf spark.executor.defaultJavaOptions="$all_java_options" \
         --conf spark.executor.memory=68g \
-        --conf spark.memory.fraction=0.75 \
-        --conf spark.memory.storageFraction=0.3333 \
+        --conf spark.memory.fraction=0.5 \
+        --conf spark.memory.storageFraction=0.5 \
         --conf spark.reducer.maxReqsInFlight=8 \
         --conf spark.driver.maxResultSize=0 \
         --conf spark.task.maxFailures=3 \

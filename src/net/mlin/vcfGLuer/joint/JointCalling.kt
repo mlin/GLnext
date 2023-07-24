@@ -362,22 +362,21 @@ fun transposeSparseGenotypeFrames(
     }
 
     // initialize decoders for each sample from sparseGenotypeFrames
-    var totalFrameCount = 0
-    val framesBySampleId = sparseGenotypeFrames.asSequence().associateBy(
-        {
-            check(it.getAs<Int>("frameno") == frameno)
-            totalFrameCount += 1
-            it.getAs<Int>("sampleId")
-        },
-        { it.getAs<ByteArray>("sparseGenotypes") }
-    )
-    require(
-        totalFrameCount == framesBySampleId.size,
-        { "colliding sparse genotype frames; check input files for duplication/overlap" }
-    )
+    // NOTE: the remainder of this function is typically our peak working memory usage, so choose
+    //       data structures with care!
+    val framesBySampleId: Array<ByteArray?> = Array(aggHeader.samples.size) { null }
+    sparseGenotypeFrames.forEach {
+        check(it.getAs<Int>("frameno") == frameno)
+        val sampleId = it.getAs<Int>("sampleId")
+        require(
+            framesBySampleId[sampleId] == null,
+            { "colliding sparse genotype frames; check input files for duplication/overlap" }
+        )
+        framesBySampleId[sampleId] = it.getAs<ByteArray>("sparseGenotypes")
+    }
     val vacuousFrame = vacuousSparseGenotypeFrame(variants.size)
     val decoders = Array(aggHeader.samples.size) {
-        decodeSparseGenotypeFrame(framesBySampleId.getOrDefault(it, vacuousFrame)).iterator()
+        decodeSparseGenotypeFrame(framesBySampleId[it] ?: vacuousFrame).iterator()
     }
 
     // for each variant, decode all the genotypes & assemble the spVCF line
