@@ -35,7 +35,7 @@ print(
 )
 spark = pyspark.sql.SparkSession.builder.getOrCreate()
 dxid_rdd = spark.sparkContext.parallelize(
-    dxid_list, min(spark.sparkContext.defaultParallelism, 1024)
+    dxid_list, min(spark.sparkContext.defaultParallelism, 1024 * multiply)
 )
 # create 256 subdirectories because of 1M files per directory limit
 hdfs_dirs = [f"/vcfGLuer/in/{subd:02x}" for subd in range(0xFF)]
