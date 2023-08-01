@@ -1,5 +1,7 @@
 package net.mlin.vcfGLuer.joint
 import java.io.File
+import kotlin.math.roundToInt
+import kotlin.math.sqrt
 import net.mlin.vcfGLuer.data.*
 import net.mlin.vcfGLuer.util.*
 import org.apache.spark.api.java.function.FlatMapFunction
@@ -167,7 +169,11 @@ fun collectAllVariantsDb(
             filterRanges,
             vcfRecordCount,
             vcfRecordBytes
-        ).coalesce(256).persist(org.apache.spark.storage.StorageLevel.MEMORY_AND_DISK())
+        ).let {
+            val parts = sqrt(16.0 * it.toJavaRDD().getNumPartitions()).roundToInt()
+            it.coalesce(parts).persist(org.apache.spark.storage.StorageLevel.MEMORY_AND_DISK())
+        }
+        // force cache materialization before sorting https://stackoverflow.com/a/56310076
         allVariantsDF.count()
         // Drop to RDD<Variant>, sort, and cache before processing on the driver.
         // Using RDD.sortBy() allows us to control the partitioning, which is very important
