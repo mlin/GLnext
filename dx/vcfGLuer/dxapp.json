@@ -25,6 +25,12 @@
       "help": "vcfGLuer configuration preset"
     },
     {
+      "name": "spvcf_decode",
+      "class": "boolean",
+      "default": false,
+      "help": "decode spVCF to pVCF"
+    },
+    {
       "name": "filter_bed",
       "class": "file",
       "optional": true,
@@ -65,9 +71,9 @@
   ],
   "outputSpec": [
     {
-      "name": "spvcf_gz",
+      "name": "files",
       "class": "array:file",
-      "help": ""
+      "help": "spVCF files (and pVCF files if spvcf_decode)"
     },
     {
       "name": "cluster_runtime_logs_tarball",
