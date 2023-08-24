@@ -55,7 +55,7 @@ def run_spvcf_decode(spvcf_fn):
     assert spvcf_fn.endswith("spvcf.gz")
     pvcf_fn = spvcf_fn[:-8] + "vcf.gz"
     subprocess.run(
-        f"set -euo pipefail; bgzip -dc {shlex.quote(spvcf_fn)} | spvcf decode | bgzip -c@4 > {shlex.quote(pvcf_fn)}",
+        f"set -euo pipefail; bgzip -dc {shlex.quote(spvcf_fn)} | spvcf decode | bgzip -cl1@4 > {shlex.quote(pvcf_fn)}",
         shell=True,
         executable="/bin/bash",
         check=True,

@@ -4,6 +4,7 @@
 import glob
 import os
 import random
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -12,6 +13,10 @@ import time
 import dxpy
 import pyspark
 
+ref_genome = glob.glob("/home/dnanexus/in/ref_genome/*")
+gvcf_norm = len(ref_genome) > 0
+if gvcf_norm:
+    ref_genome = ref_genome[0]
 multiply = os.environ.get("_multiply", None)
 if multiply:
     multiply = int(multiply)
@@ -34,8 +39,10 @@ print(
     file=sys.stderr,
 )
 spark = pyspark.sql.SparkSession.builder.getOrCreate()
-dxid_rdd = spark.sparkContext.parallelize(
-    dxid_list, min(spark.sparkContext.defaultParallelism, 1024 * multiply)
+spark_ctx = spark.sparkContext
+dxid_rdd = spark_ctx.parallelize(
+    dxid_list,
+    min(spark_ctx.defaultParallelism, 1024 * multiply * (4 if gvcf_norm else 1)),
 )
 # create 256 subdirectories because of 1M files per directory limit
 hdfs_dirs = [f"/vcfGLuer/in/{subd:02x}" for subd in range(0xFF)]
@@ -44,12 +51,31 @@ for hdfs_dir in hdfs_dirs:
         "$HADOOP_HOME/bin/hadoop fs -mkdir -p " + hdfs_dir, shell=True, check=True
     )
 
-dx_time_accumulator = spark.sparkContext.accumulator(0.0)
-hdfs_time_accumulator = spark.sparkContext.accumulator(0.0)
+if gvcf_norm:
+    # prepare gvcf_norm reference genome and broadcast to all nodes
+    assert os.path.isfile(ref_genome)
+
+    refdir = os.path.join(os.getcwd(), "ref_genome.unpack")
+    subprocess.run(
+        f"unpack_fasta_dir.sh {shlex.quote(ref_genome)} {shlex.quote(refdir)}",
+        shell=True,
+        check=True,
+    )
+    assert os.path.isdir(refdir)
+    with open(os.path.join(refdir, "_FOO"), "w") as _:
+        pass
+    for fn in glob.glob(refdir + "/*"):
+        spark_ctx.addFile(fn)
+
+
+dx_time_accumulator = spark_ctx.accumulator(0.0)
+gvcf_norm_time_accumulator = spark_ctx.accumulator(0.0)
+hdfs_time_accumulator = spark_ctx.accumulator(0.0)
 
 
 def process_dxfile(dxid):
     global dx_time_accumulator
+    global gvcf_norm_time_accumulator
     global hdfs_time_accumulator
 
     project_id = None
@@ -62,21 +88,40 @@ def process_dxfile(dxid):
     with tempfile.TemporaryDirectory() as tmpdir:
         t0 = time.time()
         desc = dxpy.describe(dxpy.dxlink(dxid, project_id=project_id))
-        fn = desc["name"]
-        dxpy.download_dxfile(
-            dxid, os.path.join(tmpdir, fn), project=project_id, describe_output=desc
-        )
+        fn = os.path.join(tmpdir, desc["name"])
+        dxpy.download_dxfile(dxid, fn, project=project_id, describe_output=desc)
         t1 = time.time()
         dx_time_accumulator += t1 - t0
+        if gvcf_norm:
+            fn = run_gvcf_norm(fn)
+            gvcf_norm_time_accumulator += time.time() - t1
+            t1 = time.time()
         ans = []
         for i in range(multiply):
             hdfs_dir = random.choice(hdfs_dirs)
             prefix = f"_x{i+1}_" if multiply > 1 else ""
-            dest = f"{hdfs_dir}/{prefix}{fn}"
-            hdfs_put(os.path.join(tmpdir, fn), dest)
+            dest = f"{hdfs_dir}/{prefix}{os.path.basename(fn)}"
+            hdfs_put(fn, dest)
             ans.append("hdfs://" + dest)
         hdfs_time_accumulator += time.time() - t1
         return ans
+
+
+def run_gvcf_norm(gvcf_fn):
+    ref_genome_dir = os.path.dirname(pyspark.SparkFiles.get("_FOO"))
+    out_fn = os.path.join(os.path.dirname(gvcf_fn), "norm_" + os.path.basename(gvcf_fn))
+    try:
+        subprocess.run(
+            f"set -euo pipefail; bgzip -dc {shlex.quote(gvcf_fn)} | gvcf_norm -r {ref_genome_dir} - | bgzip -cl1@4 > {shlex.quote(out_fn)}",
+            shell=True,
+            executable="/bin/bash",
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError("gvcf_norm failed: " + e.stderr.strip())
+    return out_fn
 
 
 def hdfs_put(local_path, hdfs_path):
@@ -104,6 +149,11 @@ print(
     f"cumulative seconds downloading dxfiles: {dx_time_accumulator.value}",
     file=sys.stderr,
 )
+if gvcf_norm:
+    print(
+        f"cumulative seconds for gvcf_norm: {gvcf_norm_time_accumulator.value}",
+        file=sys.stderr,
+    )
 print(
     f"cumulative seconds putting to HDFS: {hdfs_time_accumulator.value}",
     file=sys.stderr,
