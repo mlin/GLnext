@@ -6,10 +6,11 @@ import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
 
 /**
- * Get the Hadoop FileSystem object for path (either hdfs: or a local filename)
+ * Get the Hadoop FileSystem object for path (either URI or a local filename)
  */
 fun getFileSystem(path: String): FileSystem {
-    val normPath = if (path.startsWith("hdfs:") || path.startsWith("file://")) {
+    val schemes = listOf("file:", "hdfs:", "s3:", "gs:")
+    val normPath = if (schemes.any { path.startsWith(it) }) {
         path
     } else {
         "file://" + path
