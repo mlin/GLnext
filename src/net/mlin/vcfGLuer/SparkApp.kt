@@ -47,10 +47,6 @@ class CLI : CliktCommand() {
         )
     val splitBed: String? by
         option(help = "Guide spVCF part splitting using non-overlapping regions from this BED file")
-    val tmpDir: String? by
-        option(
-            help = "Shared (HDFS) temporary directory"
-        )
 
     override fun run() {
         val cfg = ConfigLoader.Builder()
@@ -68,7 +64,7 @@ class CLI : CliktCommand() {
 
         var effInputFiles = inputFiles
         if (manifest) {
-            effInputFiles = inputFiles.flatMap { java.io.File(it).readLines() }.distinct()
+            effInputFiles = inputFiles.flatMap { fileReaderDetectGz(it).readLines() }.distinct()
         }
 
         val sparkConf = org.apache.spark.SparkConf()
