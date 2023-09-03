@@ -1,6 +1,8 @@
 package net.mlin.vcfGLuer.util
 import java.io.BufferedReader
 import java.io.File
+import java.io.FilterInputStream
+import java.io.IOException
 import java.io.InputStream
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
@@ -9,16 +11,14 @@ import org.apache.hadoop.fs.Path
  * Get the Hadoop FileSystem object for path (either URI or a local filename)
  */
 fun getFileSystem(path: String): FileSystem {
-    val schemes = listOf("file:", "hdfs:", "s3:", "gs:")
+    val schemes = listOf("file:", "hdfs:", "s3:", "gs:", "http:", "https:")
     val normPath = if (schemes.any { path.startsWith(it) }) {
         path
     } else {
         "file://" + path
     }
-    return FileSystem.get(
-        java.net.URI(normPath),
-        org.apache.spark.deploy.SparkHadoopUtil.get().conf()
-    )
+    val conf = org.apache.spark.deploy.SparkHadoopUtil.get().conf()
+    return FileSystem.get(java.net.URI(normPath), conf)
 }
 
 /**
@@ -45,18 +45,36 @@ fun FileSystem.concatNaive(
 }
 
 /**
- * Open reader for file, gunzipping if applicable
+ * Opens a reader for a file, decompressing it on-the-fly if the file is gzipped.
+ *
+ * @param filename The path of the file to be read.
+ * @param fs The `FileSystem` to be used. If `null`, the default file system for `filename` is used.
+ * @param bufferSize The size of the buffer to be used by the `BufferedReader`. Default is 65536.
+ * @param partial Whether to allow reading only part of the file. If `false`, an exception is thrown
+ *                if the number of bytes read does not match the file's length. Default is `false`.
+ * @return A `BufferedReader` for the file.
+ *
+ * @throws IOException If an I/O error occurs, or if `partial` is `false` and the number of bytes
+ *                     read does not match the file's length.
  */
 fun fileReaderDetectGz(
     filename: String,
     fs: FileSystem? = null,
-    bufferSize: Int = 65536
+    bufferSize: Int = 65536,
+    partial: Boolean = false
 ): BufferedReader {
     val fs2 = fs ?: getFileSystem(filename)
-    var instream: InputStream = fs2.open(Path(filename))
+    val path = Path(filename)
+    var instream: InputStream = fs2.open(path)
+    if (!partial) {
+        instream = InputStreamWithExpectedLength(
+            instream,
+            fs2.getFileStatus(path).getLen()
+        )
+    }
     // TODO: decide based on magic bytes instead of filename
     if (filename.endsWith(".gz") || filename.endsWith(".bgz")) {
-        instream = java.util.zip.GZIPInputStream(instream, bufferSize)
+        instream = htsjdk.samtools.util.BlockCompressedInputStream(instream, true)
     }
     return instream.reader().buffered(bufferSize)
 }
@@ -106,4 +124,67 @@ fun fileCRC32C(filename: String): Long {
         }
     }
     return crc.value
+}
+
+/**
+ * InputStream wrapper that throws if the total number of bytes read isn't exactly expectedLength.
+ * This safeguards against deficient error handling in specific FileSystem implementations, which
+ * could result in apparently successful but incomplete reads.
+ */
+class InputStreamWithExpectedLength(source: InputStream, val expectedLength: Long) :
+    FilterInputStream(source) {
+
+    private var bytesRead: Long = 0
+    private var raised: Boolean = false
+
+    @Throws(IOException::class)
+    override fun read(): Int {
+        val b = super.read()
+        if (b != -1) {
+            bytesRead++
+        } else {
+            checkExpectedLength()
+        }
+        return b
+    }
+
+    @Throws(IOException::class)
+    override fun read(b: ByteArray): Int {
+        val n = super.read(b)
+        if (n > 0) {
+            bytesRead += n.toLong()
+        } else if (n < 0) {
+            checkExpectedLength()
+        } else {
+            check(b.size == 0)
+        }
+        return n
+    }
+
+    @Throws(IOException::class)
+    override fun read(b: ByteArray, off: Int, len: Int): Int {
+        val n = super.read(b, off, len)
+        if (n > 0) {
+            bytesRead += n.toLong()
+        } else if (n < 0) {
+            checkExpectedLength()
+        } else {
+            check(len == 0)
+        }
+        return n
+    }
+
+    @Throws(IOException::class)
+    override fun close() {
+        super.close()
+        checkExpectedLength()
+    }
+
+    @Throws(IOException::class)
+    private fun checkExpectedLength() {
+        if (bytesRead != expectedLength && !raised) {
+            raised = true
+            throw IOException("Expected $expectedLength bytes, but read $bytesRead bytes")
+        }
+    }
 }

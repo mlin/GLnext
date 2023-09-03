@@ -156,9 +156,9 @@ class CLI : CliktCommand() {
             val jsc = JavaSparkContext(spark.sparkContext)
             val filterRangesB = filterBed?.let {
                 val filterRanges = BedRanges(aggHeader.contigId, fileReaderDetectGz(it))
-                logger.info("BED filter ranges: ${filterRanges.size}")
                 jsc.broadcast(filterRanges)
             }
+            logger.info("--filter-bed regions: ${filterRangesB?.value?.size?.pretty() ?: 0}")
             val filterRids = filterContigs?.let {
                 it.split(",").map {
                     val ans = aggHeader.contigId.get(it)
@@ -166,7 +166,9 @@ class CLI : CliktCommand() {
                     ans
                 }.toSet()
             }
+            logger.info("--filter-contigs regions: ${filterRids?.size?.pretty() ?: 0}")
             val splitRanges = readSplitBed(aggHeader.contigId, splitBed)
+            logger.info("--split-bed regions: ${splitRanges.size.pretty()}")
 
             // accumulators
             val vcfRecordCount = spark.sparkContext.longAccumulator("input VCF records")

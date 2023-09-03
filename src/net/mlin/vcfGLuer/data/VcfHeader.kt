@@ -255,15 +255,18 @@ fun validateVcfHeaderLines(headerLines: List<VcfHeaderLine>):
  * is SHA-256 hex.
  */
 fun readVcfHeader(filename: String, fs: FileSystem? = null): Pair<String, String> {
-    val header = fileReaderDetectGz(filename, fs).useLines {
-        return@useLines it.takeWhile { it.length > 0 && it.get(0) == '#' }
-            .asSequence()
-            .joinToString(separator = "\n", postfix = "\n")
+    var completeHeader = false
+    val header = fileReaderDetectGz(filename, fs, partial = true).useLines {
+        return@useLines it.takeWhile { line ->
+            require(line.length > 0, { "blank line in $filename" })
+            line.startsWith('#').also { isHeaderLine -> completeHeader = !isHeaderLine }
+        }.asSequence().joinToString(separator = "\n", postfix = "\n")
     }
     require(
         header.length > 0 && header.startsWith("##fileformat=VCF"),
         { "invalid VCF header in $filename" }
     )
+    require(completeHeader, { "incomplete header or empty $filename" })
     val headerDigest = java.security.MessageDigest.getInstance("SHA-256")
         .digest(header.toByteArray())
         .map { "%02x".format(it) }
