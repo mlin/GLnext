@@ -82,7 +82,7 @@ main() {
         --conf spark.sql.adaptive.coalescePartitions.parallelismFirst=false \
         $HDFS_RETRY_CONF \
         --name vcfGLuer vcfGLuer-*.jar \
-        --manifest --tmp-dir hdfs:///tmp --config "$config" \
+        --manifest --config "$config" \
         $filter_bed_arg $filter_contigs_arg $split_bed_arg \
         vcfGLuer_in.hdfs.manifest "hdfs:///vcfGLuer/out/$output_name" \
         || true
