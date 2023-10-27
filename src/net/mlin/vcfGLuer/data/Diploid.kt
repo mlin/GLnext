@@ -71,4 +71,15 @@ data class DiploidGenotype(val allele1: Int?, val allele2: Int?, val phased: Boo
             (if (phased) "|" else "/") +
             (if (allele2 == null) "." else allele2.toString())
     }
+
+    fun revise(
+        PL: Array<Int?>,
+        N: Int,
+        minAssumedAlleleFrequency: Float,
+        snvPriorCalibration: Float,
+        indelPriorCalibration: Float
+    ): Pair<DiploidGenotype, String?> {
+        return this to null
+        // TODO
+    }
 }

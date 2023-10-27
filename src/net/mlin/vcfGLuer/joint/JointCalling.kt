@@ -26,7 +26,15 @@ enum class GT_OverlapMode {
     REF
 }
 
-data class JointGenotypeConfig(val overlapMode: GT_OverlapMode) : Serializable
+data class GenotypeRevisionConfig(
+    val minAssumedAlleleFrequency: Float,
+    val snvPriorCalibration: Float,
+    val indelPriorCalibration: Float
+) : Serializable
+data class JointGenotypeConfig(
+    val overlapMode: GT_OverlapMode,
+    val revision: GenotypeRevisionConfig?
+) : Serializable
 data class JointConfig(
     val gt: JointGenotypeConfig,
     val formatFields: List<JointFormatField>
@@ -177,7 +185,8 @@ fun generateJointCalls(
                                 cfg,
                                 fieldsGen,
                                 ctx,
-                                sampleIndex
+                                sampleIndex,
+                                aggHeader.samples.size
                             )
                         )
                     }
@@ -209,7 +218,8 @@ fun generateGenotypeAndFormatFields(
     cfg: JointConfig,
     fieldsGen: JointFieldsGenerator,
     data: GenotypingContext,
-    sampleIndex: Int
+    sampleIndex: Int,
+    N: Int
 ): String {
     if (data.variantRecords.isEmpty()) {
         return generateRefGenotypeAndFormatFields(cfg, fieldsGen, data, sampleIndex)
@@ -250,12 +260,31 @@ fun generateGenotypeAndFormatFields(
         else -> genotypeOverlapSentinel(cfg.gt.overlapMode)
     }
 
-    val gtOut = DiploidGenotype(
+    var gtOut = DiploidGenotype(
         translate(gtIn.allele1),
         translate(gtIn.allele2),
         gtIn.phased
-    ).normalize()
-    return gtOut.toString() + fieldsGen.generateFormatFields(data, sampleIndex, gtOut, record)
+    )
+    var revisedGQ: String? = null
+    cfg.gt.revision?.let {
+        val result = gtOut.revise(
+            record.getSampleFieldInts(sampleIndex, "PL"),
+            N,
+            minAssumedAlleleFrequency = it.minAssumedAlleleFrequency,
+            snvPriorCalibration = it.snvPriorCalibration,
+            indelPriorCalibration = it.indelPriorCalibration
+        )
+        gtOut = result.first
+        revisedGQ = result.second
+    }
+    gtOut = gtOut.normalize()
+    return gtOut.toString() + fieldsGen.generateFormatFields(
+        data,
+        sampleIndex,
+        gtOut,
+        record,
+        overrideGQ = revisedGQ
+    )
 }
 
 /**
