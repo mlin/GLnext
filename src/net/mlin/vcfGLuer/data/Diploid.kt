@@ -1,6 +1,7 @@
 package net.mlin.vcfGLuer.data
 import kotlin.math.floor
 import kotlin.math.log10
+import kotlin.math.min
 
 /**
  * Number of distinct, unphased diploid genotypes for the given total # of alleles.
@@ -62,6 +63,14 @@ data class DiploidGenotype(val allele1: Int?, val allele2: Int?, val phased: Boo
             (if (allele2 == null) "." else allele2.toString())
     }
 
+    /**
+     * Revise genotype by applying an allele frequency prior to genotype likelihoods.
+     *
+     * This is the GLenxus revise_genotypes feature, simplified by assuming the variant is
+     * biallelic (so PL should have length 3). Revise 1/1 genotypes to 0/1 if the allele is too
+     * rare, specifically if the phred-scaled allele frequency (times a calibration factor) is
+     * greater than PL[1].
+     */
     fun revise(
         PL: Array<Int?>,
         alleleFrequency: Float,
@@ -70,13 +79,13 @@ data class DiploidGenotype(val allele1: Int?, val allele2: Int?, val phased: Boo
         if (!phased && allele1 == 1 && allele2 == 1 &&
             PL.size == 3 && PL.all { it != null } && PL[2] == 0
         ) {
-            val PL1 = PL[1]!!
+            val PL12 = min(PL[0]!!, PL[1]!!) // collapse unusual case where PL[0] < PL[1]
             val prior = -10.0 * log10(alleleFrequency) * calibrationFactor
-            if (PL1 < prior) {
-                val revisedGQ = floor(prior - PL1).toInt()
+            if (PL12 < prior) {
+                val revisedGQ = floor(prior - PL12).toInt()
                 return DiploidGenotype(0, 1, false) to revisedGQ.toString()
             } else {
-                val revisedGQ = floor(PL1 - prior).toInt()
+                val revisedGQ = floor(PL12 - prior).toInt()
                 return this to revisedGQ.toString()
             }
         }
@@ -97,6 +106,10 @@ fun testDiploidGenotypeRevise() {
     check(result.first === gt, { "$result" })
     check(result.second == "0", { "$result" })
     result = gt.revise(PL, 0.01f, 0.1f)
+    check(result.first === gt, { "$result" })
+    check(result.second == "7", { "$result" })
+
+    result = gt.revise(arrayOf(10, 20, 0), 0.01f, 0.1f)
     check(result.first === gt, { "$result" })
     check(result.second == "7", { "$result" })
 
