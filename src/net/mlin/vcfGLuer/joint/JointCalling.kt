@@ -27,6 +27,7 @@ enum class GT_OverlapMode {
 }
 
 data class GenotypeRevisionConfig(
+    val enable: Boolean,
     val minAssumedAlleleFrequency: Float,
     val snvPriorCalibration: Float,
     val indelPriorCalibration: Float
@@ -267,15 +268,26 @@ fun generateGenotypeAndFormatFields(
     )
     var revisedGQ: String? = null
     cfg.gt.revision?.let {
-        val result = gtOut.revise(
-            record.getSampleFieldInts(sampleIndex, "PL"),
-            N,
-            minAssumedAlleleFrequency = it.minAssumedAlleleFrequency,
-            snvPriorCalibration = it.snvPriorCalibration,
-            indelPriorCalibration = it.indelPriorCalibration
-        )
-        gtOut = result.first
-        revisedGQ = result.second
+        if (it.enable) {
+            val alleleFrequency = kotlin.math.max(
+                (data.variantRow.stats.copies / (2.0 * N)).toFloat(),
+                it.minAssumedAlleleFrequency
+            )
+            val calibrationFactor = if (data.variantRow.variant.ref.length == 1 &&
+                data.variantRow.variant.alt.length == 1
+            ) {
+                cfg.gt.revision.snvPriorCalibration
+            } else {
+                cfg.gt.revision.indelPriorCalibration
+            }
+            val result = gtOut.revise(
+                record.getSampleFieldInts(sampleIndex, "PL"),
+                alleleFrequency,
+                calibrationFactor = calibrationFactor
+            )
+            gtOut = result.first
+            revisedGQ = result.second
+        }
     }
     gtOut = gtOut.normalize()
     return gtOut.toString() + fieldsGen.generateFormatFields(

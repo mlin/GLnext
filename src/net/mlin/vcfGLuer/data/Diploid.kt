@@ -1,4 +1,6 @@
 package net.mlin.vcfGLuer.data
+import kotlin.math.floor
+import kotlin.math.log10
 
 /**
  * Number of distinct, unphased diploid genotypes for the given total # of alleles.
@@ -74,12 +76,22 @@ data class DiploidGenotype(val allele1: Int?, val allele2: Int?, val phased: Boo
 
     fun revise(
         PL: Array<Int?>,
-        N: Int,
-        minAssumedAlleleFrequency: Float,
-        snvPriorCalibration: Float,
-        indelPriorCalibration: Float
+        alleleFrequency: Float,
+        calibrationFactor: Float
     ): Pair<DiploidGenotype, String?> {
+        if (!phased && allele1 != null && allele1 <= 1 && allele2 != null && allele2 <= 1) {
+            if (PL.size == 3 && PL.all { it != null } && PL[2] == 0) {
+                val PL1 = PL[1]!!
+                val prior = -10.0 * log10(alleleFrequency) * calibrationFactor
+                if (PL1 < prior) {
+                    val revisedGQ = floor(prior - PL1).toInt()
+                    return DiploidGenotype(0, 1, false) to revisedGQ.toString()
+                } else {
+                    val revisedGQ = floor(PL1 - prior).toInt()
+                    return this to revisedGQ.toString()
+                }
+            }
+        }
         return this to null
-        // TODO
     }
 }
