@@ -36,18 +36,6 @@ fun diploidGenotypeAlleles(genotypeIndex: Int): Pair<Int, Int> {
     return (allele1 to allele2)
 }
 
-fun testDiploidSubroutines() {
-    for (alleleCount in 2..16) {
-        val genotypes = diploidGenotypes(alleleCount)
-        check(diploidGenotypeCount(alleleCount) == genotypes.size)
-        genotypes.forEachIndexed { gt, (a, b) ->
-            check(diploidGenotypeIndex(a, b) == gt)
-            check(diploidGenotypeIndex(b, a) == gt)
-            check(diploidGenotypeAlleles(gt) == a to b)
-        }
-    }
-}
-
 /**
  * GT field in a diploid VCF
  */
@@ -79,19 +67,63 @@ data class DiploidGenotype(val allele1: Int?, val allele2: Int?, val phased: Boo
         alleleFrequency: Float,
         calibrationFactor: Float
     ): Pair<DiploidGenotype, String?> {
-        if (!phased && allele1 != null && allele1 <= 1 && allele2 != null && allele2 <= 1) {
-            if (PL.size == 3 && PL.all { it != null } && PL[2] == 0) {
-                val PL1 = PL[1]!!
-                val prior = -10.0 * log10(alleleFrequency) * calibrationFactor
-                if (PL1 < prior) {
-                    val revisedGQ = floor(prior - PL1).toInt()
-                    return DiploidGenotype(0, 1, false) to revisedGQ.toString()
-                } else {
-                    val revisedGQ = floor(PL1 - prior).toInt()
-                    return this to revisedGQ.toString()
-                }
+        if (!phased && allele1 == 1 && allele2 == 1 &&
+            PL.size == 3 && PL.all { it != null } && PL[2] == 0
+        ) {
+            val PL1 = PL[1]!!
+            val prior = -10.0 * log10(alleleFrequency) * calibrationFactor
+            if (PL1 < prior) {
+                val revisedGQ = floor(prior - PL1).toInt()
+                return DiploidGenotype(0, 1, false) to revisedGQ.toString()
+            } else {
+                val revisedGQ = floor(PL1 - prior).toInt()
+                return this to revisedGQ.toString()
             }
         }
         return this to null
     }
+}
+
+fun testDiploidGenotypeRevise() {
+    var gt = DiploidGenotype(1, 1, false)
+    val PL: Array<Int?> = arrayOf(20, 10, 0)
+    var result = gt.revise(PL, 0.01f, 1.0f)
+    check(result.first == DiploidGenotype(0, 1, false), { "$result" })
+    check(result.second == "10", { "$result" })
+    result = gt.revise(PL, 0.1f, 1.0f)
+    check(result.first === gt, { "$result" })
+    check(result.second == "0", { "$result" })
+    result = gt.revise(PL, 0.01f, 0.5f)
+    check(result.first === gt, { "$result" })
+    check(result.second == "0", { "$result" })
+    result = gt.revise(PL, 0.01f, 0.1f)
+    check(result.first === gt, { "$result" })
+    check(result.second == "7", { "$result" })
+
+    result = gt.revise(arrayOf(20, 0, 10), 0.01f, 1.0f)
+    check(result.first === gt, { "$result" })
+    check(result.second == null, { "$result" })
+    result = gt.revise(arrayOf(0), 0.01f, 1.0f)
+    check(result.first === gt, { "$result" })
+    check(result.second == null, { "$result" })
+    result = gt.revise(arrayOf(null, 10, 0), 0.01f, 1.0f)
+    check(result.first === gt, { "$result" })
+    check(result.second == null, { "$result" })
+    gt = DiploidGenotype(0, 1, false)
+    result = gt.revise(PL, 0.01f, 1.0f)
+    check(result.first === gt, { "$result" })
+    check(result.second == null, { "$result" })
+}
+
+fun testDiploidSubroutines() {
+    for (alleleCount in 2..16) {
+        val genotypes = diploidGenotypes(alleleCount)
+        check(diploidGenotypeCount(alleleCount) == genotypes.size)
+        genotypes.forEachIndexed { gt, (a, b) ->
+            check(diploidGenotypeIndex(a, b) == gt)
+            check(diploidGenotypeIndex(b, a) == gt)
+            check(diploidGenotypeAlleles(gt) == a to b)
+        }
+    }
+    testDiploidGenotypeRevise()
 }
