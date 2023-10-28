@@ -79,13 +79,13 @@ data class DiploidGenotype(val allele1: Int?, val allele2: Int?, val phased: Boo
         if (!phased && allele1 == 1 && allele2 == 1 &&
             PL.size == 3 && PL.all { it != null } && PL[2] == 0
         ) {
-            val PL12 = min(PL[0]!!, PL[1]!!) // collapse unusual case where PL[0] < PL[1]
+            val PL01 = min(PL[0]!!, PL[1]!!) // collapse unusual case where PL[0] < PL[1]
             val prior = -10.0 * log10(alleleFrequency) * calibrationFactor
-            if (PL12 < prior) {
-                val revisedGQ = floor(prior - PL12).toInt()
+            if (PL01 < prior) {
+                val revisedGQ = floor(prior - PL01).toInt()
                 return DiploidGenotype(0, 1, false) to revisedGQ.toString()
             } else {
-                val revisedGQ = floor(PL12 - prior).toInt()
+                val revisedGQ = floor(PL01 - prior).toInt()
                 return this to revisedGQ.toString()
             }
         }
