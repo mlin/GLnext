@@ -281,8 +281,8 @@ fun generateGenotypeAndFormatFields(
                 cfg.gt.revision.indelPriorCalibration
             }
             val result = gtOut.revise(
-                record.getSampleFieldInts(sampleIndex, "PL"),
-                alleleFrequency,
+                PL = record.getSampleFieldInts(sampleIndex, "PL"),
+                alleleFrequency = alleleFrequency,
                 calibrationFactor = calibrationFactor
             )
             gtOut = result.first
