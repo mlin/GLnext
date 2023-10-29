@@ -12,3 +12,9 @@ formatFields = [
 
 [joint.gt]
 overlapMode = "MISSING"
+
+[joint.gt.revision]
+enable = true
+minAssumedAlleleFrequency = 0.0001
+snvPriorCalibration = 0.6
+indelPriorCalibration = 0.45
