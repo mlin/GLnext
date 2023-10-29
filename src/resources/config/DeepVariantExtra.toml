@@ -1,0 +1,14 @@
+[discovery]
+minCopies = 1
+
+[joint]
+formatFields = [
+    { name = "DP" },
+    { name = "GQ", impl = "GQextra" },
+    { name = "AD" },
+    { name = "PL", impl = "PLextra" },
+    { name = "OL" }
+]
+
+[joint.gt]
+overlapMode = "MISSING"

@@ -48,6 +48,40 @@ class CopiedFormatField(hdr: AggVcfHeader, spec: JointFormatField) :
     }
 }
 
+class GQextra_FormatField(hdr: AggVcfHeader, spec: JointFormatField) :
+    JointFormatFieldImpl(hdr, spec) {
+    override fun generate(
+        data: GenotypingContext,
+        sampleIndex: Int,
+        gt: DiploidGenotype,
+        variantRecord: VcfRecordUnpacked?
+    ): String? {
+        // If variantRecord, copy its GQ.
+        if (variantRecord != null) {
+            return variantRecord.getSampleField(sampleIndex, "GQ")
+        }
+        // If only referenceBands, take their minimum GQ.
+        if (data.otherVariantRecords.isEmpty() && data.referenceBands.isNotEmpty()) {
+            var minGQ = Int.MAX_VALUE
+            var gqRanges: MutableList<GRange> = mutableListOf()
+            data.referenceBands.forEach {
+                val gq = it.getSampleFieldInt(sampleIndex, "GQ")
+                if (gq != null) {
+                    minGQ = min(minGQ, gq)
+                    gqRanges.add(it.record.range)
+                }
+            }
+            if (minGQ >= 0 && minGQ < Int.MAX_VALUE &&
+                data.variantRow.variant.range.subtract(gqRanges).isEmpty()
+            ) {
+                return minGQ.toString()
+            }
+        }
+        // Otherwise, leave missing.
+        return null
+    }
+}
+
 class DP_FormatField(hdr: AggVcfHeader, spec: JointFormatField) :
     JointFormatFieldImpl(hdr, spec) {
     override fun generate(
@@ -111,7 +145,10 @@ class AD_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFie
     }
 }
 
-class PL_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFieldImpl(hdr, spec) {
+open class PL_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFieldImpl(
+    hdr,
+    spec
+) {
     override fun generate(
         data: GenotypingContext,
         sampleIndex: Int,
@@ -160,6 +197,40 @@ class PL_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFie
     }
 }
 
+class PLextra_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : PL_FormatField(hdr, spec) {
+    override fun generate(
+        data: GenotypingContext,
+        sampleIndex: Int,
+        gt: DiploidGenotype,
+        variantRecord: VcfRecordUnpacked?
+    ): String? {
+        super.generate(data, sampleIndex, gt, variantRecord)?.let { return it }
+        // If only referenceBands, take PL from the one with the lowest GQ.
+        if (data.otherVariantRecords.isEmpty() && data.referenceBands.isNotEmpty()) {
+            var minGQ = Int.MAX_VALUE
+            var minGQ_PL: String? = null
+            var gqRanges: MutableList<GRange> = mutableListOf()
+            data.referenceBands.forEach {
+                val gq = it.getSampleFieldInt(sampleIndex, "GQ")
+                if (gq != null) {
+                    if (gq < minGQ) {
+                        minGQ = gq
+                        minGQ_PL = it.getSampleField(sampleIndex, "PL")
+                    }
+                    gqRanges.add(it.record.range)
+                }
+            }
+            if (minGQ_PL != null &&
+                data.variantRow.variant.range.subtract(gqRanges).isEmpty()
+            ) {
+                return minGQ_PL
+            }
+        }
+        // Otherwise, leave missing.
+        return null
+    }
+}
+
 class OL_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFieldImpl(hdr, spec) {
     protected override fun defaultHeaderLine(): String {
         return "FORMAT=<ID=OL,Number=1,Type=Integer," +
@@ -198,7 +269,9 @@ class JointFieldsGenerator(val cfg: JointConfig, aggHeader: AggVcfHeader) {
                 "DP" -> DP_FormatField(aggHeader, it)
                 "AD" -> AD_FormatField(aggHeader, it)
                 "PL" -> PL_FormatField(aggHeader, it)
+                "PLextra" -> PLextra_FormatField(aggHeader, it)
                 "OL" -> OL_FormatField(aggHeader, it)
+                "GQextra" -> GQextra_FormatField(aggHeader, it)
                 else -> CopiedFormatField(aggHeader, it)
             }
         }
