@@ -76,7 +76,7 @@ data class DiploidGenotype(val allele1: Int?, val allele2: Int?, val phased: Boo
         alleleFrequency: Float,
         calibrationFactor: Float
     ): Pair<DiploidGenotype, String?> {
-        if (!phased && allele1 == 1 && allele2 == 1 &&
+        if (this.revisable() &&
             PL.size == 3 && PL.all { it != null } && PL[2] == 0
         ) {
             val PL01 = min(PL[0]!!, PL[1]!!) // collapse unusual case where PL[0] < PL[1]
@@ -90,6 +90,11 @@ data class DiploidGenotype(val allele1: Int?, val allele2: Int?, val phased: Boo
             }
         }
         return this to null
+    }
+
+    fun revisable(): Boolean {
+        // optimization, so caller can decide whether to compute arguments to revise()
+        return allele1 == 1 && allele2 == 1 && !phased
     }
 }
 

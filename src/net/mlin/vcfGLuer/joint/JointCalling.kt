@@ -268,7 +268,7 @@ fun generateGenotypeAndFormatFields(
     )
     var revisedGQ: String? = null
     cfg.gt.revision?.let {
-        if (it.enable) {
+        if (it.enable && gtOut.revisable()) {
             val alleleFrequency = kotlin.math.max(
                 (data.variantRow.stats.copies / (2.0 * N)).toFloat(),
                 it.minAssumedAlleleFrequency
