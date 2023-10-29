@@ -21,7 +21,7 @@
       "name": "config",
       "class": "string",
       "default": "DeepVariant",
-      "choices": ["DeepVariant", "GLIMPSE"],
+      "choices": ["DeepVariant", "DeepVariantExtra", "GLIMPSE"],
       "help": "vcfGLuer configuration preset"
     },
     {
