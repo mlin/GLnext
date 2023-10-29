@@ -26,7 +26,16 @@ enum class GT_OverlapMode {
     REF
 }
 
-data class JointGenotypeConfig(val overlapMode: GT_OverlapMode) : Serializable
+data class GenotypeRevisionConfig(
+    val enable: Boolean,
+    val minAssumedAlleleFrequency: Float,
+    val snvPriorCalibration: Float,
+    val indelPriorCalibration: Float
+) : Serializable
+data class JointGenotypeConfig(
+    val overlapMode: GT_OverlapMode,
+    val revision: GenotypeRevisionConfig?
+) : Serializable
 data class JointConfig(
     val gt: JointGenotypeConfig,
     val formatFields: List<JointFormatField>
@@ -177,7 +186,8 @@ fun generateJointCalls(
                                 cfg,
                                 fieldsGen,
                                 ctx,
-                                sampleIndex
+                                sampleIndex,
+                                aggHeader.samples.size
                             )
                         )
                     }
@@ -209,7 +219,8 @@ fun generateGenotypeAndFormatFields(
     cfg: JointConfig,
     fieldsGen: JointFieldsGenerator,
     data: GenotypingContext,
-    sampleIndex: Int
+    sampleIndex: Int,
+    N: Int
 ): String {
     if (data.variantRecords.isEmpty()) {
         return generateRefGenotypeAndFormatFields(cfg, fieldsGen, data, sampleIndex)
@@ -250,12 +261,42 @@ fun generateGenotypeAndFormatFields(
         else -> genotypeOverlapSentinel(cfg.gt.overlapMode)
     }
 
-    val gtOut = DiploidGenotype(
+    var gtOut = DiploidGenotype(
         translate(gtIn.allele1),
         translate(gtIn.allele2),
         gtIn.phased
-    ).normalize()
-    return gtOut.toString() + fieldsGen.generateFormatFields(data, sampleIndex, gtOut, record)
+    )
+    var revisedGQ: String? = null
+    cfg.gt.revision?.let {
+        if (it.enable && gtOut.revisable()) {
+            val alleleFrequency = kotlin.math.max(
+                (data.variantRow.stats.copies / (2.0 * N)).toFloat(),
+                it.minAssumedAlleleFrequency
+            )
+            val calibrationFactor = if (data.variantRow.variant.ref.length == 1 &&
+                data.variantRow.variant.alt.length == 1
+            ) {
+                cfg.gt.revision.snvPriorCalibration
+            } else {
+                cfg.gt.revision.indelPriorCalibration
+            }
+            val result = gtOut.revise(
+                PL = record.getSampleFieldInts(sampleIndex, "PL"),
+                alleleFrequency = alleleFrequency,
+                calibrationFactor = calibrationFactor
+            )
+            gtOut = result.first
+            revisedGQ = result.second
+        }
+    }
+    gtOut = gtOut.normalize()
+    return gtOut.toString() + fieldsGen.generateFormatFields(
+        data,
+        sampleIndex,
+        gtOut,
+        record,
+        overrideGQ = revisedGQ
+    )
 }
 
 /**

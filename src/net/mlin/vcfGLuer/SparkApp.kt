@@ -294,6 +294,7 @@ val _classesForKryo = arrayOf(
     Variant::class.java,
     JointConfig::class.java,
     JointGenotypeConfig::class.java,
+    GenotypeRevisionConfig::class.java,
     JointFieldsGenerator::class.java,
     JointFormatField::class.java,
     GT_OverlapMode::class.java,

@@ -3,7 +3,7 @@ import net.mlin.vcfGLuer.data.*
 import net.mlin.vcfGLuer.util.*
 
 /**
- * one row of the variants GenomicSQLite database
+ * one row of the variants GenomicSQLite database (written by VariantDiscovery)
  */
 data class VariantsDbRow(
     val variant: Variant,

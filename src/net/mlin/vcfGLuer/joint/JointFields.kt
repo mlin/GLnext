@@ -286,9 +286,16 @@ class JointFieldsGenerator(val cfg: JointConfig, aggHeader: AggVcfHeader) {
         data: GenotypingContext,
         sampleIndex: Int,
         gt: DiploidGenotype,
-        variantRecord: VcfRecordUnpacked?
+        variantRecord: VcfRecordUnpacked?,
+        overrideGQ: String? = null
     ): String {
-        val fields = formatImpls.map { it.generate(data, sampleIndex, gt, variantRecord) }
+        val fields = cfg.formatFields.mapIndexed { i, it ->
+            if (overrideGQ != null && it.name == "GQ") {
+                overrideGQ
+            } else {
+                formatImpls[i].generate(data, sampleIndex, gt, variantRecord)
+            }
+        }
         val maxNotNullIdx = fields.mapIndexed { i, v -> v?.let { i } }.filterNotNull().maxOrNull()
         if (maxNotNullIdx == null) {
             return ""
