@@ -69,7 +69,7 @@ data class DiploidGenotype(val allele1: Int?, val allele2: Int?, val phased: Boo
      * This is the GLenxus revise_genotypes feature, simplified by assuming the variant is
      * biallelic (so PL should have length 3). Revise 1/1 genotypes to 0/1 if the allele is too
      * rare, specifically if the phred-scaled allele frequency (times a calibration factor) is
-     * greater than PL[1].
+     * greater than the smallest nonzero PL.
      */
     fun revise(
         PL: Array<Int?>,
@@ -77,6 +77,7 @@ data class DiploidGenotype(val allele1: Int?, val allele2: Int?, val phased: Boo
         calibrationFactor: Float
     ): Pair<DiploidGenotype, String?> {
         if (this.revisable() &&
+            // complete diploid PL consistent with 1/1 genotype call:
             PL.size == 3 && PL.all { it != null } && PL[2] == 0
         ) {
             val PL01 = min(PL[0]!!, PL[1]!!) // collapse unusual case where PL[0] < PL[1]

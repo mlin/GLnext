@@ -52,7 +52,8 @@ fun jointCall(
     variantsDbSparkFile: String,
     vcfFilenamesDF: Dataset<Row>,
     pvcfHeaderMetaLines: List<String>,
-    sparseEntryCount: LongAccumulator? = null
+    sparseEntryCount: LongAccumulator? = null,
+    revisedGenotypeCount: LongAccumulator? = null
 ): Triple<String, Long, Dataset<Row>> {
     // broadcast supporting data for joint calling; using JavaSparkContext to sidestep
     // kotlin-spark-api overrides
@@ -71,7 +72,8 @@ fun jointCall(
                 SparkFiles.get(variantsDbSparkFile),
                 it.getAs<Int>("callsetId"),
                 it.getAs<String>("vcfFilename"),
-                sparseEntryCount
+                sparseEntryCount,
+                revisedGenotypeCount
             ).iterator()
         },
         RowEncoder.apply(
@@ -131,7 +133,8 @@ fun generateJointCalls(
     variantsDbFilename: String,
     callsetId: Int,
     vcfFilename: String,
-    sparseEntryCount: LongAccumulator? = null
+    sparseEntryCount: LongAccumulator? = null,
+    revisedGenotypeCount: LongAccumulator? = null
 ): Sequence<Row> = // [(frameno, sampleId, sparseGenotypes)]
     sequence {
         // variants sequence (read from broadcast database file)
@@ -187,7 +190,8 @@ fun generateJointCalls(
                                 fieldsGen,
                                 ctx,
                                 sampleIndex,
-                                aggHeader.samples.size
+                                aggHeader.samples.size,
+                                revisedGenotypeCount
                             )
                         )
                     }
@@ -220,7 +224,8 @@ fun generateGenotypeAndFormatFields(
     fieldsGen: JointFieldsGenerator,
     data: GenotypingContext,
     sampleIndex: Int,
-    N: Int
+    N: Int,
+    revisedGenotypeCount: LongAccumulator? = null
 ): String {
     if (data.variantRecords.isEmpty()) {
         return generateRefGenotypeAndFormatFields(cfg, fieldsGen, data, sampleIndex)
@@ -269,6 +274,12 @@ fun generateGenotypeAndFormatFields(
     var revisedGQ: String? = null
     cfg.gt.revision?.let {
         if (it.enable && gtOut.revisable()) {
+            val gvcfPL = record.getSampleFieldInts(sampleIndex, "PL")
+            val biallelicPL = arrayOf(
+                gvcfPL.getOrNull(diploidGenotypeIndex(0, 0)),
+                gvcfPL.getOrNull(diploidGenotypeIndex(0, altIdx)),
+                gvcfPL.getOrNull(diploidGenotypeIndex(altIdx, altIdx))
+            )
             val alleleFrequency = kotlin.math.max(
                 (data.variantRow.stats.copies / (2.0 * N)).toFloat(),
                 it.minAssumedAlleleFrequency
@@ -281,10 +292,13 @@ fun generateGenotypeAndFormatFields(
                 cfg.gt.revision.indelPriorCalibration
             }
             val result = gtOut.revise(
-                PL = record.getSampleFieldInts(sampleIndex, "PL"),
+                PL = biallelicPL,
                 alleleFrequency = alleleFrequency,
                 calibrationFactor = calibrationFactor
             )
+            if (revisedGenotypeCount != null && result.first != gtOut) {
+                revisedGenotypeCount.add(1L)
+            }
             gtOut = result.first
             revisedGQ = result.second
         }
