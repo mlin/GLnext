@@ -60,18 +60,14 @@ fun FileSystem.concatNaive(
 fun fileReaderDetectGz(
     filename: String,
     fs: FileSystem? = null,
-    bufferSize: Int = 65536,
-    partial: Boolean = false
+    bufferSize: Int = 65536
 ): BufferedReader {
     val fs2 = fs ?: getFileSystem(filename)
     val path = Path(filename)
-    var instream: InputStream = fs2.open(path)
-    if (!partial) {
-        instream = InputStreamWithExpectedLength(
-            instream,
-            fs2.getFileStatus(path).getLen()
-        )
-    }
+    var instream: InputStream = InputStreamWithExpectedLength(
+        fs2.open(path),
+        fs2.getFileStatus(path).getLen()
+    )
     // TODO: decide based on magic bytes instead of filename
     if (filename.endsWith(".gz") || filename.endsWith(".bgz")) {
         instream = htsjdk.samtools.util.BlockCompressedInputStream(instream, true)
@@ -127,15 +123,16 @@ fun fileCRC32C(filename: String): Long {
 }
 
 /**
- * InputStream wrapper that throws if the total number of bytes read isn't exactly expectedLength.
- * This safeguards against deficient error handling in specific FileSystem implementations, which
- * could result in apparently successful but incomplete reads.
+ * InputStream wrapper that throws if the source stream indicates EOF without without having read
+ * exactly expectedLength bytes. This safeguards against deficient error handling in specific
+ * FileSystem implementations, which could result in apparently successful but incomplete reads.
+ * It's OK for the client of the wrapped stream to close it before the end; the length check is
+ * done only when the source stream indicates EOF.
  */
 class InputStreamWithExpectedLength(source: InputStream, val expectedLength: Long) :
     FilterInputStream(source) {
 
     private var bytesRead: Long = 0
-    private var raised: Boolean = false
 
     @Throws(IOException::class)
     override fun read(): Int {
@@ -175,15 +172,8 @@ class InputStreamWithExpectedLength(source: InputStream, val expectedLength: Lon
     }
 
     @Throws(IOException::class)
-    override fun close() {
-        super.close()
-        checkExpectedLength()
-    }
-
-    @Throws(IOException::class)
     private fun checkExpectedLength() {
-        if (bytesRead != expectedLength && !raised) {
-            raised = true
+        if (bytesRead != expectedLength) {
             throw IOException("Expected $expectedLength bytes, but read $bytesRead bytes")
         }
     }

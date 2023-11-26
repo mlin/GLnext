@@ -256,7 +256,7 @@ fun validateVcfHeaderLines(headerLines: List<VcfHeaderLine>):
  */
 fun readVcfHeader(filename: String, fs: FileSystem? = null): Pair<String, String> {
     var completeHeader = false
-    val header = fileReaderDetectGz(filename, fs, partial = true).useLines {
+    val header = fileReaderDetectGz(filename, fs).useLines {
         return@useLines it.takeWhile { line ->
             require(line.length > 0, { "blank line in $filename" })
             line.startsWith('#').also { isHeaderLine -> completeHeader = !isHeaderLine }
