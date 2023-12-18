@@ -2,11 +2,11 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>net.mlin</groupId>
-    <artifactId>vcfGLuer</artifactId>
+    <artifactId>GLnext</artifactId>
     <!-- NOTE: version is auto-detected using maven-git-versioning-extension (see .mvn/) -->
     <version>1.0-SNAPSHOT</version>
 
-    <name>vcfGLuer</name>
+    <name>GLnext</name>
     <packaging>jar</packaging>
 
     <properties>
@@ -110,7 +110,7 @@
                 <configuration>
                   <archive>
                     <manifest>
-                      <mainClass>net.mlin.vcfGLuer.SparkApp</mainClass>
+                      <mainClass>net.mlin.GLnext.SparkApp</mainClass>
                     </manifest>
                   </archive>
                 </configuration>
@@ -181,7 +181,7 @@
                                 classpathref="maven.plugin.classpath" classname="com.pinterest.ktlint.Main">
                                 <arg value="--android"/>
                                 <arg value="--disabled_rules"/>
-                                <arg value="no-wildcard-imports"/>
+                                <arg value="no-wildcard-imports,package-name"/>
                                 <arg value="src/*.kt"/>
                                 <arg value="src/**/*.kt"/>
                                 <jvmarg value="--add-opens"/>
@@ -200,7 +200,7 @@
                                 <arg value="-F"/>
                                 <arg value="--android"/>
                                 <arg value="--disabled_rules"/>
-                                <arg value="no-wildcard-imports"/>
+                                <arg value="no-wildcard-imports,package-name"/>
                                 <arg value="src/*.kt"/>
                                 <arg value="src/**/*.kt"/>
                                 <jvmarg value="--add-opens"/>
