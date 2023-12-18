@@ -28,7 +28,7 @@ is "$?" "0" "build"
 if [[ -z $TMPDIR ]]; then
     TMPDIR=/tmp
 fi
-DN=$(mktemp -d "${TMPDIR}/vcfGLuer_tests_XXXXXX")
+DN=$(mktemp -d "${TMPDIR}/GLnext_tests_XXXXXX")
 DN=$(realpath "$DN")
 cd $DN
 
@@ -43,19 +43,19 @@ if [[ -n $DV1KGP_5PCT ]]; then
 fi
 
 export SPARK_LOCAL_IP=127.0.0.1
-export LD_LIBRARY_PATH="$SOURCE_DIR/dx/vcfGLuer/resources/usr/lib"
+export LD_LIBRARY_PATH="$SOURCE_DIR/dx/GLnext/resources/usr/lib"
 mkdir spark-events
 export _JAVA_OPTIONS="$_JAVA_OPTIONS -Dspark.default.parallelism=$(nproc) -Dspark.sql.shuffle.partitions=$(nproc) -Dspark.eventLog.enabled=true -Dspark.eventLog.dir=${DN}/spark-events"
 #_JAVA_OPTIONS='-Dconfig.override.joint.gt.overlapMode=REF'
 
 time "${SPARK_HOME}/bin/spark-submit" \
     --master 'local[*]' --driver-memory 8G \
-    $SOURCE_DIR/target/vcfGLuer-*.jar $@ --manifest "$MANIFEST" dv1KGP.out
+    $SOURCE_DIR/target/GLnext-*.jar $@ --manifest "$MANIFEST" dv1KGP.out
 
 ls -l dv1KGP.out
 
 test -f dv1KGP.out/dv1KGP.out_12_GRCh38.chr12.spvcf.gz && test -f dv1KGP.out/_SUCCESS
-is "$?" "0" "vcfGLuer"
+is "$?" "0" "GLnext"
 
 zcat dv1KGP.out/dv1KGP.out_12_GRCh38.chr12.spvcf.gz | /tmp/spvcf decode - | bcftools view - > dv1KGP.vcf
 is "$?" "0" "bcftools view"

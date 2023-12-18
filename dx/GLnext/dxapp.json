@@ -1,0 +1,135 @@
+{
+  "name": "GLnext",
+  "title": "GLnext",
+  "summary": "GLnext",
+  "dxapi": "1.0.0",
+  "version": "0.0.1",
+  "inputSpec": [
+    {
+      "name": "vcf_manifest",
+      "class": "file",
+      "optional": false,
+      "help": ""
+    },
+    {
+      "name": "output_name",
+      "class": "string",
+      "default": "merged",
+      "help": ""
+    },
+    {
+      "name": "config",
+      "class": "string",
+      "default": "DeepVariant",
+      "choices": ["DeepVariant", "DeepVariantExtra", "GLIMPSE"],
+      "help": "GLnext configuration preset"
+    },
+    {
+      "name": "ref_genome",
+      "class": "file",
+      "patterns": ["*.fasta.gz", "*.fa.gz", "*.fna.gz"],
+      "optional": true,
+      "help": "reference genome for gvcf_norm preprocessing (not otherwise needed)"
+    },
+    {
+      "name": "spvcf_decode",
+      "class": "boolean",
+      "default": false,
+      "help": "decode spVCF to pVCF"
+    },
+    {
+      "name": "filter_bed",
+      "class": "file",
+      "optional": true,
+      "patterns": ["*.bed", "*.bed.gz"],
+      "help": "only call variants within a region from this BED file"
+    },
+    {
+      "name": "filter_contigs",
+      "class": "string",
+      "optional": true,
+      "help": "only call variants on these comma-separated contigs (intersect with filter BED, if any)"
+    },
+    {
+      "name": "split_bed",
+      "class": "file",
+      "optional": true,
+      "patterns": ["*.bed", "*.bed.gz"],
+      "help": "split output pVCF files according to regions from this BED file (default: per-chromosome)"
+    },
+    {
+      "name": "java_options",
+      "class": "string",
+      "default": "",
+      "help": "additional _JAVA_OPTIONS (including GLnext config overrides)"
+    },
+    {
+      "name": "spark_default_parallelism",
+      "class": "int",
+      "default": 256,
+      "help": "spark.default.parallelism (set at least the # cluster cores)"
+    },
+    {
+      "name": "_multiply",
+      "class": "int",
+      "optional": true,
+      "help": "artifically multiply input VCF files (for scalability testing)"
+    }
+  ],
+  "outputSpec": [
+    {
+      "name": "files",
+      "class": "array:file",
+      "help": "spVCF files (and pVCF files if spvcf_decode)"
+    },
+    {
+      "name": "cluster_runtime_logs_tarball",
+      "label": "Cluster runtime logs tarball",
+      "class": "file",
+      "patterns": [ "*.tar.gz" ],
+      "optional": true,
+      "help": "Spark cluster logs"
+    }
+  ],
+  "runSpec": {
+    "timeoutPolicy": {
+      "*": {
+        "days": 14
+      }
+    },
+    "interpreter": "bash",
+    "file": "src/GLnext.sh",
+    "distribution": "Ubuntu",
+    "release": "20.04",
+    "version": "0",
+    "execDepends": [
+      {"name": "openjdk-11-jre-headless"},
+      {"name": "libsnappy1v5"},
+      {"name": "tabix"},
+      {"name": "libhts3"}
+    ]
+  },
+  "access": {
+    "network": [
+      "*"
+    ],
+    "project": "CONTRIBUTE"
+  },
+  "regionalOptions": {
+    "aws:us-east-1": {
+      "systemRequirements": {
+        "*": {
+          "00COMMENT": "avoid instance types with multiple NUMA nodes e.g. mem3_ssd3_x96",
+          "instanceType": "mem3_ssd3_x24",
+          "clusterSpec": {
+            "type": "apachespark",
+            "version": "3.2.0",
+            "initialInstanceCount": 2,
+            "bootstrapScript":"src/bootstrap.sh",
+            "ports": "7337"
+          }
+        }
+      }
+    }
+  }
+}
