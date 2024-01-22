@@ -20,6 +20,7 @@ import org.jetbrains.kotlinx.spark.api.*
 
 data class SparkConfig(val compressTempFiles: Boolean)
 data class MainConfig(
+    val complete: Boolean,
     val spark: SparkConfig,
     val discovery: DiscoveryConfig,
     val joint: JointConfig
@@ -38,7 +39,7 @@ class CLI : CliktCommand() {
     val manifest by
         option(help = "Input files are manifest(s) containing one VCF filename per line")
             .flag(default = false)
-    val config: String by option(help = "Configuration preset name").default("DeepVariant")
+    val config: String by option(help = "Configuration preset name").default("DeepVariant.WGS")
     val filterBed: String? by
         option(help = "Call variants only within a region from this BED file")
     val filterContigs: String? by
@@ -49,12 +50,7 @@ class CLI : CliktCommand() {
         option(help = "Guide spVCF part splitting using non-overlapping regions from this BED file")
 
     override fun run() {
-        val cfg = ConfigLoader.Builder()
-            .addFileExtensionMapping("toml", com.sksamuel.hoplite.toml.TomlParser())
-            .addSource(PropertySource.resource("/config/$config.toml"))
-            .addSource(PropertySource.resource("/config/main.toml"))
-            .build()
-            .loadConfigOrThrow<MainConfig>()
+        val cfg = loadConfig(config)
 
         require(
             cfg.discovery.minQUAL1 >= cfg.discovery.minQUAL2,
@@ -251,6 +247,26 @@ fun getProjectVersion(): String {
     return props.getProperty("version")
 }
 
+fun loadConfig(name: String): MainConfig {
+    var loader = ConfigLoader.Builder()
+        .addFileExtensionMapping("toml", com.sksamuel.hoplite.toml.TomlParser())
+
+    // derive inherited configuration filenames: for example, DeepVariant.WES.Extra inherits
+    // DeepVariant.WES and DeepVariant
+    val nameParts = name.split(".")
+    val inheritedNames = (1..nameParts.size).map { nameParts.take(it).joinToString(".") }
+
+    // add them in reverse order so that the most specific ones take precedence
+    inheritedNames.reversed().forEach {
+        loader = loader.addSource(PropertySource.resource("/config/$it.toml"))
+    }
+    loader = loader.addSource(PropertySource.resource("/config/main.toml"))
+
+    val cfg = loader.build().loadConfigOrThrow<MainConfig>()
+    require(cfg.complete, { "invalid config $name" })
+    return cfg
+}
+
 val _classesForKryo = arrayOf(
     java.lang.Comparable::class.java,
     java.util.ArrayList::class.java,
@@ -302,11 +318,11 @@ val _classesForKryo = arrayOf(
     JointFormatField::class.java,
     GT_OverlapMode::class.java,
     CopiedFormatField::class.java,
-    GQextra_FormatField::class.java,
+    GQall_FormatField::class.java,
     DP_FormatField::class.java,
     AD_FormatField::class.java,
     PL_FormatField::class.java,
-    PLextra_FormatField::class.java,
+    PLall_FormatField::class.java,
     OL_FormatField::class.java,
     PartWritten::class.java,
     NthLargestInt::class.java,

@@ -1,0 +1,8 @@
+[joint]
+formatFields = [
+    { name = "DP" },
+    { name = "GQ", impl = "GQall" },
+    { name = "AD" },
+    { name = "PL", impl = "PLall" },
+    { name = "OL" }
+]

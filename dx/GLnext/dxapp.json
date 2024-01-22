@@ -20,8 +20,8 @@
     {
       "name": "config",
       "class": "string",
-      "default": "DeepVariant",
-      "choices": ["DeepVariant", "DeepVariantExtra", "GLIMPSE"],
+      "default": "DeepVariant.WGS",
+      "choices": ["DeepVariant.WGS", "DeepVariant.WES", "DeepVariant.AllQC.WGS", "DeepVariant.AllQC.WES", "GLIMPSE"],
       "help": "GLnext configuration preset"
     },
     {

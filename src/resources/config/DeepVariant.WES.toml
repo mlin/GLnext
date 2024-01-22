@@ -1,0 +1,5 @@
+complete = true
+
+[joint.gt.revision]
+snvPriorCalibration = 0.375
+indelPriorCalibration = 0.375

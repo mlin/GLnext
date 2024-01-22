@@ -1,12 +1,11 @@
+complete = true
+
 [joint]
 formatFields = [
     { name = "DS" },
     { name = "GP" },
     { name = "HS" }
 ]
-
-[joint.gt]
-overlapMode = "MISSING"
 
 [spark]
 compressTempRecords = true
