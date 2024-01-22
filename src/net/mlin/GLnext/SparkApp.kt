@@ -15,6 +15,7 @@ import net.mlin.GLnext.joint.*
 import net.mlin.GLnext.util.*
 import org.apache.log4j.Level
 import org.apache.log4j.LogManager
+import org.apache.log4j.Logger
 import org.apache.spark.api.java.JavaSparkContext
 import org.jetbrains.kotlinx.spark.api.*
 
@@ -50,7 +51,9 @@ class CLI : CliktCommand() {
         option(help = "Guide spVCF part splitting using non-overlapping regions from this BED file")
 
     override fun run() {
-        val cfg = loadConfig(config)
+        val logger = LogManager.getLogger("GLnext")
+        logger.setLevel(Level.INFO)
+        val cfg = loadConfig(logger, config)
 
         require(
             cfg.discovery.minQUAL1 >= cfg.discovery.minQUAL2,
@@ -101,9 +104,8 @@ class CLI : CliktCommand() {
             logLevel = SparkLogLevel.ERROR
         ) {
             val defaultParallelism = spark.sparkContext.defaultParallelism()
-            val logger = LogManager.getLogger("GLnext")
-            logger.setLevel(Level.INFO)
 
+            logger.setLevel(Level.INFO)
             logger.info(
                 "${System.getProperty("java.runtime.name")}" +
                     " ${System.getProperty("java.runtime.version")}"
@@ -247,7 +249,7 @@ fun getProjectVersion(): String {
     return props.getProperty("version")
 }
 
-fun loadConfig(name: String): MainConfig {
+fun loadConfig(logger: Logger, name: String): MainConfig {
     var loader = ConfigLoader.Builder()
         .addFileExtensionMapping("toml", com.sksamuel.hoplite.toml.TomlParser())
 
@@ -258,7 +260,9 @@ fun loadConfig(name: String): MainConfig {
 
     // add them in reverse order so that the most specific ones take precedence
     inheritedNames.reversed().forEach {
-        loader = loader.addSource(PropertySource.resource("/config/$it.toml"))
+        val configFn = "/config/$it.toml"
+        logger.info("load resource $configFn")
+        loader = loader.addSource(PropertySource.resource(configFn))
     }
     loader = loader.addSource(PropertySource.resource("/config/main.toml"))
 
