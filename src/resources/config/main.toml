@@ -1,3 +1,5 @@
+complete = false
+
 [spark]
 # Snappy compression of intermediate data during sort/join passes
 # Usually only one of compressTempRecords and compressTempFiles should be true.
@@ -14,3 +16,6 @@ minQUAL2 = 0
 
 [joint]
 keepTrailingFields = false
+
+[joint.gt]
+overlapMode = "MISSING"

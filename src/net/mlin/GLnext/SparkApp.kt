@@ -20,6 +20,7 @@ import org.jetbrains.kotlinx.spark.api.*
 
 data class SparkConfig(val compressTempFiles: Boolean)
 data class MainConfig(
+    val complete: Boolean,
     val spark: SparkConfig,
     val discovery: DiscoveryConfig,
     val joint: JointConfig
@@ -49,12 +50,7 @@ class CLI : CliktCommand() {
         option(help = "Guide spVCF part splitting using non-overlapping regions from this BED file")
 
     override fun run() {
-        val cfg = ConfigLoader.Builder()
-            .addFileExtensionMapping("toml", com.sksamuel.hoplite.toml.TomlParser())
-            .addSource(PropertySource.resource("/config/$config.toml"))
-            .addSource(PropertySource.resource("/config/main.toml"))
-            .build()
-            .loadConfigOrThrow<MainConfig>()
+        val cfg = loadConfig(config)
 
         require(
             cfg.discovery.minQUAL1 >= cfg.discovery.minQUAL2,
@@ -249,6 +245,26 @@ fun getProjectVersion(): String {
             .getResourceAsStream("META-INF/maven/net.mlin/GLnext/pom.properties")
     )
     return props.getProperty("version")
+}
+
+fun loadConfig(name: String): MainConfig {
+    var loader = ConfigLoader.Builder()
+        .addFileExtensionMapping("toml", com.sksamuel.hoplite.toml.TomlParser())
+
+    // derive inherited configuration filenames: for example, DeepVariant.WES.Extra inherits
+    // DeepVariant.WES and DeepVariant
+    val nameParts = name.split(".")
+    val inheritedNames = (1..nameParts.size).map { nameParts.take(it).joinToString(".") }
+
+    // add them in reverse order so that the most specific ones take precedence
+    inheritedNames.reversed().forEach {
+        loader = loader.addSource(PropertySource.resource("/config/$it.toml"))
+    }
+    loader = loader.addSource(PropertySource.resource("/config/main.toml"))
+
+    val cfg = loader.build().loadConfigOrThrow<MainConfig>()
+    require(cfg.complete, { "invalid config $name" })
+    return cfg
 }
 
 val _classesForKryo = arrayOf(
