@@ -39,7 +39,7 @@ class CLI : CliktCommand() {
     val manifest by
         option(help = "Input files are manifest(s) containing one VCF filename per line")
             .flag(default = false)
-    val config: String by option(help = "Configuration preset name").default("DeepVariant")
+    val config: String by option(help = "Configuration preset name").default("DeepVariant.WGS")
     val filterBed: String? by
         option(help = "Call variants only within a region from this BED file")
     val filterContigs: String? by
