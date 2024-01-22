@@ -48,7 +48,10 @@ class CopiedFormatField(hdr: AggVcfHeader, spec: JointFormatField) :
     }
 }
 
-class GQextra_FormatField(hdr: AggVcfHeader, spec: JointFormatField) :
+/**
+ * Populates GQ from reference bands as well as variant records
+ */
+class GQall_FormatField(hdr: AggVcfHeader, spec: JointFormatField) :
     JointFormatFieldImpl(hdr, spec) {
     override fun generate(
         data: GenotypingContext,
@@ -145,6 +148,9 @@ class AD_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFie
     }
 }
 
+/**
+ * Populates PL (from variant records only)
+ */
 open class PL_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFieldImpl(
     hdr,
     spec
@@ -197,7 +203,10 @@ open class PL_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointForm
     }
 }
 
-class PLextra_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : PL_FormatField(hdr, spec) {
+/**
+ * Populates PL from reference bands as well as variant records
+ */
+class PLall_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : PL_FormatField(hdr, spec) {
     override fun generate(
         data: GenotypingContext,
         sampleIndex: Int,
@@ -269,9 +278,9 @@ class JointFieldsGenerator(val cfg: JointConfig, aggHeader: AggVcfHeader) {
                 "DP" -> DP_FormatField(aggHeader, it)
                 "AD" -> AD_FormatField(aggHeader, it)
                 "PL" -> PL_FormatField(aggHeader, it)
-                "PLextra" -> PLextra_FormatField(aggHeader, it)
+                "PLall" -> PLall_FormatField(aggHeader, it)
                 "OL" -> OL_FormatField(aggHeader, it)
-                "GQextra" -> GQextra_FormatField(aggHeader, it)
+                "GQall" -> GQall_FormatField(aggHeader, it)
                 else -> CopiedFormatField(aggHeader, it)
             }
         }
