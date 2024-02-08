@@ -12,7 +12,8 @@ import time
 import dxpy
 import pyspark
 
-output_name = os.environ.get("output_name", "merged")
+glnext_config = os.environ["config"]
+output_name = os.environ["output_name"]
 spvcf_decode = os.environ.get("spvcf_decode", "false") == "true"
 
 # list parts under hdfs:/GLnext/out
@@ -54,8 +55,11 @@ spvcf_decode_time_accumulator = spark.sparkContext.accumulator(0.0)
 def run_spvcf_decode(spvcf_fn):
     assert spvcf_fn.endswith("spvcf.gz")
     pvcf_fn = spvcf_fn[:-8] + "vcf.gz"
+    spvcf_flags = ""
+    if ".AllQC." in glnext_config:
+        spvcf_flags += " --with-missing-fields"
     subprocess.run(
-        f"set -euo pipefail; bgzip -dc {shlex.quote(spvcf_fn)} | spvcf decode --with-missing-fields | bgzip -cl1@4 > {shlex.quote(pvcf_fn)}",
+        f"set -euo pipefail; bgzip -dc {shlex.quote(spvcf_fn)} | spvcf decode{spvcf_flags} | bgzip -cl1@4 > {shlex.quote(pvcf_fn)}",
         shell=True,
         executable="/bin/bash",
         check=True,

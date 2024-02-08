@@ -264,6 +264,7 @@ class OL_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFie
             ) {
                 overlapCount++
             }
+            // TODO: handle revised genotypes in otherVariantRecords
         }
         return if (overlapCount > 0) overlapCount.toString() else null
     }
