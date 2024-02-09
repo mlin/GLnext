@@ -1,14 +1,16 @@
 # GLnext
 
-**NOTICE: This project has been made public for our collaborators; it's not yet ready for general use!**
+**NOTICE: this project is public for our collaborators; it's not yet ready for general use!**
 
-GLnext is a scalable tool for gVCF merging and joint variant calling in population sequencing. It's a successor to [GLnexus](https://github.com/dnanexus-rnd/GLnexus), but shares no code and:
+GLnext is a scalable tool for gVCF merging and joint variant calling in population-scale sequencing. It's a successor to [GLnexus](https://github.com/dnanexus-rnd/GLnexus), but shares no code and:
 
 * runs on Apache Spark at scale
 * simplifies the project VCF (pVCF) to represent only one ALT allele per line
 * generates [spVCF](https://github.com/mlin/spVCF) natively (decodes to standard pVCF)
 
 ## Building
+
+**First check our [Releases](https://github.com/mlin/GLnext/releases) for a prebuilt JAR file!**
 
 Requirements: x86-64 platform, Linux or macOS, JDK 11+, Apache Maven.
 
@@ -62,7 +64,7 @@ ls -1 *.spvcf.gz | parallel -t '
 
 However, spVCF decoding is usually fast enough to run on-the-fly, piping into downstream analysis tools, instead of storing the much larger vcf.gz files.
 
-If you have a lot of input samples, then prepare a manifest file with one gVCF path per line, and pass `--manifest manifestFile.txt` instead of the individual paths. And, you'll probably hit out-of-memory errors until you edit the `_JAVA_OPTIONS` to increase the partitioning or (as always with Spark) tune [many other settings](https://spark.apache.org/docs/3.3.4/configuration.html#memory-management).
+If you have a lot of input samples, then prepare a manifest file with one gVCF path per line, and pass GLnext `--manifest manifestFile.txt` instead of the individual paths. And, you'll probably hit out-of-memory errors until you edit the `_JAVA_OPTIONS` to increase the partitioning or (as always with Spark) tune [many other settings](https://spark.apache.org/docs/3.3.4/configuration.html#memory-management).
 
 ### Google Cloud Dataproc
 
@@ -100,7 +102,9 @@ And see [dx/GLnexus/README.md](dx/GLnexus/README.md) for detailed usage instruct
 
 ## Default pVCF representation
 
-In the GLnext pVCF, all "sites" (lines) represent only one ALT allele, written in [normalized](https://genome.sph.umich.edu/wiki/Variant_Normalization) form. Distinct overlapping ALT alleles are presented on separate lines. If a sample has one or more copies of an overlapping ALT allele *other than* the one presented on the current line, then the genotype cell is either half-called or non-called (`./0` `./1` or `./.`) and the `OL` field is set to the overlapping ALT copy number. Experience has shown that this representation is closest to the typical practice of cohort statistical analyses, compared to a multiallelic site representation.
+In the GLnext pVCF, all "sites" (lines) represent only one ALT allele, written in [normalized](https://genome.sph.umich.edu/wiki/Variant_Normalization) form. Distinct overlapping ALT alleles are presented on separate lines. If a sample has one or more copies of an overlapping ALT allele *other than* the one presented on the current line, then the genotype cell is either half-called or non-called (`./0` `./1` or `./.`) and the `OL` field is set to the overlapping ALT copy number.
+
+Experience has shown that this representation is closest to the typical practice of large-cohort statistical analyses, compared to multiallelic sites.
 
 By default, the GLnext pVCF only keeps `GT` and `DP` in cells deriving from gVCF reference bands. Other QC fields like `GQ`, `PL`, etc. are not very meaningful *when derived from reference bands*, and omitting them reduces the output file size considerably. The tool can be reconfigured to propagate them if needed (see below).
 
@@ -119,13 +123,13 @@ The AllQC configurations keep all QC values from reference bands, as discussed a
 
 **Allele quality filtering.** Unlike GLnexus, GLnext does not apply any variant quality filters by default: any ALT allele with at least one copy called is included in the output. Compared to traditional multiallelic pVCF, the impact of many lower-quality variants is mitigated by the combination of our biallelic representation and spVCF encoding. 
 
-Nonetheless, quality filters may be practically desirable at a certain scale, and can be enabled by setting java options/properties:
+Nonetheless, quality filters may be practically desirable at a certain scale, and can be enabled by setting Java options/properties:
 
 ```
 -Dconfig.override.discovery.minQUAL1=10 -Dconfig.override.discovery.minQUAL2=5
 ```
 
-These thresholds include alleles with at least one copy called with Phred QUAL≥10, *or* at least two copies with QUAL≥5. (Analogous to GLnexus min_AQ1 and min_AQ2).
+These thresholds include alleles with at least one copy called with Phred QUAL≥10, *or* at least two copies with QUAL≥5. (Analogous to GLnexus min_AQ1 and min_AQ2.)
 
 **Region filter.** To limit the output spVCF to variants contained within given regions:
 
