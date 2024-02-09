@@ -102,11 +102,11 @@ And see [dx/GLnexus/README.md](dx/GLnexus/README.md) for detailed usage instruct
 
 ## Default pVCF representation
 
-In the GLnext pVCF, all "sites" (lines) represent only one ALT allele, written in [normalized](https://genome.sph.umich.edu/wiki/Variant_Normalization) form. Distinct overlapping ALT alleles are presented on separate lines. If a sample has one or more copies of an overlapping ALT allele *other than* the one presented on the current line, then the genotype cell is either half-called or non-called (`./0` `./1` or `./.`) and the `OL` field is set to the overlapping ALT copy number.
+In the GLnext \[s\]pVCF, all "sites" (lines) represent only one ALT allele, written in [normalized](https://genome.sph.umich.edu/wiki/Variant_Normalization) form. Distinct overlapping ALT alleles are presented on separate lines. If a sample has one or more copies of an overlapping ALT allele *other than* the one presented on the current line, then the genotype cell is either half-called or non-called (`./0` `./1` or `./.`) and the `OL` field is set to the overlapping ALT copy number.
 
-Experience has shown that this representation is closest to the typical practice of statistical analyses on large cohorts, compared to [multiallelic sites](https://github.com/dnanexus-rnd/GLnexus/wiki/Reading-GLnexus-pVCFs). It's less optimized for family-level analyses focused on compound heterozygote genotypes (1/2 etc.).
+Experience has shown that this approach is closer to the typical practice of statistical analyses on large cohorts, compared to [multiallelic sites](https://github.com/dnanexus-rnd/GLnexus/wiki/Reading-GLnexus-pVCFs). It's less optimized for family-level analyses focused on compound heterozygote genotypes (1/2 etc.).
 
-By default, the GLnext pVCF only keeps `GT` and `DP` in cells deriving from gVCF reference bands. Other QC fields like `GQ`, `PL`, etc. are not very meaningful *when derived from reference bands*, and omitting them reduces the output file size considerably. The tool can be reconfigured to propagate them if needed (see below).
+By default, GLnext keeps only `GT` and `DP` in pVCF entries deriving from gVCF reference bands. Other QC fields like `GQ`, `PL`, etc. are not very meaningful *when derived from reference bands*, and omitting them reduces the output file size considerably. The tool can be reconfigured to propagate them if needed (see below). Beyond this choice, GLnext generates spVCF losslessly, *without* the further rounding of `DP` values featured in spVCF's "squeeze" idea. If that's palatable, the GLnext spVCF can re-encoded with `spvcf decode | spvcf encode --squeeze` to reduce its size further.
 
 ## Options
 
