@@ -98,7 +98,7 @@ Build the [DNAnexus Spark App](https://documentation.dnanexus.com/developer/apps
 dx build dx/GLnext
 ```
 
-And see [dx/GLnexus/README.md](dx/GLnexus/README.md) for detailed usage instructions.
+And see [dx/GLnext/README.md](dx/GLnext/README.md) for detailed usage instructions.
 
 ## Default pVCF representation
 
