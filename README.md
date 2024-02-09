@@ -79,7 +79,7 @@ Then:
 ```
 gcloud dataproc batches submit spark \
     --region=us-west1 --version=1.1 \
-    --jars=gs://MYBUCKET/vcfGLuer-XXXX.jar \
+    --jars=gs://MYBUCKET/GLnext-XXXX.jar \
     --class=net.mlin.GLnext.SparkApp \
     --properties=spark.default.parallelism=256,spark.sql.shuffle.partitions=256,spark.reducer.fetchMigratedShuffle.enabled=true \
     -- \
@@ -106,7 +106,7 @@ In the GLnext \[s\]pVCF, all "sites" (lines) represent only one ALT allele, writ
 
 Experience has shown that this approach is closer to the typical practice of statistical analyses on large cohorts, compared to [multiallelic sites](https://github.com/dnanexus-rnd/GLnexus/wiki/Reading-GLnexus-pVCFs). It's less optimized for family-level analyses focused on compound heterozygote genotypes (1/2 etc.).
 
-By default, GLnext keeps only `GT` and `DP` in pVCF entries deriving from gVCF reference bands. Other QC fields like `GQ`, `PL`, etc. are not very meaningful *when derived from reference bands*, and omitting them reduces the output file size considerably. The tool can be reconfigured to propagate them if needed (see below). Beyond that choice, GLnext generates spVCF losslessly, *without* the rounding of `DP` values in spVCF's "squeeze" feature. If that's palatable, then the GLnext spVCF can re-encoded with `spvcf decode | spvcf encode --squeeze` to reduce its size further.
+By default, GLnext keeps only `GT` and `DP` in pVCF entries deriving from gVCF reference bands. Other QC fields like `GQ`, `PL`, etc. are not very meaningful *when derived from reference bands*, and omitting them reduces the file size considerably. The tool can be reconfigured to propagate them if needed (see below). Beyond that choice, GLnext generates spVCF losslessly, *without* the rounding of `DP` values in spVCF's "squeeze" feature. If that's palatable, then the GLnext spVCF can be re-encoded with `spvcf decode | spvcf encode --squeeze` to reduce its size further.
 
 ## Options
 
