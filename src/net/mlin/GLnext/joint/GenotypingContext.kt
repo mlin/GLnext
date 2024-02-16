@@ -38,7 +38,13 @@ class GenotypingContext(
     val soleReferenceBand: VcfRecordUnpacked?
 
     init {
-        // callsetRecords.forEach { check(it.record.range.overlaps(variant.range)) }
+        /*
+        callsetRecords.forEach {
+            check(it.record.range.rid == variantRow.variant.range.rid)
+            check(it.record.range.beg <= variantRow.variant.range.end)
+            check(it.record.range.end >= variantRow.variant.range.beg)
+        }
+        */
         // reference bands have no (non-symbolic) ALT alleles
         var parts = callsetRecords.partition { it.altVariants.filterNotNull().isEmpty() }
         referenceBands = parts.first

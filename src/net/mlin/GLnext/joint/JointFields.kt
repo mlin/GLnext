@@ -63,11 +63,12 @@ class GQall_FormatField(hdr: AggVcfHeader, spec: JointFormatField) :
         if (variantRecord != null) {
             return variantRecord.getSampleField(sampleIndex, "GQ")
         }
-        // If only referenceBands, take their minimum GQ.
-        if (data.otherVariantRecords.isEmpty() && data.referenceBands.isNotEmpty()) {
+        // If overlapping records call no other ALT alleles (including reference bands), and they
+        // cover the variant, take their minimum GQ.
+        if (otherOverlappingAlleleCount(data, sampleIndex) == 0) {
             var minGQ = Int.MAX_VALUE
             var gqRanges: MutableList<GRange> = mutableListOf()
-            data.referenceBands.forEach {
+            (data.otherVariantRecords + data.referenceBands).forEach {
                 val gq = it.getSampleFieldInt(sampleIndex, "GQ")
                 if (gq != null) {
                     minGQ = min(minGQ, gq)
@@ -214,12 +215,13 @@ class PLall_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : PL_FormatFi
         variantRecord: VcfRecordUnpacked?
     ): String? {
         super.generate(data, sampleIndex, gt, variantRecord)?.let { return it }
-        // If only referenceBands, take PL from the one with the lowest GQ.
-        if (data.otherVariantRecords.isEmpty() && data.referenceBands.isNotEmpty()) {
+        // If overlapping records call no other ALT alleles (including reference bands), and they
+        // cover the variant, take PL from the one with the lowest GQ.
+        if (variantRecord == null && otherOverlappingAlleleCount(data, sampleIndex) == 0) {
             var minGQ = Int.MAX_VALUE
             var minGQ_PL: String? = null
             var gqRanges: MutableList<GRange> = mutableListOf()
-            data.referenceBands.forEach {
+            (data.otherVariantRecords + data.referenceBands).forEach {
                 val gq = it.getSampleFieldInt(sampleIndex, "GQ")
                 if (gq != null) {
                     if (gq < minGQ) {
@@ -232,7 +234,7 @@ class PLall_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : PL_FormatFi
             if (minGQ_PL != null &&
                 data.variantRow.variant.range.subtract(gqRanges).isEmpty()
             ) {
-                return minGQ_PL
+                return minGQ_PL!!.split(",").take(3).joinToString(",")
             }
         }
         // Otherwise, leave missing.
@@ -251,23 +253,29 @@ class OL_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFie
         gt: DiploidGenotype,
         variantRecord: VcfRecordUnpacked?
     ): String? {
-        var overlapCount = 0
-        (data.variantRecords + data.otherVariantRecords).forEach {
-            val recGT = it.getDiploidGenotype(sampleIndex)
-            if (recGT.allele1 != null && recGT.allele1 > 0 &&
-                it.altVariants[recGT.allele1 - 1] != data.variantRow.variant
-            ) {
-                overlapCount++
-            }
-            if (recGT.allele2 != null && recGT.allele2 > 0 &&
-                it.altVariants[recGT.allele2 - 1] != data.variantRow.variant
-            ) {
-                overlapCount++
-            }
-            // TODO: handle revised genotypes in otherVariantRecords
-        }
+        val overlapCount = otherOverlappingAlleleCount(data, sampleIndex)
         return if (overlapCount > 0) overlapCount.toString() else null
     }
+}
+
+fun otherOverlappingAlleleCount(data: GenotypingContext, sampleIndex: Int): Int {
+    // TODO: precompute in GenotypingContext
+    // TODO: handle revised genotypes in otherVariantRecords
+    var overlapCount = 0
+    (data.variantRecords + data.otherVariantRecords).forEach {
+        val recGT = it.getDiploidGenotype(sampleIndex)
+        if (recGT.allele1 != null && recGT.allele1 > 0 &&
+            it.altVariants[recGT.allele1 - 1] != data.variantRow.variant
+        ) {
+            overlapCount++
+        }
+        if (recGT.allele2 != null && recGT.allele2 > 0 &&
+            it.altVariants[recGT.allele2 - 1] != data.variantRow.variant
+        ) {
+            overlapCount++
+        }
+    }
+    return overlapCount
 }
 
 class JointFieldsGenerator(val cfg: JointConfig, aggHeader: AggVcfHeader) {

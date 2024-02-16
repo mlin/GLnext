@@ -325,7 +325,7 @@ fun generateRefGenotypeAndFormatFields(
     check(data.variantRecords.isEmpty())
 
     if (data.callsetRecords.isEmpty()) {
-        return "."
+        return "./."
     }
 
     // count copies of other overlapping variants
