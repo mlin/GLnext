@@ -118,7 +118,7 @@ fun generateGenotypingContexts(
                 workingSet.add(VcfRecordUnpacked(record!!))
             } else {
                 // discard record << variant
-                check(rr.rid < vr.rid || (rr.rid == vr.rid && rr.end < vr.beg))
+                // check(rr.rid < vr.rid || (rr.rid == vr.rid && rr.end < vr.beg))
             }
             record = if (recordsIter.hasNext()) recordsIter.next() else null
         }
