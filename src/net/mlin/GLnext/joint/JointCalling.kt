@@ -325,11 +325,11 @@ fun generateRefGenotypeAndFormatFields(
     check(data.variantRecords.isEmpty())
 
     if (data.callsetRecords.isEmpty()) {
-        return "."
+        return "./."
     }
 
     // count copies of other overlapping variants
-    var otherOverlaps = countAltCopies(data.otherVariantRecords, sampleIndex)
+    var otherOverlaps = otherOverlappingAlleleCount(data, sampleIndex)
     var refRanges = data.otherVariantRecords.map {
         check(it.record.range.overlaps(data.variantRow.variant.range))
         val gt = it.getDiploidGenotype(sampleIndex)
@@ -353,15 +353,27 @@ fun generateRefGenotypeAndFormatFields(
     return entry
 }
 
-fun countAltCopies(records: List<VcfRecordUnpacked>, sampleIndex: Int): Int {
-    // TODO: report ambiguity if there only mutually-non-overlapping unphased variants.
-    // that is, distinguish whether or not the observed ALT copies might all be on one chromosome
-    // or else must affect both.
-    // This branches based on whether records have phase annotations or not.
-    return records.flatMap {
-        val gt = it.getDiploidGenotype(sampleIndex)
-        listOf(gt.allele1, gt.allele2)
-    }.filter { it != null && it > 0 }.size
+/**
+ * Count copies of overlapping ALT alleles other than the focal variant
+ */
+fun otherOverlappingAlleleCount(data: GenotypingContext, sampleIndex: Int): Int {
+    // TODO: precompute in GenotypingContext
+    // TODO: handle revised genotypes in otherVariantRecords
+    var overlapCount = 0
+    (data.variantRecords + data.otherVariantRecords).forEach {
+        val recGT = it.getDiploidGenotype(sampleIndex)
+        if (recGT.allele1 != null && recGT.allele1 > 0 &&
+            it.altVariants[recGT.allele1 - 1] != data.variantRow.variant
+        ) {
+            overlapCount++
+        }
+        if (recGT.allele2 != null && recGT.allele2 > 0 &&
+            it.altVariants[recGT.allele2 - 1] != data.variantRow.variant
+        ) {
+            overlapCount++
+        }
+    }
+    return overlapCount
 }
 
 fun genotypeOverlapSentinel(mode: GT_OverlapMode): Int? = when (mode) {

@@ -94,6 +94,21 @@
             <artifactId>genomicsqlite-jdbc</artifactId>
             <version>v0.9.4</version>
         </dependency>
+        <dependency>
+            <groupId>org.jetbrains.kotlin</groupId>
+            <artifactId>kotlin-test</artifactId>
+            <version>1.9.22</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jetbrains.kotlin</groupId>
+            <artifactId>kotlin-test-junit</artifactId>
+            <version>1.9.22</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-math3</artifactId>
+            <version>3.6.1</version>
+        </dependency>
     </dependencies>
 
     <build>
@@ -138,6 +153,7 @@
                                     <include>org.xerial:sqlite-jdbc:*</include>
                                     <include>org.apache.commons:commons-dbcp2:*</include>
                                     <include>org.apache.commons:commons-pool2:*</include>
+                                    <include>org.apache.commons:commons-math:*</include>
                                 </includes>
                             </artifactSet>
                             <transformers>
@@ -162,6 +178,12 @@
                         <id>compile</id>
                         <goals> 
                             <goal>compile</goal> 
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>test-compile</id>
+                        <goals>
+                            <goal>test-compile</goal>
                         </goals>
                     </execution>
                 </executions>

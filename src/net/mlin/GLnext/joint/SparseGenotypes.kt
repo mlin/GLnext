@@ -10,8 +10,7 @@ import net.mlin.GLnext.util.*
  * The sparse genotypes for the joint variants are a series of String pVCF entries interleaved with
  * delimiters that may also indicate repetition of the previous pVCF entry. The repetition arises
  * when that previous pVCF entry was derived from a single gVCF reference band, and the following
- * joint variants are covered by that same reference band. (Assumes that only GT and DP are filled
- * in from reference bands.)
+ * joint variants are covered by that same reference band.
  *
  * This series effectively represents part of a spVCF column. The joint-calling process generates
  * these for "frames" of up to 128 variants at a time, then groups corresponding frames from all
@@ -93,7 +92,7 @@ class SparseGenotypeFrameEncoder {
     }
 
     /**
-     * True iff the frame is empty or contains exclusively "." entries
+     * True iff the frame is empty or contains exclusively missing entries
      */
     val vacuous: Boolean
         get() = vacuous_
@@ -103,12 +102,14 @@ class SparseGenotypeFrameEncoder {
 }
 
 /**
- * Generate frame of `size` missing genotypes (.)
+ * Generate frame of `size` missing genotypes (./.)
  */
 fun vacuousSparseGenotypeFrame(size: Int): ByteArray {
     require(0 <= size && size <= 128)
     val buf = ByteArrayOutputStream()
     if (size > 0) {
+        buf.write('.'.toInt())
+        buf.write('/'.toInt())
         buf.write('.'.toInt())
         if (size > 1) {
             buf.write(127 + size)
