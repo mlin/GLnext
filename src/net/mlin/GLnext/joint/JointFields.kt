@@ -258,26 +258,6 @@ class OL_FormatField(hdr: AggVcfHeader, spec: JointFormatField) : JointFormatFie
     }
 }
 
-fun otherOverlappingAlleleCount(data: GenotypingContext, sampleIndex: Int): Int {
-    // TODO: precompute in GenotypingContext
-    // TODO: handle revised genotypes in otherVariantRecords
-    var overlapCount = 0
-    (data.variantRecords + data.otherVariantRecords).forEach {
-        val recGT = it.getDiploidGenotype(sampleIndex)
-        if (recGT.allele1 != null && recGT.allele1 > 0 &&
-            it.altVariants[recGT.allele1 - 1] != data.variantRow.variant
-        ) {
-            overlapCount++
-        }
-        if (recGT.allele2 != null && recGT.allele2 > 0 &&
-            it.altVariants[recGT.allele2 - 1] != data.variantRow.variant
-        ) {
-            overlapCount++
-        }
-    }
-    return overlapCount
-}
-
 class JointFieldsGenerator(val cfg: JointConfig, aggHeader: AggVcfHeader) {
     val formatImpls: List<JointFormatFieldImpl>
 
