@@ -54,6 +54,15 @@ fun discoverVariants(
                     )
                 }
             }
+            /*
+            // variants can be "spiked in" for debugging here. TODO: read in from optional test VCF
+            yield(
+                DiscoveredVariant(
+                    Variant(GRange(18, 6746043, 6746043), "C", "A"),
+                    VariantStats(1, 1, null)
+                )
+            )
+            */
         }
     }
 }

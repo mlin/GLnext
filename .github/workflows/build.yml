@@ -30,6 +30,8 @@ jobs:
         SPARK_HOME=$(find $(pwd) -type d -name "spark-*")
         echo "SPARK_HOME=$SPARK_HOME" >> $GITHUB_ENV
         git status
+    - name: unit tests
+      run: mvn test
     - name: build
       run: mvn package -Dorg.slf4j.simpleLogger.log.org.apache.maven.plugins.shade=warn
     - name: test 5%
