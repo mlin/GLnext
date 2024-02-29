@@ -1,9 +1,11 @@
 package net.mlin.GLnext.joint
 import java.io.File
+import java.io.Serializable
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 import net.mlin.GLnext.data.*
 import net.mlin.GLnext.util.*
+import org.apache.log4j.Logger
 import org.apache.spark.api.java.function.FlatMapFunction
 import org.apache.spark.api.java.function.Function
 import org.apache.spark.broadcast.Broadcast
@@ -17,7 +19,7 @@ data class DiscoveryConfig(
     val minCopies: Int,
     val minQUAL1: Int,
     val minQUAL2: Int
-)
+) : Serializable
 
 data class DiscoveredVariant(val variant: Variant, val stats: VariantStats) {
     constructor(row: Row) : this(Variant(row), VariantStats(row))
@@ -29,40 +31,44 @@ data class DiscoveredVariant(val variant: Variant, val stats: VariantStats) {
  * filterRanges: only include variants contained within one of these ranges (after normalization)
  */
 fun discoverVariants(
+    cfg: DiscoveryConfig,
     it: VcfRecord,
     filterRanges: Broadcast<BedRanges>? = null
 ): Sequence<DiscoveredVariant> {
     return sequence {
         val vcfRecord = VcfRecordUnpacked(it)
-        for (sampleIndex in 0 until vcfRecord.sampleCount) {
-            val qualities = vcfRecord.getSampleAltQualities(sampleIndex)
-            val copies = vcfRecord.altVariants.map { 0 }.toTypedArray()
-            val gt = vcfRecord.getDiploidGenotype(sampleIndex)
-            if (gt.allele1 != null && gt.allele1 > 0) {
-                copies[gt.allele1 - 1]++
-            }
-            if (gt.allele2 != null && gt.allele2 > 0) {
-                copies[gt.allele2 - 1]++
-            }
-
-            vcfRecord.altVariants.forEachIndexed { i, vt ->
-                if (vt != null &&
-                    (filterRanges?.let { it.value!!.hasContaining(vt.range) } ?: true)
-                ) {
-                    yield(
-                        DiscoveredVariant(vt, VariantStats(copies[i], qualities[i], null))
-                    )
+        if (vcfRecord.altVariants.filterNotNull().isNotEmpty()) {
+            for (sampleIndex in 0 until vcfRecord.sampleCount) {
+                val qualities = vcfRecord.getSampleAltQualities(sampleIndex)
+                val copies = vcfRecord.altVariants.map { 0 }.toTypedArray()
+                val gt = vcfRecord.getDiploidGenotype(sampleIndex)
+                if (gt.allele1 != null && gt.allele1 > 0) {
+                    copies[gt.allele1 - 1]++
                 }
-            }
-            /*
-            // variants can be "spiked in" for debugging here. TODO: read in from optional test VCF
-            yield(
-                DiscoveredVariant(
-                    Variant(GRange(18, 6746043, 6746043), "C", "A"),
-                    VariantStats(1, 1, null)
+                if (gt.allele2 != null && gt.allele2 > 0) {
+                    copies[gt.allele2 - 1]++
+                }
+
+                vcfRecord.altVariants.forEachIndexed { i, vt ->
+                    if (vt != null &&
+                        (filterRanges?.let { it.value!!.hasContaining(vt.range) } ?: true) &&
+                        (cfg.minCopies == 0 || copies[i] > 0)
+                    ) {
+                        yield(
+                            DiscoveredVariant(vt, VariantStats(copies[i], qualities[i], null))
+                        )
+                    }
+                }
+                /*
+                // variants can be "spiked in" for debugging here. TODO: read in from optional test VCF
+                yield(
+                    DiscoveredVariant(
+                        Variant(GRange(18, 6746043, 6746043), "C", "A"),
+                        VariantStats(1, 1, null)
+                    )
                 )
-            )
-            */
+                */
+            }
         }
     }
 }
@@ -89,7 +95,7 @@ fun discoverAllVariants(
                             vcfRecordCount?.add(1L)
                             vcfRecordBytes?.add(rec.line.length.toLong() + 1L)
                             yieldAll(
-                                discoverVariants(rec, filterRanges)
+                                discoverVariants(cfg, rec, filterRanges)
                                     .map {
                                         check(it.stats.qual2 == null)
                                         it.variant.toRow(
@@ -132,6 +138,7 @@ fun discoverAllVariants(
  * Discover all variants & collect them into a GenomicSQLite file local to the driver.
  */
 fun collectAllVariantsDb(
+    logger: Logger,
     cfg: DiscoveryConfig,
     contigId: Map<String, Short>,
     vcfPathsDF: Dataset<Row>,
@@ -141,6 +148,7 @@ fun collectAllVariantsDb(
     vcfRecordCount: LongAccumulator? = null,
     vcfRecordBytes: LongAccumulator? = null
 ): Pair<Int, String> {
+    logger.info("discovering variants...")
     val tempFile = File.createTempFile("GLnextVariants.", ".db")
     val tempFilename = tempFile.absolutePath
     tempFile.delete()
@@ -183,7 +191,7 @@ fun collectAllVariantsDb(
             it.coalesce(parts).persist(org.apache.spark.storage.StorageLevel.MEMORY_AND_DISK())
         }
         // force cache materialization before sorting https://stackoverflow.com/a/56310076
-        allVariantsDF.count()
+        logger.info("sorting ${allVariantsDF.count().pretty()} variants...")
         // Drop to RDD<Variant>, sort, and cache before processing on the driver.
         // Using RDD.sortBy() allows us to control the partitioning, which is very important
         // to reduce the overhead in serially processing each partition with toLocalIterator().
@@ -204,6 +212,7 @@ fun collectAllVariantsDb(
         sortedVariantsRDD.count() // force cache materialization before toLocalIterator()
         check(sortedVariantsRDD.getNumPartitions() <= 16)
         allVariantsDF.unpersist()
+        logger.info("collecting & broadcasting variants...")
 
         // for each variant (locally on the driver)
         var lastSplitId = -1
