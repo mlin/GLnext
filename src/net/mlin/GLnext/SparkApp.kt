@@ -125,6 +125,7 @@ class CLI : CliktCommand() {
             logger.info("GLnext v${getProjectVersion()}")
             logger.info(cfg.toString())
             logger.info("input VCF files: ${effInputFiles.size.pretty()}")
+            logger.info("analyzing input VCF headers...")
 
             // load & aggregate all input VCF headers
             val aggHeader = aggregateVcfHeaders(
@@ -184,6 +185,7 @@ class CLI : CliktCommand() {
             */
             val vcfFilenamesDF = aggHeader.vcfFilenamesDF(spark)
             val (variantCount, variantsDbLocalFilename) = collectAllVariantsDb(
+                logger,
                 cfg.discovery,
                 aggHeader.contigId,
                 vcfFilenamesDF,
