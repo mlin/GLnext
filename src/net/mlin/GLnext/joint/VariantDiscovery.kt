@@ -1,8 +1,7 @@
 package net.mlin.GLnext.joint
 import java.io.File
 import java.io.Serializable
-import kotlin.math.roundToInt
-import kotlin.math.sqrt
+import kotlin.math.min
 import net.mlin.GLnext.data.*
 import net.mlin.GLnext.util.*
 import org.apache.log4j.Logger
@@ -148,6 +147,7 @@ fun collectAllVariantsDb(
     vcfRecordCount: LongAccumulator? = null,
     vcfRecordBytes: LongAccumulator? = null
 ): Pair<Int, String> {
+    val MAX_SORTED_PARTS = 40
     logger.info("discovering variants...")
     val tempFile = File.createTempFile("GLnextVariants.", ".db")
     val tempFilename = tempFile.absolutePath
@@ -186,18 +186,13 @@ fun collectAllVariantsDb(
             filterRanges,
             vcfRecordCount,
             vcfRecordBytes
-        ).let {
-            val parts = sqrt(16.0 * it.toJavaRDD().getNumPartitions()).roundToInt()
-            it.coalesce(parts).persist(org.apache.spark.storage.StorageLevel.MEMORY_AND_DISK())
-        }
+        ).coalesce(MAX_SORTED_PARTS * MAX_SORTED_PARTS)
+            .persist(org.apache.spark.storage.StorageLevel.MEMORY_AND_DISK())
         // force cache materialization before sorting https://stackoverflow.com/a/56310076
         logger.info("sorting ${allVariantsDF.count().pretty()} variants...")
         // Drop to RDD<Variant>, sort, and cache before processing on the driver.
-        // Using RDD.sortBy() allows us to control the partitioning, which is very important
-        // to reduce the overhead in serially processing each partition with toLocalIterator().
-        //
-        // Since we intend to collect the variants on the driver anyway, we can assume 16
-        // partitions should avoid any of them being too large for any executor.
+        // Using RDD.sortBy() allows us to control the partitioning, which is important to reduce
+        // the overhead in serially processing each partition with toLocalIterator(), below.
         //
         // Ideally we'd just use Dataset<Row>.orderBy() and rely on AQE to make the partitioning
         // reasonable, but it seems that caching can trip up AQE:
@@ -205,12 +200,20 @@ fun collectAllVariantsDb(
         // and the toLocalIterator() docs say it should be used on cached data.
         //
         // (Similarly, above we explicitly coalesced the DF before caching+sorting.)
-        val sortedVariantsRDD = allVariantsDF.toJavaRDD()
+        val allVariantsRDD = allVariantsDF.toJavaRDD()
+        val sortedVariantsRDD = allVariantsRDD
             .map(Function<Row, DiscoveredVariant> { row -> DiscoveredVariant(row) })
-            .sortBy(Function<DiscoveredVariant, Variant> { it.variant }, true, 16)
+            .sortBy(
+                Function<DiscoveredVariant, Variant> {
+                    it.variant
+                },
+                true,
+                min(MAX_SORTED_PARTS, allVariantsRDD.getNumPartitions())
+            )
             .persist(org.apache.spark.storage.StorageLevel.MEMORY_AND_DISK_SER())
         sortedVariantsRDD.count() // force cache materialization before toLocalIterator()
-        check(sortedVariantsRDD.getNumPartitions() <= 16)
+        check(sortedVariantsRDD.getNumPartitions() <= MAX_SORTED_PARTS)
+        allVariantsRDD.unpersist()
         allVariantsDF.unpersist()
         logger.info("collecting & broadcasting variants...")
 
