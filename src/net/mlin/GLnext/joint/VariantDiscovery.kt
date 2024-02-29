@@ -37,36 +37,38 @@ fun discoverVariants(
 ): Sequence<DiscoveredVariant> {
     return sequence {
         val vcfRecord = VcfRecordUnpacked(it)
-        for (sampleIndex in 0 until vcfRecord.sampleCount) {
-            val qualities = vcfRecord.getSampleAltQualities(sampleIndex)
-            val copies = vcfRecord.altVariants.map { 0 }.toTypedArray()
-            val gt = vcfRecord.getDiploidGenotype(sampleIndex)
-            if (gt.allele1 != null && gt.allele1 > 0) {
-                copies[gt.allele1 - 1]++
-            }
-            if (gt.allele2 != null && gt.allele2 > 0) {
-                copies[gt.allele2 - 1]++
-            }
-
-            vcfRecord.altVariants.forEachIndexed { i, vt ->
-                if (vt != null &&
-                    (filterRanges?.let { it.value!!.hasContaining(vt.range) } ?: true) &&
-                    (cfg.minCopies == 0 || copies[i] > 0)
-                ) {
-                    yield(
-                        DiscoveredVariant(vt, VariantStats(copies[i], qualities[i], null))
-                    )
+        if (vcfRecord.altVariants.filterNotNull().isNotEmpty()) {
+            for (sampleIndex in 0 until vcfRecord.sampleCount) {
+                val qualities = vcfRecord.getSampleAltQualities(sampleIndex)
+                val copies = vcfRecord.altVariants.map { 0 }.toTypedArray()
+                val gt = vcfRecord.getDiploidGenotype(sampleIndex)
+                if (gt.allele1 != null && gt.allele1 > 0) {
+                    copies[gt.allele1 - 1]++
                 }
-            }
-            /*
-            // variants can be "spiked in" for debugging here. TODO: read in from optional test VCF
-            yield(
-                DiscoveredVariant(
-                    Variant(GRange(18, 6746043, 6746043), "C", "A"),
-                    VariantStats(1, 1, null)
+                if (gt.allele2 != null && gt.allele2 > 0) {
+                    copies[gt.allele2 - 1]++
+                }
+
+                vcfRecord.altVariants.forEachIndexed { i, vt ->
+                    if (vt != null &&
+                        (filterRanges?.let { it.value!!.hasContaining(vt.range) } ?: true) &&
+                        (cfg.minCopies == 0 || copies[i] > 0)
+                    ) {
+                        yield(
+                            DiscoveredVariant(vt, VariantStats(copies[i], qualities[i], null))
+                        )
+                    }
+                }
+                /*
+                // variants can be "spiked in" for debugging here. TODO: read in from optional test VCF
+                yield(
+                    DiscoveredVariant(
+                        Variant(GRange(18, 6746043, 6746043), "C", "A"),
+                        VariantStats(1, 1, null)
+                    )
                 )
-            )
-            */
+                */
+            }
         }
     }
 }
@@ -210,7 +212,7 @@ fun collectAllVariantsDb(
         sortedVariantsRDD.count() // force cache materialization before toLocalIterator()
         check(sortedVariantsRDD.getNumPartitions() <= 16)
         allVariantsDF.unpersist()
-        logger.info("collecting & broadcasting all variants...")
+        logger.info("collecting & broadcasting variants...")
 
         // for each variant (locally on the driver)
         var lastSplitId = -1
