@@ -1,0 +1,10 @@
+[joint]
+formatFields = [
+    { name = "DS" },
+    { name = "GP" },
+    { name = "HS" },
+    { name = "RAF", from = "INFO:RAF", header = '##FORMAT=<ID=RAF,Number=A,Type=Float,Description="ALT allele frequency in the reference panel">' },
+    { name = "TAF", from = "INFO:AF", header = '##FORMAT=<ID=TAF,Number=A,Type=Float,Description="ALT allele frequency computed from DS/GP field across target samples">' },
+    { name = "IIS", from = "INFO:INFO", header = '##FORMAT=<ID=IIS,Number=A,Type=Float,Description="Imputation information or quality score">' },
+    { name = "BUF", from = "INFO:BUF", header = '##FORMAT=<ID=BUF,Number=A,Type=Integer,Description="Is it a variant site falling within buffer regions? (0=no/1=yes)">'},
+]
