@@ -97,6 +97,7 @@ class VcfRecordUnpacked(val record: VcfRecord) {
     // normalized Variant for each ALT allele, or null for symbolic ALT alleles
     // (Index 0 in the array is GT allele "1")
     val altVariants: Array<Variant?>
+    val info: Map<String, String>
     val format: Array<String>
     val formatIndex: Map<String, Int>
     val sampleCount: Int
@@ -106,6 +107,7 @@ class VcfRecordUnpacked(val record: VcfRecord) {
     init {
         tsv = record.line.split('\t').toTypedArray()
         sampleCount = tsv.size - VcfColumn.FIRST_SAMPLE.ordinal
+        info = parseVcfRecordInfo(tsv[VcfColumn.INFO.ordinal])
         format = tsv[VcfColumn.FORMAT.ordinal].split(':').toTypedArray()
         formatIndex = format.mapIndexed { idx, field -> field to idx }.toMap()
         check(format[0] == "GT")
@@ -124,6 +126,14 @@ class VcfRecordUnpacked(val record: VcfRecord) {
                 Variant(record.range, ref, alt).normalize()
             }
         }.toTypedArray()
+    }
+
+    fun getInfoFields(): Map<String, String> {
+        return info
+    }
+
+    fun getInfoField(field: String): String? {
+        return info.get(field)?.let { if (it != "" && it != ".") it else null }
     }
 
     fun getSampleFields(sampleIndex: Int): Array<String> {
