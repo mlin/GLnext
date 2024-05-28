@@ -56,7 +56,7 @@ def run_spvcf_decode(spvcf_fn):
     assert spvcf_fn.endswith("spvcf.gz")
     pvcf_fn = spvcf_fn[:-8] + "vcf.gz"
     spvcf_flags = ""
-    if ".AllQC." in glnext_config:
+    if ".AllQC." in glnext_config or glnext_config.endswith(".AllQC"):
         spvcf_flags += " --with-missing-fields"
     subprocess.run(
         f"set -euo pipefail; bgzip -dc {shlex.quote(spvcf_fn)} | spvcf decode{spvcf_flags} | bgzip -cl1@4 > {shlex.quote(pvcf_fn)}",

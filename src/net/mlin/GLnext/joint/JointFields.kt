@@ -4,14 +4,21 @@ import java.io.Serializable
 import kotlin.math.min
 import net.mlin.GLnext.data.*
 
-data class JointFormatField(val name: String, val header: String?, val impl: String?) :
+data class JointFormatField(
+    val name: String,
+    val header: String?,
+    val impl: String?,
+    val from: String?
+) :
     Serializable
 
 abstract class JointFormatFieldImpl(val hdr: AggVcfHeader, val spec: JointFormatField) :
     Serializable {
     // redo JointHeader to consult JointFieldsGenerator
     protected open fun defaultHeaderLine(): String {
-        // last-resort default: from the input VCF
+        require(spec.from == null, {
+            "Configuration must provide header line for a renamed FORMAT field"
+        })
         val headerLine = hdr.headerLines.get(VcfHeaderLineKind.FORMAT to spec.name)
         require(
             headerLine != null,
@@ -44,7 +51,11 @@ class CopiedFormatField(hdr: AggVcfHeader, spec: JointFormatField) :
         gt: DiploidGenotype,
         variantRecord: VcfRecordUnpacked?
     ): String? {
-        return variantRecord?.getSampleField(sampleIndex, spec.name)
+        val from = spec.from ?: spec.name
+        if (from.startsWith("INFO:")) {
+            return variantRecord?.getInfoField(from.substring(5))
+        }
+        return variantRecord?.getSampleField(sampleIndex, from)
     }
 }
 
