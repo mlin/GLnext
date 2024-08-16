@@ -1,1 +1,5 @@
-DeepVariant.WGS.toml
+complete = true
+
+[joint.gt.revision]
+snvPriorCalibration = 0.6
+indelPriorCalibration = 0.45
