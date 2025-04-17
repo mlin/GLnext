@@ -11,7 +11,8 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <kotlin.version>1.8.10</kotlin.version>
+        <java.version>11</java.version>
+        <kotlin.version>1.9.23</kotlin.version>
         <kotlin.code.style>official</kotlin.code.style>
     </properties>
 
@@ -36,15 +37,14 @@
             <artifactId>kotlin-stdlib-jdk8</artifactId>
             <version>${kotlin.version}</version>
         </dependency>
-        <dependency> <!-- Kotlin Spark API dependency -->
-            <groupId>org.jetbrains.kotlinx.spark</groupId>
-            <artifactId>kotlin-spark-api_3.2.0_2.12</artifactId>
-            <version>1.2.3</version>
-        </dependency>
-        <dependency> <!-- Spark dependency -->
+        <dependency>
+            <!--
+            Spark dependency; match desired Dataproc Serverless runtime:
+            https://cloud.google.com/dataproc-serverless/docs/concepts/versions/dataproc-serverless-versions
+            -->
             <groupId>org.apache.spark</groupId>
             <artifactId>spark-sql_2.12</artifactId>
-            <version>3.2.0</version>
+            <version>3.5.1</version>
         </dependency>
         <dependency>
             <groupId>org.xerial.snappy</groupId>
@@ -78,7 +78,7 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-dbcp2</artifactId>
             <version>2.9.0</version>
-        </dependency>          
+        </dependency>
         <dependency>
             <groupId>net.mlin</groupId>
             <artifactId>iitj</artifactId>
@@ -97,12 +97,12 @@
         <dependency>
             <groupId>org.jetbrains.kotlin</groupId>
             <artifactId>kotlin-test</artifactId>
-            <version>1.9.22</version>
+            <version>1.9.25</version>
         </dependency>
         <dependency>
             <groupId>org.jetbrains.kotlin</groupId>
             <artifactId>kotlin-test-junit</artifactId>
-            <version>1.9.22</version>
+            <version>1.9.25</version>
         </dependency>
         <dependency>
             <groupId>org.apache.commons</groupId>
@@ -120,8 +120,16 @@
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.14.0</version>
+                <configuration>
+                    <release>${java.version}</release>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
-                <version>3.3.0</version>
+                <version>3.4.2</version>
                 <configuration>
                   <archive>
                     <manifest>
@@ -143,7 +151,6 @@
                         <configuration>
                             <artifactSet>
                                 <includes>
-                                    <include>org.jetbrains.kotlinx.spark:*</include>
                                     <include>org.jetbrains.kotlin:* </include>
                                     <include>com.github.samtools:*</include>
                                     <include>com.github.ajalt.clikt:*</include>
@@ -170,7 +177,7 @@
                 <version>${kotlin.version}</version>
                 <configuration>
                     <sourceDirs>src</sourceDirs>
-                    <jvmTarget>11</jvmTarget>
+                    <jvmTarget>${java.version}</jvmTarget>
                     <myIncremental>true</myIncremental>
                 </configuration>
                 <executions>

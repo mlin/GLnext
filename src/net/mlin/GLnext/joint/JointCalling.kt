@@ -13,11 +13,9 @@ import org.apache.spark.sql.Encoders
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.RowFactory
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.types.DataTypes
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.LongAccumulator
-import org.jetbrains.kotlinx.spark.api.*
 import org.xerial.snappy.Snappy
 
 enum class GT_OverlapMode {
@@ -57,7 +55,7 @@ fun jointCall(
 ): Triple<String, Long, Dataset<Row>> {
     // broadcast supporting data for joint calling; using JavaSparkContext to sidestep
     // kotlin-spark-api overrides
-    val jsc = JavaSparkContext(spark.sparkContext)
+    val jsc = JavaSparkContext(spark.sparkContext())
     val aggHeaderB = jsc.broadcast(aggHeader)
     val fieldsGenB = jsc.broadcast(JointFieldsGenerator(cfg, aggHeader))
 
@@ -76,7 +74,7 @@ fun jointCall(
                 revisedGenotypeCount
             ).iterator()
         },
-        RowEncoder.apply(
+        Encoders.row(
             StructType()
                 .add("frameno", DataTypes.IntegerType, false)
                 .add("sampleId", DataTypes.IntegerType, false)
@@ -98,7 +96,7 @@ fun jointCall(
                     sparseGenotypeFrames
                 ).iterator()
             },
-            RowEncoder.apply(
+            Encoders.row(
                 StructType()
                     .add("variantId", DataTypes.IntegerType, false)
                     .add("rid", DataTypes.ShortType, false)

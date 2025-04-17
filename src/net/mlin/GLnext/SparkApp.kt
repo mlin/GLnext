@@ -17,7 +17,7 @@ import org.apache.log4j.Level
 import org.apache.log4j.LogManager
 import org.apache.log4j.Logger
 import org.apache.spark.api.java.JavaSparkContext
-import org.jetbrains.kotlinx.spark.api.*
+import org.apache.spark.sql.SparkSession
 
 data class SparkConfig(val compressTempFiles: Boolean)
 data class MainConfig(
@@ -98,11 +98,12 @@ class CLI : CliktCommand() {
             }
         }
 
-        withSpark(
-            sparkConf = sparkConf,
-            logLevel = SparkLogLevel.ERROR
-        ) {
-            val defaultParallelism = spark.sparkContext.defaultParallelism()
+        val spark = SparkSession.builder().config(sparkConf).getOrCreate()
+        try {
+            val sc = spark.sparkContext()
+            val jsc = JavaSparkContext(sc)
+            sc.setLogLevel("ERROR")
+            val defaultParallelism = jsc.defaultParallelism()
 
             logger.setLevel(Level.INFO)
             logger.info(
@@ -113,7 +114,7 @@ class CLI : CliktCommand() {
             logger.info("spark.default.parallelism: $defaultParallelism")
             logger.info(
                 "spark executors: " +
-                    spark.sparkContext.statusTracker().getExecutorInfos().size.toString()
+                    sc.statusTracker().getExecutorInfos().size.toString()
             )
             logger.info("Locale: ${java.util.Locale.getDefault()}")
             java.sql.DriverManager.getConnection("jdbc:genomicsqlite::memory:").use {
@@ -151,7 +152,6 @@ class CLI : CliktCommand() {
             logger.info("contigs: ${aggHeader.contigId.size.pretty()}")
 
             // load BEDs
-            val jsc = JavaSparkContext(spark.sparkContext)
             val filterRangesB = filterBed?.let {
                 val filterRanges = BedRanges(aggHeader.contigId, fileReaderDetectGz(it))
                 jsc.broadcast(filterRanges)
@@ -169,10 +169,10 @@ class CLI : CliktCommand() {
             logger.info("--split-bed regions: ${splitRanges.size.pretty()}")
 
             // accumulators
-            val vcfRecordCount = spark.sparkContext.longAccumulator("input VCF records")
-            val vcfRecordBytes = spark.sparkContext.longAccumulator("input VCF bytes)")
-            val sparseEntryCount = spark.sparkContext.longAccumulator("sparse genotype entries")
-            val revisedGenotypeCount = spark.sparkContext.longAccumulator("revised genotypes")
+            val vcfRecordCount = sc.longAccumulator("input VCF records")
+            val vcfRecordBytes = sc.longAccumulator("input VCF bytes")
+            val sparseEntryCount = sc.longAccumulator("sparse genotype entries")
+            val revisedGenotypeCount = sc.longAccumulator("revised genotypes")
 
             /*
               Discover all variants & collect them to a database file local to the driver.
@@ -237,6 +237,8 @@ class CLI : CliktCommand() {
                 outputDir,
                 variantCount
             )
+        } finally {
+            spark.stop()
         }
     }
 }
