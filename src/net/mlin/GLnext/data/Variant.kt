@@ -1,10 +1,10 @@
 package net.mlin.GLnext.data
 import kotlin.math.min
 import net.mlin.GLnext.util.getIntOrNull
+import org.apache.spark.sql.Encoder
+import org.apache.spark.sql.Encoders
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.RowFactory
-import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
-import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.types.DataTypes
 import org.apache.spark.sql.types.StructType
 
@@ -52,8 +52,8 @@ data class Variant(val range: GRange, val ref: String, val alt: String) :
 /**
  * RowEncoder for Variant.toRow()
  */
-fun VariantRowEncoder(): ExpressionEncoder<Row> {
-    return RowEncoder.apply(
+fun VariantRowEncoder(): Encoder<Row> {
+    return Encoders.row(
         StructType()
             .add("rid", DataTypes.ShortType, false)
             .add("beg", DataTypes.IntegerType, false)

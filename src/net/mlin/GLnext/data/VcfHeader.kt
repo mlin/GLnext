@@ -18,7 +18,6 @@ import org.apache.spark.sql.RowFactory
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.types.DataTypes
 import org.apache.spark.sql.types.StructType
-import org.jetbrains.kotlinx.spark.api.*
 
 /**
  * VCF header contig/FILTER/INFO/FORMAT lines
@@ -85,7 +84,7 @@ fun aggregateVcfHeaders(
     filenames: List<String>,
     allowDuplicateSamples: Boolean = false
 ): AggVcfHeader {
-    val jsc = JavaSparkContext(spark.sparkContext)
+    val jsc = JavaSparkContext(spark.sparkContext())
     val exampleFilename = filenames.first()
     // pattern for recognizing artifically-multiplied files (for scalability testing)
     val multiplyPattern = System.getenv("_multiply")?.let {
@@ -369,7 +368,7 @@ class HtsJdkLineIteratorImpl(val inner: Iterator<String>) : htsjdk.tribble.reade
 
 fun AggVcfHeader.vcfFilenamesDF(spark: SparkSession): Dataset<Row> {
     return spark.createDataFrame(
-        JavaSparkContext(spark.sparkContext).parallelizeEvenly(
+        JavaSparkContext(spark.sparkContext()).parallelizeEvenly(
             this.filenameCallsetId.toList()
         ).map { (filename, callsetId) ->
             RowFactory.create(filename, callsetId)
