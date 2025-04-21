@@ -25,20 +25,20 @@ and find the JAR file under `target/`.
 To run some basic tests,
 
 ```
-export SPARK_HOME=/path/to/spark-3.3.4-bin-hadoop3
+export SPARK_HOME=/path/to/spark-3.5.2-bin-hadoop3
 prove -v test/dv1KGP.t
 ```
 
 ## Running GLnext
 
-General requirements: x86-64 platform, Linux or macOS, Java 11+, Spark 3.3.x
+General requirements: x86-64 platform, Linux or macOS, Java 11+, Spark 3.5.x
 
 Compatibility with other Spark versions is not assured. Also, the JAR uses native libraries for x86-64 only.
 
 ### Local
 
 ```
-export SPARK_HOME=/path/to/spark-3.3.4-bin-hadoop3
+export SPARK_HOME=/path/to/spark-3.5.2-bin-hadoop3
 
 _JAVA_OPTIONS="
     -Dspark.default.parallelism=$(nproc)
