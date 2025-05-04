@@ -25,13 +25,6 @@
       "help": "GLnext configuration preset"
     },
     {
-      "name": "ref_genome",
-      "class": "file",
-      "patterns": ["*.fasta.gz", "*.fa.gz", "*.fna.gz"],
-      "optional": true,
-      "help": "reference genome for gvcf_norm preprocessing (not otherwise needed)"
-    },
-    {
       "name": "spvcf_decode",
       "class": "boolean",
       "default": false,
