@@ -195,16 +195,17 @@ class CLI : CliktCommand() {
                 vcfRecordCount,
                 vcfRecordBytes
             )
-            // broadcast the variants DB file to all executors
-            jsc.addFile(variantsDbLocalFilename)
-            val variantsDbSparkFile = File(variantsDbLocalFilename).name
-
             // report accumulators
             logger.info("input VCF records: ${vcfRecordCount.sum().pretty()}")
             logger.info("input VCF bytes: ${vcfRecordBytes.sum().pretty()}")
             logger.info("joint variants: ${variantCount.pretty()}")
             val variantsDbFileSize = File(variantsDbLocalFilename).length()
             logger.info("variants DB compressed: ${variantsDbFileSize.pretty()} bytes")
+            validateContigNames(variantsDbLocalFilename, aggHeader.contigs)
+
+            // broadcast the variants DB file to all executors
+            jsc.addFile(variantsDbLocalFilename)
+            val variantsDbSparkFile = File(variantsDbLocalFilename).name
 
             // perform joint-calling
             logger.info("genotyping...")
@@ -270,6 +271,33 @@ fun loadConfig(logger: Logger, name: String): MainConfig {
     val cfg = loader.build().loadConfigOrThrow<MainConfig>()
     require(cfg.complete, { "invalid config $name" })
     return cfg
+}
+
+/**
+ * Validate contig names from the variants DB for invalid filename characters (fail fast before
+ * genotyping).
+ */
+private fun validateContigNames(
+    dbFilename: String,
+    contigs: Array<String>
+) {
+    openGenomicSQLiteReadOnly(dbFilename).use { conn ->
+        val invalidContigs = mutableListOf<String>()
+        val rs = conn.createStatement().executeQuery("SELECT DISTINCT rid FROM Variant")
+        while (rs.next()) {
+            val rid = rs.getInt("rid")
+            val contigName = contigs[rid]
+            // disallow characters problematic in filenames: slash, star, question mark, etc.
+            if ("[\\/\\*\\?<>:\"|]".toRegex().containsMatchIn(contigName)) {
+                invalidContigs.add(contigName)
+            }
+        }
+        require(invalidContigs.isEmpty()) {
+            "Can't create output filenames for these contigs: " +
+                invalidContigs.joinToString(", ") + "\n" +
+                "Consider setting --filter-contigs or --filter-bed to include only primary contigs."
+        }
+    }
 }
 
 val _classesForKryo = arrayOf(

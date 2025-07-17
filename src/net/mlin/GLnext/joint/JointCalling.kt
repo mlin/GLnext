@@ -269,7 +269,7 @@ fun generateGenotypeAndFormatFields(
     var gtOut = DiploidGenotype(
         translate(gtIn.allele1),
         translate(gtIn.allele2),
-        gtIn.phased
+        false // FUTURE: gtIn.phased
     )
     var revisedGQ: String? = null
     cfg.gt.revision?.let {
