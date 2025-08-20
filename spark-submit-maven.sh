@@ -33,6 +33,22 @@ JAVA_OPTS="$JAVA_OPTS -Dspark.driver.memory=$DRIVER_MEMORY"
 JAVA_OPTS="$JAVA_OPTS -Dspark.master=$SPARK_MASTER"
 JAVA_OPTS="$JAVA_OPTS -Dspark.app.name=GLnext"
 
+# Add JVM options for Java 17 compatibility with Spark 3.2.0
+JAVA_OPTS="$JAVA_OPTS --add-opens=java.base/java.lang=ALL-UNNAMED"
+JAVA_OPTS="$JAVA_OPTS --add-opens=java.base/java.lang.invoke=ALL-UNNAMED"
+JAVA_OPTS="$JAVA_OPTS --add-opens=java.base/java.lang.reflect=ALL-UNNAMED"
+JAVA_OPTS="$JAVA_OPTS --add-opens=java.base/java.io=ALL-UNNAMED"
+JAVA_OPTS="$JAVA_OPTS --add-opens=java.base/java.net=ALL-UNNAMED"
+JAVA_OPTS="$JAVA_OPTS --add-opens=java.base/java.nio=ALL-UNNAMED"
+JAVA_OPTS="$JAVA_OPTS --add-opens=java.base/java.util=ALL-UNNAMED"
+JAVA_OPTS="$JAVA_OPTS --add-opens=java.base/java.util.concurrent=ALL-UNNAMED"
+JAVA_OPTS="$JAVA_OPTS --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED"
+JAVA_OPTS="$JAVA_OPTS --add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+JAVA_OPTS="$JAVA_OPTS --add-opens=java.base/sun.nio.cs=ALL-UNNAMED"
+JAVA_OPTS="$JAVA_OPTS --add-opens=java.base/sun.security.action=ALL-UNNAMED"
+JAVA_OPTS="$JAVA_OPTS --add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
+JAVA_OPTS="$JAVA_OPTS --add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED"
+
 # Add any additional Java options
 if [ -n "$_JAVA_OPTIONS" ]; then
     JAVA_OPTS="$JAVA_OPTS $_JAVA_OPTIONS"

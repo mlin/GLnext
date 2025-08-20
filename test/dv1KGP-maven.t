@@ -40,11 +40,11 @@ cd $DN
 tar xf /tmp/dv1KGP_ALDH2_gvcf.tar
 
 ls -1 $(pwd)/dv1KGP_ALDH2_gvcf/*vcf.gz > dv1KGP.manifest
-MANIFEST=dv1KGP.manifest
+MANIFEST="$(pwd)/dv1KGP.manifest"
 
 if [[ -n $DV1KGP_5PCT ]]; then
     awk 'NR%20==0 { print; }' dv1KGP.manifest > dv1KGP.5pct.manifest
-    MANIFEST=dv1KGP.5pct.manifest
+    MANIFEST="$(pwd)/dv1KGP.5pct.manifest"
 fi
 
 export SPARK_LOCAL_IP=127.0.0.1
@@ -55,7 +55,7 @@ export _JAVA_OPTIONS="$_JAVA_OPTIONS -Dspark.default.parallelism=$(nproc) -Dspar
 
 time "$MAVEN_SPARK_SUBMIT" \
     --master 'local[*]' --driver-memory 8G \
-    $SOURCE_DIR/target/GLnext-*.jar $@ --manifest "$MANIFEST" dv1KGP.out
+    $SOURCE_DIR/target/GLnext-*.jar $@ --manifest "$MANIFEST" "$(pwd)/dv1KGP.out"
 
 ls -l dv1KGP.out
 
