@@ -85,6 +85,15 @@ prove -v test/dv1KGP.t
 - Set timeout to 20+ minutes for integration tests
 - Tests download test data (~2MB) and spvcf utility automatically
 
+**KNOWN SPARK CLASSPATH ISSUE**: Current Spark 3.2.2 download may be incomplete, causing:
+```
+Error: Could not find or load main class org.apache.spark.launcher.Main
+```
+This indicates missing spark-launcher JAR in the distribution. Alternative approaches:
+- Use pre-built Docker image with complete Spark installation
+- Download from different mirror or use Maven to get Spark JARs
+- Focus on unit testing while integration test environment is being resolved
+
 ### Manual Application Testing
 Since the JAR requires Spark context, test basic functionality:
 ```bash

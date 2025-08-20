@@ -263,9 +263,19 @@ fun loadConfig(logger: Logger, name: String): MainConfig {
     inheritedNames.reversed().forEach {
         val configFn = "/config/$it.toml"
         logger.info("load resource $configFn")
-        loader = loader.addSource(PropertySource.resource(configFn))
+        try {
+            loader = loader.addSource(PropertySource.resource(configFn))
+            logger.info("Successfully added resource $configFn")
+        } catch (e: Exception) {
+            logger.info("Failed to load resource $configFn: ${e.message}")
+        }
     }
-    loader = loader.addSource(PropertySource.resource("/config/main.toml"))
+    try {
+        loader = loader.addSource(PropertySource.resource("/config/main.toml"))
+        logger.info("Successfully added resource /config/main.toml")
+    } catch (e: Exception) {
+        logger.info("Failed to load resource /config/main.toml: ${e.message}")
+    }
 
     val cfg = loader.build().loadConfigOrThrow<MainConfig>()
     require(cfg.complete, { "invalid config $name" })
