@@ -13,6 +13,7 @@ import java.util.Properties
 import net.mlin.GLnext.data.*
 import net.mlin.GLnext.joint.*
 import net.mlin.GLnext.util.*
+import org.apache.hadoop.fs.Path
 import org.apache.log4j.Level
 import org.apache.log4j.LogManager
 import org.apache.log4j.Logger
@@ -181,8 +182,13 @@ class CLI : CliktCommand() {
               too large to have all executors keep it as a JVM heap data structure, and yet not
               large enough to warrant a partitioned DataFrame necessitating a gigantic shuffle of
               the input VCF records. Instead, we write them into a GenomicSQLite database file and
-              (below) distribute this compressed file to all executors.
+              (below) distribute this compressed file to all executors via HDFS.
             */
+            
+            // Create output directory early so we can store the variants DB there
+            val fs = getFileSystem(outputDir)
+            require(fs.mkdirs(Path(outputDir)), { "output directory $outputDir mustn't already exist" })
+            
             val vcfFilenamesDF = aggHeader.vcfFilenamesDF(spark)
             val (variantCount, variantsDbLocalFilename) = collectAllVariantsDb(
                 logger,
@@ -195,9 +201,9 @@ class CLI : CliktCommand() {
                 vcfRecordCount,
                 vcfRecordBytes
             )
-            // broadcast the variants DB file to all executors
-            jsc.addFile(variantsDbLocalFilename)
-            val variantsDbSparkFile = File(variantsDbLocalFilename).name
+            // copy the variants DB file to HDFS instead of broadcasting via addFile
+            val variantsDbHdfsPath = copyVariantsDbToHdfs(variantsDbLocalFilename, outputDir)
+            logger.info("variants DB stored in HDFS: $variantsDbHdfsPath")
 
             // report accumulators
             logger.info("input VCF records: ${vcfRecordCount.sum().pretty()}")
@@ -216,7 +222,7 @@ class CLI : CliktCommand() {
                 cfg.joint,
                 spark,
                 aggHeader,
-                variantsDbSparkFile,
+                variantsDbHdfsPath,
                 vcfFilenamesDF,
                 pvcfHeaderMetaLines,
                 sparseEntryCount,

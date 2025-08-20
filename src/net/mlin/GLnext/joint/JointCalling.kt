@@ -3,7 +3,6 @@ import java.io.Serializable
 import kotlin.text.StringBuilder
 import net.mlin.GLnext.data.*
 import net.mlin.GLnext.util.*
-import org.apache.spark.SparkFiles
 import org.apache.spark.api.java.JavaSparkContext
 import org.apache.spark.api.java.function.FlatMapFunction
 import org.apache.spark.api.java.function.FlatMapGroupsFunction
@@ -49,7 +48,7 @@ fun jointCall(
     cfg: JointConfig,
     spark: SparkSession,
     aggHeader: AggVcfHeader,
-    variantsDbSparkFile: String,
+    variantsDbHdfsPath: String,
     vcfFilenamesDF: Dataset<Row>,
     pvcfHeaderMetaLines: List<String>,
     sparseEntryCount: LongAccumulator? = null,
@@ -69,7 +68,7 @@ fun jointCall(
                 cfg,
                 aggHeaderB.value,
                 fieldsGenB.value,
-                SparkFiles.get(variantsDbSparkFile),
+                variantsDbHdfsPath,
                 it.getAs<Int>("callsetId"),
                 it.getAs<String>("vcfFilename"),
                 sparseEntryCount,
@@ -93,7 +92,7 @@ fun jointCall(
                     cfg,
                     aggHeaderB.value,
                     fieldsGenB.value,
-                    SparkFiles.get(variantsDbSparkFile),
+                    variantsDbHdfsPath,
                     frameno,
                     sparseGenotypeFrames
                 ).iterator()
@@ -130,7 +129,7 @@ fun generateJointCalls(
     cfg: JointConfig,
     aggHeader: AggVcfHeader,
     fieldsGen: JointFieldsGenerator,
-    variantsDbFilename: String,
+    variantsDbHdfsPath: String,
     callsetId: Int,
     vcfFilename: String,
     sparseEntryCount: LongAccumulator? = null,
@@ -141,7 +140,7 @@ fun generateJointCalls(
         val variants = sequence {
             ExitStack().use { cleanup ->
                 val variants = cleanup.add(
-                    GenomicSQLiteReadOnlyPool.get(variantsDbFilename).getConnection()
+                    GenomicSQLiteReadOnlyPool.get(getVariantsDbLocally(variantsDbHdfsPath)).getConnection()
                 )
                 val rs = cleanup.add(variants.createStatement()).executeQuery(
                     "SELECT * FROM Variant ORDER BY variantId"
@@ -395,7 +394,7 @@ fun transposeSparseGenotypeFrames(
     cfg: JointConfig,
     aggHeader: AggVcfHeader,
     fieldsGen: JointFieldsGenerator,
-    variantsDbFilename: String,
+    variantsDbHdfsPath: String,
     frameno: Int,
     sparseGenotypeFrames: Iterator<Row> // [(frameno, sampleId, sparseGenotypes)]
 ): Sequence<Row> { // [(variantId, rid, beg, end, splitId, frameno, snappyLine)]
@@ -403,7 +402,7 @@ fun transposeSparseGenotypeFrames(
     val variants = ExitStack().use { cleanup ->
         val dbc = cleanup.add(
             GenomicSQLiteReadOnlyPool
-                .get(variantsDbFilename)
+                .get(getVariantsDbLocally(variantsDbHdfsPath))
                 .getConnection()
         )
         check(GenomicSQLiteReadOnlyPool.distinctConnections() < 1000)

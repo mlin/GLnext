@@ -4,6 +4,8 @@ import java.io.File
 import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
 
@@ -120,6 +122,49 @@ fun fileCRC32C(filename: String): Long {
         }
     }
     return crc.value
+}
+
+/**
+ * Copy a variants database file to HDFS under outputDir/_variantsDb subdirectory
+ */
+fun copyVariantsDbToHdfs(localDbFilename: String, outputDir: String): String {
+    val fs = getFileSystem(outputDir)
+    val variantsDbDir = Path(outputDir, "_variantsDb")
+    fs.mkdirs(variantsDbDir)
+    
+    val dbFile = File(localDbFilename)
+    val hdfsDbPath = Path(variantsDbDir, dbFile.name)
+    
+    // Copy local file to HDFS
+    fs.copyFromLocalFile(false, true, Path(localDbFilename), hdfsDbPath)
+    
+    return hdfsDbPath.toString()
+}
+
+/**
+ * Get variants database file locally, copying from HDFS if needed.
+ * Implements local caching to avoid repeated copies.
+ */
+fun getVariantsDbLocally(hdfsDbPath: String): String {
+    val hdfsFile = Path(hdfsDbPath)
+    val dbFilename = hdfsFile.getName()
+    
+    // Create local cache directory in tmp
+    val cacheDir = File(System.getProperty("java.io.tmpdir"), "GLnext_variantsDb_cache")
+    cacheDir.mkdirs()
+    
+    val localDbFile = File(cacheDir, dbFilename)
+    
+    // If file doesn't exist locally, or if it's different size, copy from HDFS
+    val fs = getFileSystem(hdfsDbPath)
+    val hdfsFileStatus = fs.getFileStatus(hdfsFile)
+    
+    if (!localDbFile.exists() || localDbFile.length() != hdfsFileStatus.getLen()) {
+        // Copy from HDFS to local cache
+        fs.copyToLocalFile(false, hdfsFile, Path(localDbFile.absolutePath), false)
+    }
+    
+    return localDbFile.absolutePath
 }
 
 /**
