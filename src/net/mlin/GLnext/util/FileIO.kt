@@ -130,9 +130,19 @@ fun fileCRC32C(filename: String): Long {
 fun copyVariantsDbToHdfs(localDbFilename: String, outputDir: String): String {
     val fs = getFileSystem(outputDir)
     val variantsDbDir = Path(outputDir, "_variantsDb")
-    fs.mkdirs(variantsDbDir)
+    
+    if (!fs.mkdirs(variantsDbDir)) {
+        // mkdirs returns false if directory already exists, which is fine
+        if (!fs.exists(variantsDbDir)) {
+            throw RuntimeException("Failed to create variants DB directory: $variantsDbDir")
+        }
+    }
     
     val dbFile = File(localDbFilename)
+    if (!dbFile.exists()) {
+        throw RuntimeException("Local variants DB file does not exist: $localDbFilename")
+    }
+    
     val hdfsDbPath = Path(variantsDbDir, dbFile.name)
     
     // Copy local file to HDFS
@@ -144,6 +154,7 @@ fun copyVariantsDbToHdfs(localDbFilename: String, outputDir: String): String {
 /**
  * Get variants database file locally, copying from HDFS if needed.
  * Implements local caching to avoid repeated copies.
+ * Thread-safe for multiple executors on the same node.
  */
 fun getVariantsDbLocally(hdfsDbPath: String): String {
     val hdfsFile = Path(hdfsDbPath)
@@ -154,14 +165,27 @@ fun getVariantsDbLocally(hdfsDbPath: String): String {
     cacheDir.mkdirs()
     
     val localDbFile = File(cacheDir, dbFilename)
+    val lockFile = File(cacheDir, "${dbFilename}.lock")
     
-    // If file doesn't exist locally, or if it's different size, copy from HDFS
-    val fs = getFileSystem(hdfsDbPath)
-    val hdfsFileStatus = fs.getFileStatus(hdfsFile)
-    
-    if (!localDbFile.exists() || localDbFile.length() != hdfsFileStatus.getLen()) {
-        // Copy from HDFS to local cache
-        fs.copyToLocalFile(false, hdfsFile, Path(localDbFile.absolutePath), false)
+    // Use file-based locking to handle concurrency
+    synchronized(lockFile.absolutePath.intern()) {
+        // If file doesn't exist locally, or if it's different size, copy from HDFS
+        val fs = getFileSystem(hdfsDbPath)
+        val hdfsFileStatus = fs.getFileStatus(hdfsFile)
+        
+        if (!localDbFile.exists() || localDbFile.length() != hdfsFileStatus.getLen()) {
+            // Copy from HDFS to local cache
+            val tempFile = File(cacheDir, "${dbFilename}.tmp")
+            try {
+                fs.copyToLocalFile(false, hdfsFile, Path(tempFile.absolutePath), false)
+                // Atomic move to final location
+                tempFile.renameTo(localDbFile)
+            } catch (e: Exception) {
+                // Clean up temp file on error
+                tempFile.delete()
+                throw e
+            }
+        }
     }
     
     return localDbFile.absolutePath
