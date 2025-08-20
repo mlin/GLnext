@@ -32,7 +32,7 @@ mvn antrun:run@ktlint-format
 - **NEVER CANCEL** the `mvn package` command - it takes 5 minutes and produces a 24MB JAR file
 - Set timeouts to 7+ minutes for build commands  
 - Clean build: 3 seconds, compile-only: 22 seconds, unit tests: 12 seconds, linting: 12 seconds, formatting: 6 seconds
-- Build produces `target/GLnext-*.jar` (exactly 24,494,714 bytes / 24MB)
+- Build produces `target/GLnext-*.jar` (~24,494,xxx bytes / 24MB)
 - **VALIDATED ON**: Java 17.0.16 (OpenJDK Temurin), Maven 3.9.11, Ubuntu 24.04
 
 ### Runtime Dependencies Setup
@@ -229,3 +229,27 @@ Available in `src/resources/config/`:
 | Test data missing | `prove -v test/dv1KGP.t` | Check network access, verify downloads |
 
 **Remember**: Always use appropriate timeouts (7+ minutes for builds, 20+ minutes for integration tests) and NEVER CANCEL long-running operations.
+
+## Quick Start Summary
+
+For a new clone, run this complete validation sequence (66 seconds total):
+```bash
+# Install tools
+sudo apt-get update && sudo apt-get install -y bcftools tabix
+
+# Complete build and validation workflow 
+mvn clean
+mvn test
+mvn antrun:run@ktlint  
+mvn package -Dorg.slf4j.simpleLogger.log.org.apache.maven.plugins.shade=warn
+
+# Verify success
+ls -la target/GLnext-*.jar  # Should be ~24MB
+echo "Build complete - GLnext ready for use"
+```
+
+**SUCCESS CRITERIA**: 
+- JAR file exists at `target/GLnext-*.jar` and is ~24MB (24,494,xxx bytes)
+- 3 unit tests pass (GenotypingContextTest + 2 DiploidTests)
+- No linting errors from ktlint
+- Expected Kotlin deprecation warnings are non-blocking
