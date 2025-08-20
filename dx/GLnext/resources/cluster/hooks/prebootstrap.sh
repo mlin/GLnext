@@ -18,7 +18,8 @@ cat /cluster/hadoop/etc/hadoop/hdfs-site.xml
 find / -name spark-defaults.conf -type f || true
 echo '
 
-spark.network.timeout                         300s
+spark.network.timeout                         600s
+spark.files.fetchTimeout                      600s
 spark.executor.heartbeatInterval              60s
 spark.shuffle.io.maxRetries                   8
 spark.shuffle.io.retryWait                    10s
