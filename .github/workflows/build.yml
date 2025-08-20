@@ -25,8 +25,9 @@ jobs:
     - name: deps
       run: |
         sudo apt-get -qq update
-        sudo apt-get install -y bcftools tabix
-        curl -LSs https://archive.apache.org/dist/spark/spark-3.2.2/spark-3.2.2-bin-hadoop3.2.tgz | tar zx
+        sudo apt-get install -y bcftools tabix aria2
+        aria2c -x 10 -s 10 https://archive.apache.org/dist/spark/spark-3.2.2/spark-3.2.2-bin-hadoop3.2.tgz
+        tar zxf spark-*.tgz
         SPARK_HOME=$(find $(pwd) -type d -name "spark-*")
         echo "SPARK_HOME=$SPARK_HOME" >> $GITHUB_ENV
         git status
