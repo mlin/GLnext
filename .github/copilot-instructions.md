@@ -42,13 +42,12 @@ Install required external tools:
 sudo apt-get update
 sudo apt-get install -y bcftools tabix
 
-# Download and setup Apache Spark 3.3.4 (required for runtime)
-curl -LSs https://dlcdn.apache.org/spark/spark-3.3.4/spark-3.3.4-bin-hadoop3.tgz | tar zx
-export SPARK_HOME=$(pwd)/spark-3.3.4-bin-hadoop3
+# Download and setup Apache Spark 3.2.2 (required for runtime, matches CI)
+curl -LSs https://archive.apache.org/dist/spark/spark-3.2.2/spark-3.2.2-bin-hadoop3.2.tgz | tar zx
+export SPARK_HOME=$(find $(pwd) -type d -name "spark-*")
 ```
 
-**NETWORK LIMITATIONS**: Downloads fail due to firewall restrictions (tested: dlcdn.apache.org blocked). If curl commands fail:
-- Document the limitation: "Spark download fails due to network restrictions - could not resolve host"
+**NETWORK LIMITATIONS**: Previously documented network restrictions have been resolved. Downloads from archive.apache.org now work. If curl commands fail:
 - Look for pre-installed Spark in /opt/ or /usr/local/
 - Use mock testing approaches when full integration is not possible
 - Maven dependency downloads work (Maven Central accessible)
@@ -59,7 +58,7 @@ export SPARK_HOME=$(pwd)/spark-3.3.4-bin-hadoop3
 git submodule update --init --recursive
 ```
 
-**KNOWN ISSUE**: SSH access to git@github.com may be blocked. If submodule init fails, document: "bash-tap test framework unavailable due to SSH restrictions".
+**KNOWN ISSUE**: SSH access to git@github.com may be blocked. If submodule init fails, use HTTPS clone: `git clone https://github.com/illusori/bash-tap.git test/bash-tap`.
 
 ## Validation and Testing
 
@@ -73,7 +72,7 @@ Expected output: 3 tests in 2 test classes, all passing.
 ### Integration Tests (Requires External Dependencies)
 ```bash
 # Full integration test (requires SPARK_HOME and network access)
-export SPARK_HOME=/path/to/spark-3.3.4-bin-hadoop3
+export SPARK_HOME=/path/to/spark-3.2.2-bin-hadoop3.2
 prove -v test/dv1KGP.t
 
 # 5% test subset (faster validation)
@@ -177,7 +176,7 @@ mvn package -Dorg.slf4j.simpleLogger.log.org.apache.maven.plugins.shade=warn
 
 ### Local Development Run
 ```bash
-export SPARK_HOME=/path/to/spark-3.3.4-bin-hadoop3
+export SPARK_HOME=/path/to/spark-3.2.2-bin-hadoop3.2
 
 # Single-file test
 $SPARK_HOME/bin/spark-submit --master 'local[*]' --driver-memory 8G \
@@ -205,7 +204,7 @@ Available in `src/resources/config/`:
 - **Platform**: x86-64 Linux or macOS only (native libraries)
 - **Java**: JDK 11+ (tested with JDK 17)
 - **Memory**: 8GB+ RAM recommended for development
-- **Spark**: Version 3.3.x (compatibility with other versions not assured)
+- **Spark**: Version 3.2.x (compatibility with other versions not assured, matches CI)
 
 ### External Tool Dependencies
 - **bcftools**: VCF file processing (version 1.19+ recommended)
