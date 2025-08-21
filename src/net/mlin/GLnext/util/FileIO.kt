@@ -11,9 +11,6 @@ import org.apache.hadoop.fs.Path
 
 /**
  * Get the Hadoop FileSystem object for path (either URI or a local filename)
- *
- * @param replication Optional desired replication factor for files written via the returned
- *        FileSystem. Honored for HDFS when provided.
  */
 fun getFileSystem(path: String): FileSystem {
     val schemes = listOf("file:", "hdfs:", "s3:", "gs:", "http:", "https:")
@@ -22,10 +19,8 @@ fun getFileSystem(path: String): FileSystem {
     } else {
         "file://" + path
     }
-    val uri = java.net.URI(normPath)
-
     val conf = org.apache.spark.deploy.SparkHadoopUtil.get().conf()
-    return FileSystem.get(uri, conf)
+    return FileSystem.get(java.net.URI(normPath), conf)
 }
 
 /**
