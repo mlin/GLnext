@@ -31,7 +31,6 @@ fun writeJointFiles(
     variantCount: Int
 ) {
     val fs = getFileSystem(outputDir)
-    require(fs.mkdirs(Path(outputDir)), { "output directory $outputDir mustn't already exist" })
 
     // write file parts (split by both spark partition and splitBed)
     val (headerPath, eofPath, partsWritten) = writeAllJointFileParts(
