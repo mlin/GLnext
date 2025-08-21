@@ -136,9 +136,10 @@ fun getVariantsDb(variantsDbBroadcastPath: String): String {
         withFileLock(lockFile) {
             if (!fnDb.exists()) {
                 val fnTmp = File(fnDb.absolutePath + ".tmp")
-                val fs = getFileSystem(variantsDbBroadcastPath)
-                fs.copyToLocalFile(Path(variantsDbBroadcastPath), Path(fnTmp.absolutePath))
-                fs.close()
+                getFileSystem(variantsDbBroadcastPath).copyToLocalFile(
+                    Path(variantsDbBroadcastPath),
+                    Path(fnTmp.absolutePath)
+                )
                 Files.move(
                     fnTmp.toPath(),
                     fnDb.toPath(),

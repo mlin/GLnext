@@ -15,7 +15,7 @@ import org.apache.hadoop.fs.Path
  * @param replication Optional desired replication factor for files written via the returned
  *        FileSystem. Honored for HDFS when provided.
  */
-fun getFileSystem(path: String, replication: Int? = null): FileSystem {
+fun getFileSystem(path: String): FileSystem {
     val schemes = listOf("file:", "hdfs:", "s3:", "gs:", "http:", "https:")
     val normPath = if (schemes.any { path.startsWith(it) }) {
         path
@@ -24,12 +24,7 @@ fun getFileSystem(path: String, replication: Int? = null): FileSystem {
     }
     val uri = java.net.URI(normPath)
 
-    val baseConf = org.apache.spark.deploy.SparkHadoopUtil.get().conf()
-    val conf = org.apache.hadoop.conf.Configuration(baseConf)
-    if (replication != null && replication > 0 && path.startsWith("hdfs:")) {
-        conf.setInt("dfs.replication", replication)
-    }
-
+    val conf = org.apache.spark.deploy.SparkHadoopUtil.get().conf()
     return FileSystem.get(uri, conf)
 }
 

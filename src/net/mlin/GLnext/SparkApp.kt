@@ -206,7 +206,7 @@ class CLI : CliktCommand() {
             logger.info("variants DB compressed: ${variantsDbFileSize.pretty()} bytes")
 
             // "publish" the variants DB file for executors to access
-            val fsOutput = getFileSystem(outputDir, replication = 8)
+            val fsOutput = getFileSystem(outputDir)
             require(fsOutput.mkdirs(Path(outputDir)), {
                 "output directory $outputDir mustn't already exist"
             })
