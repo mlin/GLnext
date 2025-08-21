@@ -67,7 +67,9 @@ fun writeJointFiles(
                 ".spvcf.gz"
         )
         val plan = listOf(headerPath) + spvcfFileParts.map { it.path } + listOf(eofPath)
-        getFileSystem(outputDir).concatNaive(spvcfPath, plan.map { Path(it) }.toTypedArray())
+        val fs2 = getFileSystem(outputDir)
+        fs2.concatNaive(spvcfPath, plan.map { Path(it) }.toTypedArray())
+        fs2.close()
         spvcfPath to spvcfFileParts.map { it.lineCount }.sum()
     }.collect()
 
@@ -208,6 +210,7 @@ fun writeJointFileParts(
         }
     } finally {
         bgzf?.close()
+        fs.close()
     }
     if (partWriting != null) {
         partsWritten.put(partWriting.path, partWriting)

@@ -1,9 +1,12 @@
 package net.mlin.GLnext.joint
+import java.io.File
 import java.io.Serializable
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import kotlin.text.StringBuilder
 import net.mlin.GLnext.data.*
 import net.mlin.GLnext.util.*
-import org.apache.spark.SparkFiles
+import org.apache.hadoop.fs.Path
 import org.apache.spark.api.java.JavaSparkContext
 import org.apache.spark.api.java.function.FlatMapFunction
 import org.apache.spark.api.java.function.FlatMapGroupsFunction
@@ -49,7 +52,7 @@ fun jointCall(
     cfg: JointConfig,
     spark: SparkSession,
     aggHeader: AggVcfHeader,
-    variantsDbSparkFile: String,
+    variantsDbBroadcastPath: String,
     vcfFilenamesDF: Dataset<Row>,
     pvcfHeaderMetaLines: List<String>,
     sparseEntryCount: LongAccumulator? = null,
@@ -69,7 +72,7 @@ fun jointCall(
                 cfg,
                 aggHeaderB.value,
                 fieldsGenB.value,
-                SparkFiles.get(variantsDbSparkFile),
+                getVariantsDb(variantsDbBroadcastPath),
                 it.getAs<Int>("callsetId"),
                 it.getAs<String>("vcfFilename"),
                 sparseEntryCount,
@@ -93,7 +96,7 @@ fun jointCall(
                     cfg,
                     aggHeaderB.value,
                     fieldsGenB.value,
-                    SparkFiles.get(variantsDbSparkFile),
+                    getVariantsDb(variantsDbBroadcastPath),
                     frameno,
                     sparseGenotypeFrames
                 ).iterator()
@@ -121,6 +124,30 @@ fun jointCall(
     spvcfLinesDF.unpersist()
     val spvcfHeader = jointHeader(cfg, aggHeader, pvcfHeaderMetaLines, fieldsGenB.value)
     return Triple(spvcfHeader, spvcfLineCount, spvcfLinesSortedDF)
+}
+
+fun getVariantsDb(variantsDbBroadcastPath: String): String {
+    val fnDb = File(
+        System.getProperty("java.io.tmpdir"),
+        Path(variantsDbBroadcastPath).getName() + ".local"
+    )
+    if (!fnDb.exists()) {
+        val lockFile = File(fnDb.absolutePath + ".lock")
+        withFileLock(lockFile) {
+            if (!fnDb.exists()) {
+                val fnTmp = File(fnDb.absolutePath + ".tmp")
+                val fs = getFileSystem(variantsDbBroadcastPath)
+                fs.copyToLocalFile(Path(variantsDbBroadcastPath), Path(fnTmp.absolutePath))
+                fs.close()
+                Files.move(
+                    fnTmp.toPath(),
+                    fnDb.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE
+                )
+            }
+        }
+    }
+    return fnDb.absolutePath
 }
 
 /**

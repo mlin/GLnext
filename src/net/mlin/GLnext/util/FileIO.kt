@@ -4,21 +4,33 @@ import java.io.File
 import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
+import java.nio.channels.FileChannel
+import java.nio.file.StandardOpenOption
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
 
 /**
  * Get the Hadoop FileSystem object for path (either URI or a local filename)
+ *
+ * @param replication Optional desired replication factor for files written via the returned
+ *        FileSystem. Honored for HDFS when provided.
  */
-fun getFileSystem(path: String): FileSystem {
+fun getFileSystem(path: String, replication: Int? = null): FileSystem {
     val schemes = listOf("file:", "hdfs:", "s3:", "gs:", "http:", "https:")
     val normPath = if (schemes.any { path.startsWith(it) }) {
         path
     } else {
         "file://" + path
     }
-    val conf = org.apache.spark.deploy.SparkHadoopUtil.get().conf()
-    return FileSystem.get(java.net.URI(normPath), conf)
+    val uri = java.net.URI(normPath)
+
+    val baseConf = org.apache.spark.deploy.SparkHadoopUtil.get().conf()
+    val conf = org.apache.hadoop.conf.Configuration(baseConf)
+    if (replication != null && replication > 0 && path.startsWith("hdfs:")) {
+        conf.setInt("dfs.replication", replication)
+    }
+
+    return FileSystem.get(uri, conf)
 }
 
 /**
@@ -175,6 +187,27 @@ class InputStreamWithExpectedLength(source: InputStream, val expectedLength: Lon
     private fun checkExpectedLength() {
         if (bytesRead != expectedLength) {
             throw IOException("Expected $expectedLength bytes, but read $bytesRead bytes")
+        }
+    }
+}
+
+/**
+ * Execute [action] while holding an intra-JVM monitor and a POSIX advisory lock
+ * on the given lock file. Use this to coordinate critical sections across threads
+ * in the same JVM and across processes on the same machine.
+ *
+ * The lock file is created if it does not exist.
+ */
+fun <T> withFileLock(lockFile: File, action: () -> T): T {
+    synchronized(lockFile.canonicalPath.intern()) {
+        return FileChannel.open(
+            lockFile.toPath(),
+            StandardOpenOption.CREATE,
+            StandardOpenOption.WRITE
+        ).use { channel ->
+            channel.lock().use {
+                action()
+            }
         }
     }
 }
