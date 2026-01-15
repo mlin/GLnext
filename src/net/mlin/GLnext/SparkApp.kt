@@ -13,6 +13,7 @@ import java.util.Properties
 import net.mlin.GLnext.data.*
 import net.mlin.GLnext.joint.*
 import net.mlin.GLnext.util.*
+import org.apache.hadoop.fs.Path
 import org.apache.log4j.Level
 import org.apache.log4j.LogManager
 import org.apache.log4j.Logger
@@ -195,6 +196,8 @@ class CLI : CliktCommand() {
                 vcfRecordCount,
                 vcfRecordBytes
             )
+            val variantsDbLocalPath = Path(variantsDbLocalFilename)
+
             // report accumulators
             logger.info("input VCF records: ${vcfRecordCount.sum().pretty()}")
             logger.info("input VCF bytes: ${vcfRecordBytes.sum().pretty()}")
@@ -207,6 +210,18 @@ class CLI : CliktCommand() {
             jsc.addFile(variantsDbLocalFilename)
             val variantsDbSparkFile = File(variantsDbLocalFilename).name
 
+            // "publish" the variants DB file for executors to access
+            val fsOutput = getFileSystem(outputDir)
+            require(fsOutput.mkdirs(Path(outputDir)), {
+                "output directory $outputDir mustn't already exist"
+            })
+            val variantsDbBroadcastPath = Path(
+                Path(outputDir, "_variantsDb"),
+                variantsDbLocalPath.getName()
+            )
+            require(fsOutput.mkdirs(variantsDbBroadcastPath.getParent()))
+            fsOutput.copyFromLocalFile(variantsDbLocalPath, variantsDbBroadcastPath)
+
             // perform joint-calling
             logger.info("genotyping...")
             val pvcfHeaderMetaLines = listOf(
@@ -217,7 +232,7 @@ class CLI : CliktCommand() {
                 cfg.joint,
                 spark,
                 aggHeader,
-                variantsDbSparkFile,
+                variantsDbBroadcastPath.toString(),
                 vcfFilenamesDF,
                 pvcfHeaderMetaLines,
                 sparseEntryCount,
