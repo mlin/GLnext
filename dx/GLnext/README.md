@@ -56,7 +56,6 @@ The BED regions must cover the contigs to be processed without any gaps or overl
 
 To filter variants, set `minQUAL2 > 0` and `minQUAL1 >= minQUAL2`. This will include only variants with (i) one or more copy with quality at least `minQUAL1`, OR (ii) two or more copies with quality at least `minQUAL2`.
 
-**gVCF left-alignment.** Add `-i ref_genome=GRC38.fa.gz` to run the [gvcf_norm](https://github.com/mlin/gvcf_norm) utility on each input file before further processing, with the given reference genome fa.gz.
 
 #### Operational notes
 
