@@ -204,6 +204,11 @@ class CLI : CliktCommand() {
             logger.info("joint variants: ${variantCount.pretty()}")
             val variantsDbFileSize = File(variantsDbLocalFilename).length()
             logger.info("variants DB compressed: ${variantsDbFileSize.pretty()} bytes")
+            validateContigNames(variantsDbLocalFilename, aggHeader.contigs)
+
+            // broadcast the variants DB file to all executors
+            jsc.addFile(variantsDbLocalFilename)
+            val variantsDbSparkFile = File(variantsDbLocalFilename).name
 
             // "publish" the variants DB file for executors to access
             val fsOutput = getFileSystem(outputDir)
@@ -281,6 +286,33 @@ fun loadConfig(logger: Logger, name: String): MainConfig {
     val cfg = loader.build().loadConfigOrThrow<MainConfig>()
     require(cfg.complete, { "invalid config $name" })
     return cfg
+}
+
+/**
+ * Validate contig names from the variants DB for invalid filename characters (fail fast before
+ * genotyping).
+ */
+private fun validateContigNames(
+    dbFilename: String,
+    contigs: Array<String>
+) {
+    openGenomicSQLiteReadOnly(dbFilename).use { conn ->
+        val invalidContigs = mutableListOf<String>()
+        val rs = conn.createStatement().executeQuery("SELECT DISTINCT rid FROM Variant")
+        while (rs.next()) {
+            val rid = rs.getInt("rid")
+            val contigName = contigs[rid]
+            // disallow characters problematic in filenames: slash, star, question mark, etc.
+            if ("[\\/\\*\\?<>:\"|]".toRegex().containsMatchIn(contigName)) {
+                invalidContigs.add(contigName)
+            }
+        }
+        require(invalidContigs.isEmpty()) {
+            "Can't create output filenames for these contigs: " +
+                invalidContigs.joinToString(", ") + "\n" +
+                "Consider setting --filter-contigs or --filter-bed to include only primary contigs."
+        }
+    }
 }
 
 val _classesForKryo = arrayOf(

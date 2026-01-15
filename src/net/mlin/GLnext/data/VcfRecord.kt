@@ -180,12 +180,14 @@ class VcfRecordUnpacked(val record: VcfRecord) {
         }
         var parts = gt.split('|')
         var phased = true
-        require(parts.size <= 2)
         if (parts.size < 2) {
             parts = gt.split('/')
-            require(parts.size == 2)
             phased = false
+            if (parts.size == 1) { // haploid chrY etc.
+                parts = listOf(".", parts[0])
+            }
         }
+        require(parts.size == 2)
         val allele1 = (if (parts[0] == "" || parts[0] == ".") null else parts[0].toInt())
         val allele2 = (if (parts[1] == "" || parts[1] == ".") null else parts[1].toInt())
         return DiploidGenotype(allele1, allele2, phased)
