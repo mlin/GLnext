@@ -276,8 +276,12 @@ fun loadConfig(logger: Logger, name: String): MainConfig {
     val inheritedNames = (1..nameParts.size).map { nameParts.take(it).joinToString(".") }
 
     // add them in reverse order so that the most specific ones take precedence
-    inheritedNames.reversed().forEach {
-        val configFn = "/config/$it.toml"
+    // NOTE: keep explicit index-based reverse iteration for Java 11 runtime compatibility.
+    // In this path, inheritedNames.reversed() previously produced a runtime call to
+    // java.util.List.reversed(), which is unavailable before Java 21.
+    for (idx in inheritedNames.indices.reversed()) {
+        val configName = inheritedNames[idx]
+        val configFn = "/config/$configName.toml"
         logger.info("load resource $configFn")
         loader = loader.addSource(PropertySource.resource(configFn))
     }

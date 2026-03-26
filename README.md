@@ -25,7 +25,9 @@ and find the JAR file under `target/`.
 To run some basic tests,
 
 ```
-export SPARK_HOME=/path/to/spark-3.3.4-bin-hadoop3
+export SPARK_HOME=/path/to/spark-3.2.4-bin-hadoop3.2
+export JAVA_HOME=/path/to/jdk-11
+export PATH="$JAVA_HOME/bin:$PATH"
 prove -v test/dv1KGP.t
 ```
 
