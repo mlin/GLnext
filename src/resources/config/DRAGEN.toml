@@ -2,6 +2,7 @@ complete = true
 
 [discovery]
 minCopies = 1
+ignoreFilteredInputRecords = true
 
 [joint]
 formatFields = [

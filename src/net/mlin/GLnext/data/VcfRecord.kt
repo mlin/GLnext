@@ -11,6 +11,13 @@ enum class VcfColumn {
  */
 data class VcfRecord(val range: GRange, val line: String)
 
+fun vcfRecordHasNonPassFilter(line: String): Boolean {
+    val filter = line.splitToSequence('\t')
+        .drop(VcfColumn.FILTER.ordinal)
+        .firstOrNull()
+    return filter != null && filter != "." && filter != "PASS"
+}
+
 /**
  * Parse VCF text line into VcfRecord
  */
@@ -54,7 +61,8 @@ fun parseVcfRecordInfo(info: String): Map<String, String> {
  */
 fun scanVcfRecords(
     contigId: Map<String, Short>,
-    vcfFilename: String
+    vcfFilename: String,
+    ignoreFilteredRecords: Boolean = false
 ): CloseableIterator<VcfRecord> {
     val reader = fileReaderDetectGz(vcfFilename)
     return object : CloseableIterator<VcfRecord> {
@@ -62,7 +70,14 @@ fun scanVcfRecords(
         private fun update() {
             if (next == null) {
                 var line = reader.readLine()
-                while (line != null && (line.isEmpty() || line[0] == '#')) {
+                while (
+                    line != null &&
+                        (
+                            line.isEmpty() ||
+                                line[0] == '#' ||
+                                (ignoreFilteredRecords && vcfRecordHasNonPassFilter(line))
+                            )
+                ) {
                     line = reader.readLine()
                 }
                 next = line

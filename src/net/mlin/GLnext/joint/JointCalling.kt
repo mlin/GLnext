@@ -50,6 +50,7 @@ data class JointConfig(
  */
 fun jointCall(
     cfg: JointConfig,
+    ignoreFilteredInputRecords: Boolean,
     spark: SparkSession,
     aggHeader: AggVcfHeader,
     variantsDbBroadcastPath: String,
@@ -70,6 +71,7 @@ fun jointCall(
         FlatMapFunction<Row, Row> {
             generateJointCalls(
                 cfg,
+                ignoreFilteredInputRecords,
                 aggHeaderB.value,
                 fieldsGenB.value,
                 getVariantsDb(variantsDbBroadcastPath),
@@ -156,6 +158,7 @@ fun getVariantsDb(variantsDbBroadcastPath: String): String {
  */
 fun generateJointCalls(
     cfg: JointConfig,
+    ignoreFilteredInputRecords: Boolean,
     aggHeader: AggVcfHeader,
     fieldsGen: JointFieldsGenerator,
     variantsDbFilename: String,
@@ -180,7 +183,11 @@ fun generateJointCalls(
             }
         }
         // gVCF records sequence
-        scanVcfRecords(aggHeader.contigId, vcfFilename).use { records ->
+        scanVcfRecords(
+            aggHeader.contigId,
+            vcfFilename,
+            ignoreFilteredRecords = ignoreFilteredInputRecords
+        ).use { records ->
             val callsetSamples = aggHeader.callsetsDetails[callsetId].callsetSamples
             val frameEncoders = Array(callsetSamples.size) { SparseGenotypeFrameEncoder() }
             var lastFrameno = -1

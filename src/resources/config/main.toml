@@ -13,6 +13,7 @@ allowDuplicateSamples = false
 minCopies = 0
 minQUAL1 = 0
 minQUAL2 = 0
+ignoreFilteredInputRecords = false
 
 [joint]
 keepTrailingFields = false

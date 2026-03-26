@@ -120,10 +120,19 @@ By default, GLnext keeps only `GT` and `DP` in pVCF entries deriving from gVCF r
 * `DeepVariant.AllQC.WGS`
 * `DeepVariant.WES`
 * `DeepVariant.AllQC.WES`
+* `DRAGEN`
 
 The WGS and WES settings provide different calibrations for the joint genotype revision calculations (identical to GLnexus).
 
 The AllQC configurations keep all QC values from reference bands, as discussed above. This should be paired with the `spvcf decode --with-missing-fields` argument to make all FORMAT fields explicit.
+
+The `DRAGEN` configuration is tuned for DRAGEN gVCFs and (by default) ignores any input records with non-passing `FILTER` values (anything other than `.` or `PASS`).
+
+To enable or disable this behavior in any configuration, override:
+
+```
+-Dconfig.override.discovery.ignoreFilteredInputRecords=true|false
+```
 
 **Allele quality filtering.** Unlike GLnexus, GLnext does not apply any variant quality filters by default: any ALT allele with at least one copy called is included in the output. Compared to traditional multiallelic pVCF, the impact of many lower-quality variants is mitigated by the combination of our biallelic representation and spVCF encoding. 
 
@@ -143,4 +152,3 @@ These thresholds include alleles with at least one copy called with Phred QUALâ‰
 If both are supplied, then they're intersected: only variants in *both* a BED region and a filter contig will be called.
 
 **Output file splitting.** By default, the app generates one spvcf.gz output file per contig. For larger cohorts where per-contig files are themselves unwieldy, a BED file can be given to guide further splitting of the spVCF output files with: `--split-bed GRCh38_60Mbp_shards.bed`. The BED regions must fully cover the contigs to be processed without any gaps or overlaps.
-
