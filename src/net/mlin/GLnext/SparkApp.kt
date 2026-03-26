@@ -327,6 +327,7 @@ val _classesForKryo = arrayOf(
     IntArray::class.java,
     Array<IntArray>::class.java,
     Class.forName("java.util.Collections\$SingletonList"),
+    Class.forName("java.util.Collections\$SingletonMap"),
     Class.forName("scala.reflect.ClassTag\$GenericClassTag"),
     org.apache.spark.sql.catalyst.InternalRow::class.java,
     Array<org.apache.spark.sql.catalyst.InternalRow>::class.java,
