@@ -120,6 +120,7 @@ By default, GLnext keeps only `GT` and `DP` in pVCF entries deriving from gVCF r
 * `DeepVariant.AllQC.WGS`
 * `DeepVariant.WES`
 * `DeepVariant.AllQC.WES`
+* `DRAGEN`
 
 The WGS and WES settings provide different calibrations for the joint genotype revision calculations (identical to GLnexus).
 
@@ -143,4 +144,3 @@ These thresholds include alleles with at least one copy called with Phred QUALâ‰
 If both are supplied, then they're intersected: only variants in *both* a BED region and a filter contig will be called.
 
 **Output file splitting.** By default, the app generates one spvcf.gz output file per contig. For larger cohorts where per-contig files are themselves unwieldy, a BED file can be given to guide further splitting of the spVCF output files with: `--split-bed GRCh38_60Mbp_shards.bed`. The BED regions must fully cover the contigs to be processed without any gaps or overlaps.
-

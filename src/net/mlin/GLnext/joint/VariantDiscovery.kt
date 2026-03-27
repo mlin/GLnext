@@ -17,7 +17,8 @@ data class DiscoveryConfig(
     val allowDuplicateSamples: Boolean,
     val minCopies: Int,
     val minQUAL1: Int,
-    val minQUAL2: Int
+    val minQUAL2: Int,
+    val ignoreFilteredRecords: Boolean
 ) : Serializable
 
 data class DiscoveredVariant(val variant: Variant, val stats: VariantStats) {
@@ -88,7 +89,11 @@ fun discoverAllVariants(
     var variants = vcfFilenamesDF.flatMap(
         FlatMapFunction<Row, Row> { row ->
             sequence {
-                scanVcfRecords(contigId, row.getAs<String>("vcfFilename")).use { records ->
+                scanVcfRecords(
+                    contigId,
+                    row.getAs<String>("vcfFilename"),
+                    ignoreFilteredRecords = cfg.ignoreFilteredRecords
+                ).use { records ->
                     records.forEach { rec ->
                         if (filterRids?.contains(rec.range.rid) ?: true) {
                             vcfRecordCount?.add(1L)

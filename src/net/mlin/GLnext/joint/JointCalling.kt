@@ -41,6 +41,7 @@ data class JointGenotypeConfig(
 ) : Serializable
 data class JointConfig(
     val gt: JointGenotypeConfig,
+    val ignoreFilteredRecords: Boolean,
     val formatFields: List<JointFormatField>
 ) : Serializable
 
@@ -180,7 +181,11 @@ fun generateJointCalls(
             }
         }
         // gVCF records sequence
-        scanVcfRecords(aggHeader.contigId, vcfFilename).use { records ->
+        scanVcfRecords(
+            aggHeader.contigId,
+            vcfFilename,
+            ignoreFilteredRecords = cfg.ignoreFilteredRecords
+        ).use { records ->
             val callsetSamples = aggHeader.callsetsDetails[callsetId].callsetSamples
             val frameEncoders = Array(callsetSamples.size) { SparseGenotypeFrameEncoder() }
             var lastFrameno = -1

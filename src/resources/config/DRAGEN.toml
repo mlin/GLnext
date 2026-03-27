@@ -2,8 +2,10 @@ complete = true
 
 [discovery]
 minCopies = 1
+ignoreFilteredRecords = true
 
 [joint]
+ignoreFilteredRecords = true
 formatFields = [
     { name = "DP" },
     { name = "GQ" },
