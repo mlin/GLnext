@@ -72,11 +72,11 @@ fun scanVcfRecords(
                 var line = reader.readLine()
                 while (
                     line != null &&
-                        (
-                            line.isEmpty() ||
-                                line[0] == '#' ||
-                                (ignoreFilteredRecords && vcfRecordHasNonPassFilter(line))
-                            )
+                    (
+                        line.isEmpty() ||
+                            line[0] == '#' ||
+                            (ignoreFilteredRecords && vcfRecordHasNonPassFilter(line))
+                        )
                 ) {
                     line = reader.readLine()
                 }

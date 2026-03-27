@@ -43,6 +43,16 @@ DV1KGP_5PCT=1 prove -v test/dv1KGP.t
 prove -v test/dv1KGP.t
 ```
 
+## Finish checklist (strong directive)
+- **Always:** run lint and formatter before finalizing code changes:
+  - `mvn antrun:run@ktlint`
+  - `mvn antrun:run@ktlint-format`
+- **Usually:** run unit tests for nontrivial changes:
+  - `mvn test`
+- **When clearly necessary:** run end-to-end CLI integration tests:
+  - `DV1KGP_5PCT=1 prove -v test/dv1KGP.t`
+  - `prove -v test/dv1KGP.t`
+
 ## Known gotchas
 - Missing `test/bash-tap` submodule causes TAP functions (`plan`, `is`) to fail immediately.
 - Spark 3.2.4 + newer JDKs can fail at runtime; use JDK 11 for reliable integration tests.
