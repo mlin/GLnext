@@ -13,9 +13,10 @@ allowDuplicateSamples = false
 minCopies = 0
 minQUAL1 = 0
 minQUAL2 = 0
-ignoreFilteredInputRecords = false
+ignoreFilteredRecords = false
 
 [joint]
+ignoreFilteredRecords = false
 keepTrailingFields = false
 
 [joint.gt]

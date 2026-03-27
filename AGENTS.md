@@ -57,5 +57,5 @@ prove -v test/dv1KGP.t
 - Missing `test/bash-tap` submodule causes TAP functions (`plan`, `is`) to fail immediately.
 - Spark 3.2.4 + newer JDKs can fail at runtime; use JDK 11 for reliable integration tests.
 - If `loadConfig` is changed, avoid `inheritedNames.reversed()` style calls; this path has previously thrown `NoSuchMethodError: java.util.List.reversed()` under JDK 11.
-- DRAGEN config sets `discovery.ignoreFilteredInputRecords=true`, which drops any input records with `FILTER` not equal to `.` or `PASS`; toggle via `-Dconfig.override.discovery.ignoreFilteredInputRecords=...`.
+- DRAGEN config sets `discovery.ignoreFilteredRecords=true` and `joint.ignoreFilteredRecords=true`, dropping any input records with `FILTER` not equal to `.` or `PASS`; toggle via `-Dconfig.override.discovery.ignoreFilteredRecords=...` and `-Dconfig.override.joint.ignoreFilteredRecords=...`.
 - If changing configs or CLI behavior, update both docs files in the same PR.

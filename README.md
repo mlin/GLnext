@@ -126,12 +126,13 @@ The WGS and WES settings provide different calibrations for the joint genotype r
 
 The AllQC configurations keep all QC values from reference bands, as discussed above. This should be paired with the `spvcf decode --with-missing-fields` argument to make all FORMAT fields explicit.
 
-The `DRAGEN` configuration is tuned for DRAGEN gVCFs and (by default) ignores any input records with non-passing `FILTER` values (anything other than `.` or `PASS`).
+The `DRAGEN` configuration is tuned for DRAGEN gVCFs and (by default) ignores any input records with non-passing `FILTER` values (anything other than `.` or `PASS`) in both discovery and joint genotyping.
 
 To enable or disable this behavior in any configuration, override:
 
 ```
--Dconfig.override.discovery.ignoreFilteredInputRecords=true|false
+-Dconfig.override.discovery.ignoreFilteredRecords=true|false
+-Dconfig.override.joint.ignoreFilteredRecords=true|false
 ```
 
 **Allele quality filtering.** Unlike GLnexus, GLnext does not apply any variant quality filters by default: any ALT allele with at least one copy called is included in the output. Compared to traditional multiallelic pVCF, the impact of many lower-quality variants is mitigated by the combination of our biallelic representation and spVCF encoding. 

@@ -41,6 +41,7 @@ data class JointGenotypeConfig(
 ) : Serializable
 data class JointConfig(
     val gt: JointGenotypeConfig,
+    val ignoreFilteredRecords: Boolean,
     val formatFields: List<JointFormatField>
 ) : Serializable
 
@@ -50,7 +51,6 @@ data class JointConfig(
  */
 fun jointCall(
     cfg: JointConfig,
-    ignoreFilteredInputRecords: Boolean,
     spark: SparkSession,
     aggHeader: AggVcfHeader,
     variantsDbBroadcastPath: String,
@@ -71,7 +71,6 @@ fun jointCall(
         FlatMapFunction<Row, Row> {
             generateJointCalls(
                 cfg,
-                ignoreFilteredInputRecords,
                 aggHeaderB.value,
                 fieldsGenB.value,
                 getVariantsDb(variantsDbBroadcastPath),
@@ -158,7 +157,6 @@ fun getVariantsDb(variantsDbBroadcastPath: String): String {
  */
 fun generateJointCalls(
     cfg: JointConfig,
-    ignoreFilteredInputRecords: Boolean,
     aggHeader: AggVcfHeader,
     fieldsGen: JointFieldsGenerator,
     variantsDbFilename: String,
@@ -186,7 +184,7 @@ fun generateJointCalls(
         scanVcfRecords(
             aggHeader.contigId,
             vcfFilename,
-            ignoreFilteredRecords = ignoreFilteredInputRecords
+            ignoreFilteredRecords = cfg.ignoreFilteredRecords
         ).use { records ->
             val callsetSamples = aggHeader.callsetsDetails[callsetId].callsetSamples
             val frameEncoders = Array(callsetSamples.size) { SparseGenotypeFrameEncoder() }

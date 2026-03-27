@@ -18,7 +18,7 @@ data class DiscoveryConfig(
     val minCopies: Int,
     val minQUAL1: Int,
     val minQUAL2: Int,
-    val ignoreFilteredInputRecords: Boolean
+    val ignoreFilteredRecords: Boolean
 ) : Serializable
 
 data class DiscoveredVariant(val variant: Variant, val stats: VariantStats) {
@@ -92,7 +92,7 @@ fun discoverAllVariants(
                 scanVcfRecords(
                     contigId,
                     row.getAs<String>("vcfFilename"),
-                    ignoreFilteredRecords = cfg.ignoreFilteredInputRecords
+                    ignoreFilteredRecords = cfg.ignoreFilteredRecords
                 ).use { records ->
                     records.forEach { rec ->
                         if (filterRids?.contains(rec.range.rid) ?: true) {

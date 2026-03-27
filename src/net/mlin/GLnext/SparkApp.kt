@@ -230,7 +230,6 @@ class CLI : CliktCommand() {
             )
             val (spvcfHeader, pvcfLineCount, spvcfLines) = jointCall(
                 cfg.joint,
-                cfg.discovery.ignoreFilteredInputRecords,
                 spark,
                 aggHeader,
                 variantsDbBroadcastPath.toString(),
