@@ -121,6 +121,7 @@ By default, GLnext keeps only `GT` and `DP` in pVCF entries deriving from gVCF r
 * `DeepVariant.WES`
 * `DeepVariant.AllQC.WES`
 * `DRAGEN`
+* `DRAGEN.AllQC`
 
 The WGS and WES settings provide different calibrations for the joint genotype revision calculations (identical to GLnexus).
 
